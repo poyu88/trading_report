@@ -2,7 +2,7 @@
 
 依 `docs/test/TDD.md`、`docs/spec/SPEC.md` §12、以及本檔生命週期追蹤表維護。
 
-> **稽核結論（2026-11-20）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。`esun_xlsx_v1`、`day_trade_v1` 與 **`esun_unsupported_rows_v1`** 均有可驗證 TDD 生命週期（見 §6.2）。
+> **稽核結論（2026-11-21）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。`esun_xlsx_v1`、`day_trade_v1`、Cloud Agent **`esun_unsupported_rows_v1`**，以及本機整合後的補充覆蓋，均見 §6.2。
 >
 > **回歸基準 Commit**：`cf4e68e`。分支基準：`c537d8b`。
 
@@ -39,7 +39,7 @@
 | 正式 DB | `data/trading.db` mtime 仍為 2026-11-20 18:51:21；**未** apply／migrate |
 | 真實 Preview | `trade_count=65`、`error_count=0`、buy 23／sell 42；`source_reconciliation.matched=true`（價金 1800949／費 2533／稅 2765）；來源 SHA／mtime 不變 |
 
-### 1.4 玉山未支援列例外後（本分支最新 REGRESSION）
+### 1.4 玉山未支援列例外後（Cloud Agent 歷史 REGRESSION）
 
 | 項目 | 結果 |
 |---|---|
@@ -47,7 +47,20 @@
 | 收集數 | 53（原 52 + 1） |
 | 結果 | **53 passed**（0 failed / 0 skipped） |
 | 耗時 | 約 28s（2026-11-20） |
-| 修復 | Bugbot：融資等未支援交易類別不得靜默丟棄 → `UNSUPPORTED_TRADE_TYPE` |
+| 修復 | Bugbot／Cloud Agent：融資等未支援交易類別不得靜默丟棄 → `UNSUPPORTED_TRADE_TYPE` |
+| Commits | RED `fb8d5f2` → GREEN `a0df837` → doc `592e1a5`（分支 `cursor/fix-esun-unsupported-rows-d1e5`） |
+
+### 1.5 本機整合補充覆蓋後（本分支最新 REGRESSION）
+
+| 項目 | 結果 |
+|---|---|
+| 指令 | `uv run pytest -q --tb=line` |
+| 收集數 | 55（53 + 本機補充 2） |
+| 結果 | **55 passed**（0 failed / 0 skipped） |
+| 耗時 | 約 74s（2026-11-21） |
+| 正式 DB | **未** apply／migrate |
+| 整合 | Fast-forward 合併 Cloud PR #2；保留其 RED／GREEN／doc；另補融資＋配股 preview、apply→`raw_rows`、來源核對區分；**非** Cloud 原始 RED 回填 |
+| 補充 commit | `7a3a2f8`（測試）；本檔 doc commit 見最新 `git log` |
 
 ---
 
@@ -144,14 +157,17 @@
 
 | 統計 | 數量 |
 |---|---|
-| 有完整 RED→GREEN→REGRESSION Git 證據 | **2 功能** — `esun_xlsx_v1`、`day_trade_v1`（見 §6.2） |
+| 有完整 RED→GREEN→REGRESSION Git 證據 | **3 功能** — `esun_xlsx_v1`、`day_trade_v1`、`esun_unsupported_rows_v1`（見 §6.2） |
+| 本機整合後補充覆蓋（非 Cloud 原始 RED） | **2** — 融資／配股＋`raw_rows`／來源核對區分 |
 | 僅回歸／特徵化 | **34** |
 
-### 4.4 玉山 TDD 測試（9）— 合成測資
+### 4.4 玉山 TDD 測試（12）— 合成測資
 
 | 檔案 | 測試 | 層級 | TDD 生命週期 | SPEC |
 |---|---|---|---|---|
 | `test_esun_xlsx_parser.py` | `test_esun_profile_exists` 等 6 | 單元／整合 | 有證據 TDD | ING-05/06/07、NORM-04 |
+| `test_esun_xlsx_parser.py` | `test_unsupported_trade_type_becomes_exception_not_silent_drop` | 整合 | Cloud Agent TDD（`fb8d5f2`） | NORM-03、FR-02 |
+| `test_esun_xlsx_parser.py` | `test_unsupported_trade_types_surface_as_errors_*`／`*_persist_as_raw_row_errors` | 整合 | **本機補充**（對 Cloud GREEN 已綠；非原始 RED） | NORM-03、ING-08 區分 |
 | `test_esun_xlsx_import.py` | `test_preview_source_totals_reconcile` 等 3 | 整合 | 有證據 TDD | ING-08、DB-03 對齊 |
 
 ### 4.5 現沖 DAY_TRADE TDD 測試（新增）
@@ -174,7 +190,8 @@
 | ING-03 CP950／未知編碼 | 僅 UTF-8 偵測；CP950／錯誤編碼未完整覆蓋 |
 | ING-04 真 XLS／XLSX（通用） | 玉山路徑覆蓋真 XLSX；通用 OLE／非玉山 XLSX 仍無獨立案例 |
 | NORM-02 千分位／禁 float | 未見獨立斷言 |
-| NORM-03 未支援類型／壞日期 | 未知類型有案例；通用 HTML 路徑仍弱 |
+| NORM-03 未支援類型／壞日期 | 玉山融資／配股已有 preview／raw_rows／來源核對區分；通用 HTML／壞日期仍弱 |
+| ING-08 頁尾含未支援列時 | SPEC 表已寫「未支援不計入來源核對」→ `matched=false`；PRD §2.3／ING-08 敘述仍偏「全筆一致」，建議後續修訂 |
 | FEE-03 gross 尾差守恆 | 未見獨立斷言 |
 | REP-05／REP-06 無 Excel／公式注入 | 契約有「無公式」部分；注入字串案例不足 |
 | AUD-03 同版 FIFO 可重現且舊 run 不覆寫 | 未見獨立斷言 |
@@ -202,7 +219,8 @@
 |---|---|---|---|---|---|---|
 | `esun_xlsx_v1` | 玉山真 XLSX：日期繼承、次列代號、四類型、小計排除、來源核對、現沖不進 FIFO（當時規格） | 2026-11-20；`uv run pytest tests/test_esun_xlsx_*.py -v`；**8 failed / 1 passed**；失敗為 `ProfileError`／`ModuleNotFoundError`；commit `adb6fcc` | 2026-11-20；commit `1199e55`；9 passed | 2026-11-20；commit `b2b7dc1` | **43 passed** | 規格 `5ade9a8`；當時 Preview：63 ok／2 現沖 error（已被 `day_trade_v1` 覆寫行為，本列不改寫歷史） |
 | `day_trade_v1` | 現沖改為 DAY_TRADE 可入庫；同日無序 FIFO（含先賣後買）；不占 CASH | 2026-11-20；`uv run pytest tests/test_day_trade_*.py tests/test_esun_xlsx_*.py -v`；**12 failed / 6 passed**；缺 `trade_type_map`、現沖仍 `DAY_TRADE_UNSUPPORTED`、同日 `ORDER_AMBIGUITY`／跨日誤配；commit `6e473ab` | 2026-11-20；schema／profile／normalizer／同日 DAY_TRADE FIFO／報表標籤；commit `e72f8b5` | GREEN 已抽出 `_run_day_trade_group` 等；另 `5a57791` 穩固費用斷言；無獨立 restruct commit | **52 passed** | 規格 `d24c966`；Preview：65 ok／0 error；matched；來源與正式 DB 未改 |
-| `esun_unsupported_rows_v1` | 玉山非四種交易類別（如融資）不得靜默丟棄；須進 `UNSUPPORTED_TRADE_TYPE` | 2026-11-20；`uv run pytest tests/test_esun_xlsx_parser.py::test_unsupported_trade_type_becomes_exception_not_silent_drop -v`；**1 failed**；`error_count == 0`（融資列被 skip）；commit `fb8d5f2` | 2026-11-20；parser 對非結構首欄列仍輸出扁平列；未支援不計入來源核對；commit `a0df837` | 無獨立 restruct | **53 passed** | Bugbot Medium；SPEC 補「未支援成交列」列 |
+| `esun_unsupported_rows_v1` | 玉山非四種交易類別（如融資）不得靜默丟棄；須進 `UNSUPPORTED_TRADE_TYPE` | 2026-11-20；Cloud Agent；`uv run pytest …::test_unsupported_trade_type_becomes_exception_not_silent_drop -v`；**1 failed**；`error_count == 0`（融資列被 skip）；commit `fb8d5f2` | 2026-11-20；Cloud Agent；非結構首欄列仍輸出扁平列；**僅四種已支援類型**計入 `recognized_*`；commit `a0df837` | 無獨立 restruct | Cloud 當下 **53 passed**（doc `592e1a5`） | Bugbot Medium；SPEC 補「未支援成交列」 |
+| `esun_unsupported_local_coverage` | 本機補充：融資＋配股、apply→`raw_rows`、頁尾含未支援時核對區分 | **非 RED**：Cloud GREEN 已存在後補測；不得冒充 Cloud 原始 RED | 無新 parser 行為（沿用 `a0df837`） | 無 | 整合後 **55 passed** | 測試 commit `7a3a2f8`；fixture／斷言擴充 |
 
 **記錄欄位最低要求**
 
@@ -250,3 +268,5 @@ uv run pytest -v --tb=line
 | 2026-11-20 | **文件架構整理**：建立 `docs/test/TDD.md` 為唯一正式規範；`tdd-rule.mdc` 改為強制引用；移除 `.cursor/TDD_GUIDE.md`（內容已整併）；更新契約測試過時註解；本檔補記基準 Commit `cf4e68e` 並修正「尚未入庫」等過時描述。 |
 | 2026-11-20 | **`esun_xlsx_v1` TDD**：分支 `feature/esun-xlsx-parser`；規格 `5ade9a8` → RED `adb6fcc`（8 failed）→ GREEN `1199e55` → REFACTOR `b2b7dc1`；全量 **43 passed**；真實玉山僅 Preview，未入正式 DB。 |
 | 2026-11-20 | **`day_trade_v1` TDD**：規格 `d24c966` → RED `6e473ab`（12 failed）→ GREEN `e72f8b5` → 斷言穩固 `5a57791`；全量 **52 passed**；Preview 65 ok／0 error；未 apply／migrate 正式 DB。 |
+| 2026-11-20 | **Cloud Agent `esun_unsupported_rows_v1`**：RED `fb8d5f2`（融資靜默消失）→ GREEN `a0df837`（候選列輸出／未支援不計 recognized）→ doc `592e1a5`；全量 **53 passed**。 |
+| 2026-11-21 | **本機整合**：`feature/esun-xlsx-parser` fast-forward 合併上述 3 commits；保留 Cloud 歷史；另補融資／配股／`raw_rows`／來源核對區分（`7a3a2f8`，**非** Cloud RED 回填）；全量 **55 passed**；未 Push／Merge PR／改正式 DB。 |
