@@ -20,10 +20,9 @@ def test_preview_source_totals_reconcile(tmp_path: Path) -> None:
     path = write_synthetic_esun_xlsx(tmp_path / "esun_recon.xlsx")
     preview = preview_import(path, "esun_xlsx_v1")
 
-    # 來源辨識 5 筆（含現沖）；現股 3 ok、現沖 2 error
-    assert preview.trade_count + preview.error_count == 5
-    assert preview.trade_count == 3
-    assert preview.error_count == 2
+    # 來源辨識 5 筆（含現沖）全部通過類型驗證
+    assert preview.trade_count == 5
+    assert preview.error_count == 0
 
     recon = getattr(preview, "source_reconciliation", None)
     assert recon is not None
@@ -35,26 +34,23 @@ def test_preview_source_totals_reconcile(tmp_path: Path) -> None:
     assert recon["matched"] is True
 
 
-def test_apply_imports_cash_only_day_trade_not_in_trades(tmp_path: Path, db_session) -> None:
+def test_apply_imports_cash_and_day_trade(tmp_path: Path, db_session) -> None:
     path = write_synthetic_esun_xlsx(tmp_path / "esun_apply.xlsx")
     result = apply_import(db_session, path, "玉山", "main", "esun_xlsx_v1")
     db_session.commit()
 
-    assert result.trade_count == 3
-    assert result.error_count == 2
+    assert result.trade_count == 5
+    assert result.error_count == 0
     assert result.already_imported is False
 
     trades = list(db_session.scalars(select(TradeRow)).all())
-    assert len(trades) == 3
-    assert all(t.trade_type == "CASH" for t in trades)
+    assert len(trades) == 5
+    assert {t.trade_type for t in trades} == {"CASH", "DAY_TRADE"}
     assert {t.symbol for t in trades} == {"4971", "3162"}
-    assert {t.side for t in trades} == {"BUY", "SELL"}
-    # 現沖不得入庫
-    assert all(t.side in ("BUY", "SELL") for t in trades)
     buy_qty = sum(t.quantity for t in trades if t.side == "BUY")
     sell_qty = sum(t.quantity for t in trades if t.side == "SELL")
-    assert buy_qty == 2000
-    assert sell_qty == 300
+    assert buy_qty == 3000  # 2000 現股 + 1000 現沖
+    assert sell_qty == 1300  # 300 現股 + 1000 現沖
 
 
 def test_structural_failure_rolls_back_without_trades(tmp_path: Path) -> None:
