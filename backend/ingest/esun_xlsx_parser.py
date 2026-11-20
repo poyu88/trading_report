@@ -168,6 +168,87 @@ def _parse_footer_totals(row: list[Any]) -> dict[str, Any] | None:
     }
 
 
+def _pad_row(row: list[Any], width: int) -> list[Any]:
+    if len(row) < width:
+        return list(row) + [None] * (width - len(row))
+    return list(row[:width])
+
+
+def _is_skip_note_row(row: list[Any]) -> bool:
+    first = _cell_str(row[0]) if row else ""
+    return first.startswith("說明") or first.startswith("本功能")
+
+
+def _amount_at(row: list[Any], idx: int | None) -> Decimal:
+    if idx is None or idx >= len(row) or _is_blank(row[idx]):
+        return Decimal(0)
+    return Decimal(_cell_str(row[idx]))
+
+
+def _build_flat_trade_values(
+    row: list[Any],
+    *,
+    flat_headers: list[str],
+    trade_type: str,
+    current_date: date | None,
+    symbol: str,
+    side_idx: int,
+    name_idx: int,
+    date_idx: int,
+    symbol_idx: int,
+) -> list[str]:
+    values = [_cell_str(c) for c in row]
+    while len(values) < len(flat_headers):
+        values.append("")
+    values[side_idx] = trade_type
+    if name_idx < len(values):
+        values[name_idx] = _cell_str(row[name_idx]) if name_idx < len(row) else ""
+    values[date_idx] = current_date.isoformat() if current_date else ""
+    values[symbol_idx] = symbol
+    return values[: len(flat_headers)]
+
+
+def _build_reconciliation(
+    footer: dict[str, Any] | None,
+    *,
+    recognized_count: int,
+    recognized_gross: Decimal,
+    recognized_commission: Decimal,
+    recognized_tax: Decimal,
+) -> dict[str, Any]:
+    if footer is None:
+        return {
+            "declared_count": None,
+            "recognized_count": recognized_count,
+            "gross_amount": str(recognized_gross),
+            "commission": str(recognized_commission),
+            "tax": str(recognized_tax),
+            "net_settlement": None,
+            "matched": False,
+        }
+    declared = footer.get("declared_count")
+    fg = footer.get("gross_amount")
+    fc = footer.get("commission")
+    ft = footer.get("tax")
+    matched = (
+        declared == recognized_count
+        and fg == recognized_gross
+        and fc == recognized_commission
+        and ft == recognized_tax
+    )
+    return {
+        "declared_count": declared,
+        "recognized_count": recognized_count,
+        "gross_amount": str(fg if fg is not None else recognized_gross),
+        "commission": str(fc if fc is not None else recognized_commission),
+        "tax": str(ft if ft is not None else recognized_tax),
+        "net_settlement": (
+            str(footer["net_settlement"]) if footer.get("net_settlement") is not None else None
+        ),
+        "matched": bool(matched),
+    }
+
+
 def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None = None) -> ParsedTable:
     try:
         workbook = CalamineWorkbook.from_path(str(path))
@@ -214,12 +295,7 @@ def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None 
     i = header_idx + 1
     while i < len(data):
         excel_row_number = i + 1  # 1-based
-        row = list(data[i])
-        # pad
-        if len(row) < len(raw_headers):
-            row += [None] * (len(raw_headers) - len(row))
-        else:
-            row = row[: len(raw_headers)]
+        row = _pad_row(list(data[i]), len(raw_headers))
 
         if all(_is_blank(c) for c in row):
             i += 1
@@ -231,12 +307,7 @@ def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None 
             i += 1
             continue
 
-        first = _cell_str(row[0]) if row else ""
-        if first.startswith("說明") or first.startswith("本功能"):
-            i += 1
-            continue
-
-        if _row_is_subtotal(row):
+        if _is_skip_note_row(row) or _row_is_subtotal(row):
             i += 1
             continue
 
@@ -253,71 +324,38 @@ def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None 
             if i + 1 < len(data) and _row_is_symbol_follow(list(data[i + 1])):
                 symbol = normalize_esun_symbol(data[i + 1][1])
                 consume = 2
-            # 缺次列代號時留下空白 symbol，交由 normalizer 報錯
 
-            values = [_cell_str(c) for c in row]
-            while len(values) < len(flat_headers):
-                values.append("")
-            values[side_idx] = trade_type
-            if name_idx < len(values):
-                values[name_idx] = _cell_str(row[name_idx]) if name_idx < len(row) else ""
-            values[date_idx] = current_date.isoformat() if current_date else ""
-            values[symbol_idx] = symbol
-            rows.append((excel_row_number, values[: len(flat_headers)]))
+            values = _build_flat_trade_values(
+                row,
+                flat_headers=flat_headers,
+                trade_type=trade_type,
+                current_date=current_date,
+                symbol=symbol,
+                side_idx=side_idx,
+                name_idx=name_idx,
+                date_idx=date_idx,
+                symbol_idx=symbol_idx,
+            )
+            rows.append((excel_row_number, values))
 
             recognized_count += 1
-            if gross_idx is not None and gross_idx < len(row) and not _is_blank(row[gross_idx]):
-                recognized_gross += Decimal(_cell_str(row[gross_idx]))
-            if commission_idx is not None and commission_idx < len(row) and not _is_blank(
-                row[commission_idx]
-            ):
-                recognized_commission += Decimal(_cell_str(row[commission_idx]))
-            if tax_idx is not None and tax_idx < len(row) and not _is_blank(row[tax_idx]):
-                recognized_tax += Decimal(_cell_str(row[tax_idx]))
-
+            recognized_gross += _amount_at(row, gross_idx)
+            recognized_commission += _amount_at(row, commission_idx)
+            recognized_tax += _amount_at(row, tax_idx)
             i += consume
             continue
 
-        # 其他無法分類列略過（說明殘片等）
         i += 1
-
-    reconciliation: dict[str, Any] | None = None
-    if footer is not None:
-        declared = footer.get("declared_count")
-        fg = footer.get("gross_amount")
-        fc = footer.get("commission")
-        ft = footer.get("tax")
-        matched = (
-            declared == recognized_count
-            and fg == recognized_gross
-            and fc == recognized_commission
-            and ft == recognized_tax
-        )
-        reconciliation = {
-            "declared_count": declared,
-            "recognized_count": recognized_count,
-            "gross_amount": str(fg if fg is not None else recognized_gross),
-            "commission": str(fc if fc is not None else recognized_commission),
-            "tax": str(ft if ft is not None else recognized_tax),
-            "net_settlement": (
-                str(footer["net_settlement"]) if footer.get("net_settlement") is not None else None
-            ),
-            "matched": bool(matched),
-        }
-    else:
-        reconciliation = {
-            "declared_count": None,
-            "recognized_count": recognized_count,
-            "gross_amount": str(recognized_gross),
-            "commission": str(recognized_commission),
-            "tax": str(recognized_tax),
-            "net_settlement": None,
-            "matched": False,
-        }
 
     return ParsedTable(
         headers=flat_headers,
         rows=rows,
         sheet_name=target,
-        source_reconciliation=reconciliation,
+        source_reconciliation=_build_reconciliation(
+            footer,
+            recognized_count=recognized_count,
+            recognized_gross=recognized_gross,
+            recognized_commission=recognized_commission,
+            recognized_tax=recognized_tax,
+        ),
     )
