@@ -20,12 +20,17 @@
   "exclude_row_prefixes": ["資料筆數", "說明"],
   "side_map": {
     "現股買進": "BUY",
-    "現股賣出": "SELL"
+    "現股賣出": "SELL",
+    "現沖買進": "BUY",
+    "現沖賣出": "SELL"
   },
-  "unsupported_sides": {
-    "現沖買進": "DAY_TRADE_UNSUPPORTED",
-    "現沖賣出": "DAY_TRADE_UNSUPPORTED"
+  "trade_type_map": {
+    "現股買進": "CASH",
+    "現股賣出": "CASH",
+    "現沖買進": "DAY_TRADE",
+    "現沖賣出": "DAY_TRADE"
   },
+  "unsupported_sides": {},
   "default_currency": "TWD",
   "currency_map": {
     "臺幣": "TWD",

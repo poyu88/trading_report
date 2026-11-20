@@ -28,6 +28,13 @@ class TradeView:
     tax: Decimal
     interest: Decimal
     broker_name: str
+    trade_type: str = "CASH"
+
+
+def _trade_type_label(trade_type: str) -> str:
+    if trade_type == "DAY_TRADE":
+        return "現沖"
+    return "現股"
 
 
 @dataclass
@@ -159,6 +166,7 @@ def project_detail_rows(
                 broker = buy.broker_name
                 interest_src = buy.interest
                 buy_commission_full = buy.commission
+                type_label = _trade_type_label(buy.trade_type)
             else:
                 lot = lot_map[key[4:]]
                 buy_date = lot.buy_date
@@ -170,6 +178,7 @@ def project_detail_rows(
                 broker = lot.broker_name
                 interest_src = Decimal(0)
                 buy_commission_full = Decimal(0)
+                type_label = "現股"
 
             fee_key = key
             if fee_key not in buy_fee_used:
@@ -187,7 +196,7 @@ def project_detail_rows(
                         sell_date=None,
                         symbol=symbol,
                         name=name,
-                        trade_type_label="現股",
+                        trade_type_label=type_label,
                         buy_price=buy_price,
                         buy_qty=qty,
                         buy_commission=buy_commission,
@@ -237,7 +246,7 @@ def project_detail_rows(
                     sell_date=sell.trade_date,
                     symbol=symbol,
                     name=name or sell.name,
-                    trade_type_label="現股",
+                    trade_type_label=type_label,
                     buy_price=buy_price,
                     buy_qty=qty,
                     buy_commission=buy_commission,

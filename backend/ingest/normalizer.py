@@ -185,12 +185,16 @@ def normalize_mapped_row(
         if commission < 0 or tax < 0 or interest < 0 or gross_amount < 0:
             raise ValidationError("金額／費用不得為負")
 
+        trade_type = profile.trade_type_map.get(side_raw, "CASH")
+        if trade_type not in ("CASH", "DAY_TRADE"):
+            raise ValidationError(f"未知交易類型：{trade_type!r}")
+
         return NormalizedCandidate(
             symbol=symbol,
             name=name,
             trade_date=trade_date,
             side=side,
-            trade_type="CASH",
+            trade_type=trade_type,
             currency=currency,
             quantity=quantity,
             unit_price=unit_price,

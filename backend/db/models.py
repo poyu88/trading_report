@@ -89,7 +89,7 @@ class TradeRow(Base):
     __tablename__ = "trades"
     __table_args__ = (
         CheckConstraint("side IN ('BUY','SELL')", name="ck_trade_side"),
-        CheckConstraint("trade_type = 'CASH'", name="ck_trade_type"),
+        CheckConstraint("trade_type IN ('CASH', 'DAY_TRADE')", name="ck_trade_type"),
         CheckConstraint("quantity > 0", name="ck_trade_qty"),
     )
 

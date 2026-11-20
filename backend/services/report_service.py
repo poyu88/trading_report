@@ -103,6 +103,7 @@ def generate_detail_report(
             tax=txt_to_decimal(t.tax_txt),
             interest=txt_to_decimal(t.interest_txt),
             broker_name=broker_name,
+            trade_type=t.trade_type,
         )
         for t in trades
     ]
