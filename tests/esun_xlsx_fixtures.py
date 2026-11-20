@@ -116,7 +116,10 @@ def write_esun_trade_without_date(path: Path) -> Path:
 
 
 def write_esun_with_unsupported_trade_type(path: Path) -> Path:
-    """含融資買進（未支援）與一筆現股買進 → 未支援列應成例外，現股仍可辨識。"""
+    """含融資買進（未支援）與一筆現股買進 → 未支援列應成例外，現股仍可辨識。
+
+    Cloud Agent `esun_unsupported_rows_v1` RED 原始 fixture（僅融資）。
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "工作表1"
@@ -127,5 +130,48 @@ def write_esun_with_unsupported_trade_type(path: Path) -> Path:
     ws.append(["現股買進", "精確", 500, 41.0, 20500, 30, 0, 0, 0, 0, 0, -20530, 0, 0])
     ws.append(["", -3162])
     ws.append(["2025/01/09 小計", "", "", "", "", "", "", "", "", "", "", -60580])
+    wb.save(path)
+    return path
+
+
+def write_esun_with_unsupported_trade_types(path: Path) -> Path:
+    """含融資／配股等未支援類型：應進例外，不得靜默消失。
+
+    本機補充 fixture：頁尾宣告含未支援列筆數／金額，供驗證
+    「來源候選列 ≠ 來源核對 recognized」——未支援不計入 recognized_*。
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "工作表1"
+    ws.append(HEADERS)
+
+    ws.append([date(2025, 4, 10)])
+    ws.append(["現股買進", "精確", 1000, 40.0, 40000, 50, 0, 0, 0, 0, 0, -40050, 0, 0])
+    ws.append(["", -3162])
+    ws.append(["融資買進", "精確", 1000, 41.0, 41000, 58, 0, 0, 10000, 0, 0, -31058, 0, 0])
+    ws.append(["", -3162])
+    ws.append(["配股", "精確", 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    ws.append(["", -3162])
+    ws.append(["2025/04/10 小計", "", "", "", "", "", "", "", "", "", "", -71108])
+
+    ws.append([])
+    ws.append(
+        [
+            "資料筆數",
+            "3筆",
+            "成交價金",
+            81000,
+            "手續費",
+            108,
+            "交易稅",
+            0,
+            "淨收付金額",
+            -71108,
+        ]
+    )
+    ws.append([])
+    ws.append(["說明："])
+    ws.append(["本功能提供近三年的對帳單資訊，每次查詢區間最多12個月。"])
+    path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
