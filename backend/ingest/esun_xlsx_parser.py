@@ -318,7 +318,9 @@ def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None 
             continue
 
         trade_type = _row_trade_type(row)
-        if trade_type is not None:
+        # 非空白首欄且非結構列 → 視為成交候選（含未支援類型，交由 normalizer 列例外）
+        if trade_type is not None or not _is_blank(row[0]):
+            side_label = trade_type if trade_type is not None else str(row[0]).strip()
             symbol = ""
             consume = 1
             if i + 1 < len(data) and _row_is_symbol_follow(list(data[i + 1])):
@@ -328,7 +330,7 @@ def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None 
             values = _build_flat_trade_values(
                 row,
                 flat_headers=flat_headers,
-                trade_type=trade_type,
+                trade_type=side_label,
                 current_date=current_date,
                 symbol=symbol,
                 side_idx=side_idx,
@@ -338,10 +340,11 @@ def parse_esun_xlsx(path: Path, profile: MappingProfile, sheet_name: str | None 
             )
             rows.append((excel_row_number, values))
 
-            recognized_count += 1
-            recognized_gross += _amount_at(row, gross_idx)
-            recognized_commission += _amount_at(row, commission_idx)
-            recognized_tax += _amount_at(row, tax_idx)
+            if trade_type is not None:
+                recognized_count += 1
+                recognized_gross += _amount_at(row, gross_idx)
+                recognized_commission += _amount_at(row, commission_idx)
+                recognized_tax += _amount_at(row, tax_idx)
             i += consume
             continue
 
