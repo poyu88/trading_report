@@ -65,17 +65,21 @@ uv run python -m backend.cli db backup --output-dir data/backups --db data/tradi
 ### 3.1 玉山證券真 XLSX（`esun_xlsx_v1`）
 
 ```powershell
-# 僅預覽（不入庫；建議先用此步核對筆數與現沖例外）
+# 僅預覽（不入庫；建議先核對 65 筆類型驗證與來源合計）
 uv run python -m backend.cli import preview --file "input\玉山.xlsx" --profile esun_xlsx_v1
 
 # 若確認後要入庫：請指定臨時／測試 DB，勿直接寫入正式 data/trading.db，除非你已備份並知情
 uv run python -m backend.cli import apply --file "input\玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/tmp_esun.db
+
+# 配對（現沖僅同日 DAY_TRADE pool；與解析錯誤分開看 exceptions）
+uv run python -m backend.cli match fifo --account "main" --db data/tmp_esun.db
 ```
 
 玉山格式重點：
 
 - 日期列繼承、成交列下一列為股票代號（來源可能為負數，正規化為正整數字串）。
-- 四種交易類型：`現股買進`／`現股賣出` 可入庫並進一般現股 FIFO；`現沖買進`／`現沖賣出` 可辨識但標記 `DAY_TRADE_UNSUPPORTED`，**不入 `trades`、不進現股 FIFO**。
+- `side`＝BUY／SELL；`trade_type`＝CASH（現股）／DAY_TRADE（現沖）。四種交易類型皆可入庫。
+- 現沖僅在同日、同帳戶、同股票的 DAY_TRADE pool 內 FIFO（同日無序含先賣後買）；**不**消耗普通現股持倉。
 - `YYYY/MM/DD 小計` 與頁尾說明排除；preview 會帶 `source_reconciliation` 與頁尾「資料筆數／價金／手續費／交易稅」核對。
 
 ### 注意事項

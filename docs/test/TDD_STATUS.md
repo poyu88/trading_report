@@ -2,7 +2,7 @@
 
 依 `docs/test/TDD.md`、`docs/spec/SPEC.md` §12、以及本檔生命週期追蹤表維護。
 
-> **稽核結論（2026-11-20）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。自 `feature/esun-xlsx-parser` 起，**玉山 `esun_xlsx_v1`** 為第一筆有完整 RED→GREEN→REFACTOR→REGRESSION Git 證據的 TDD 需求（見 §6.2）。
+> **稽核結論（2026-11-20）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。`esun_xlsx_v1` 與後續 **`day_trade_v1`** 均有可驗證 TDD 生命週期（見 §6.2）。
 >
 > **回歸基準 Commit**：`cf4e68e`。分支基準：`c537d8b`。
 
@@ -19,17 +19,25 @@
 | 結果 | **34 passed** |
 | 日期 | 2026-11-20 |
 
-### 1.2 玉山解析完成後（本分支 REGRESSION）
+### 1.2 玉山解析完成後（歷史 REGRESSION）
 
 | 項目 | 結果 |
 |---|---|
 | 指令 | `uv run pytest -q --tb=line` |
 | 收集數 | 43（原 34 + 玉山新增 9） |
-| 結果 | **43 passed**（0 failed / 0 skipped） |
-| 耗時 | 約 60s（2026-11-20，REFACTOR 後） |
-| 工作目錄 | `C:\Users\billh\python_test\trading_report` |
-| 正式 DB | `data/trading.db` mtime 仍為 2026-11-20 18:51:21；pytest 僅用 `tmp_path` |
-| 真實來源 | `input/玉山.xlsx` 僅做**唯讀 Preview**；SHA-256 與 mtime 不變；**未** `import apply` 入正式庫 |
+| 結果 | **43 passed** |
+| 日期 | 2026-11-20 |
+
+### 1.3 現沖 DAY_TRADE 支援後（本分支最新 REGRESSION）
+
+| 項目 | 結果 |
+|---|---|
+| 指令 | `uv run pytest -q --tb=line` |
+| 收集數 | 52 |
+| 結果 | **52 passed**（0 failed / 0 skipped） |
+| 耗時 | 約 61s（2026-11-20） |
+| 正式 DB | `data/trading.db` mtime 仍為 2026-11-20 18:51:21；**未** apply／migrate |
+| 真實 Preview | `trade_count=65`、`error_count=0`、buy 23／sell 42；`source_reconciliation.matched=true`（價金 1800949／費 2533／稅 2765）；來源 SHA／mtime 不變 |
 
 ---
 
@@ -126,7 +134,7 @@
 
 | 統計 | 數量 |
 |---|---|
-| 有完整 RED→GREEN→REFACTOR＋Git 證據 | **1 功能（9 測試）** — 見 §6.2 `esun_xlsx_v1` |
+| 有完整 RED→GREEN→REGRESSION Git 證據 | **2 功能** — `esun_xlsx_v1`、`day_trade_v1`（見 §6.2） |
 | 僅回歸／特徵化 | **34** |
 
 ### 4.4 玉山 TDD 測試（9）— 合成測資
@@ -134,13 +142,20 @@
 | 檔案 | 測試 | 層級 | TDD 生命週期 | SPEC |
 |---|---|---|---|---|
 | `test_esun_xlsx_parser.py` | `test_esun_profile_exists` 等 6 | 單元／整合 | 有證據 TDD | ING-05/06/07、NORM-04 |
-| `test_esun_xlsx_import.py` | `test_preview_source_totals_reconcile` 等 3 | 整合 | 有證據 TDD | ING-08、現沖邊界、DB-03 對齊 |
+| `test_esun_xlsx_import.py` | `test_preview_source_totals_reconcile` 等 3 | 整合 | 有證據 TDD | ING-08、DB-03 對齊 |
+
+### 4.5 現沖 DAY_TRADE TDD 測試（新增）
+
+| 檔案 | 測試 | 層級 | SPEC |
+|---|---|---|---|
+| `test_day_trade_normalize.py` | 現沖 BUY／SELL、費用保留、未知類型、合成 5 筆全 ok／入庫 | 單元／整合 | NORM-05 |
+| `test_day_trade_fifo.py` | 同日無序先賣後買、多筆 FIFO、不占 CASH、不跨日、費用一次 | 單元 | FIFO-07/08、FEE |
 
 ---
 
 ## 5. SPEC §12 覆蓋缺口（誠實對照）
 
-已有測試覆蓋的重點：ING-01/02、ING-05～08、NORM-01、NORM-04、DB-01/02/03（基本）、FIFO-01～06、FEE-01/02、REP-01～04/07、AUD-01/02。
+已有測試覆蓋的重點：ING-01/02、ING-05～08、NORM-01、NORM-04/05、DB-01/02/03（基本）、FIFO-01～08、FEE-01/02、REP-01～04/07、AUD-01/02。
 
 仍弱或未見獨立自動化案例（不虛構通過）：
 
@@ -149,7 +164,7 @@
 | ING-03 CP950／未知編碼 | 僅 UTF-8 偵測；CP950／錯誤編碼未完整覆蓋 |
 | ING-04 真 XLS／XLSX（通用） | 玉山路徑覆蓋真 XLSX；通用 OLE／非玉山 XLSX 仍無獨立案例 |
 | NORM-02 千分位／禁 float | 未見獨立斷言 |
-| NORM-03 未支援類型／壞日期 | 玉山現沖／缺日期有案例；通用 HTML 路徑仍弱 |
+| NORM-03 未支援類型／壞日期 | 未知類型有案例；通用 HTML 路徑仍弱 |
 | FEE-03 gross 尾差守恆 | 未見獨立斷言 |
 | REP-05／REP-06 無 Excel／公式注入 | 契約有「無公式」部分；注入字串案例不足 |
 | AUD-03 同版 FIFO 可重現且舊 run 不覆寫 | 未見獨立斷言 |
@@ -175,7 +190,8 @@
 
 | 功能 ID | 說明 | RED（日期／指令／失敗摘要／commit） | GREEN（日期／最小變更／commit） | REFACTOR（日期／變更摘要／commit） | REFACTOR 後全量 pytest | 備註 |
 |---|---|---|---|---|---|---|
-| `esun_xlsx_v1` | 玉山真 XLSX：日期繼承、次列代號、四類型、小計排除、來源核對、現沖不進 FIFO | 2026-11-20；`uv run pytest tests/test_esun_xlsx_*.py -v`；**8 failed / 1 passed**；失敗為 `ProfileError: 找不到 profile …esun_xlsx_v1.json` 與 `ModuleNotFoundError: backend.ingest.esun_xlsx_parser`（業務缺口）；commit `adb6fcc` | 2026-11-20；新增 profile／`esun_xlsx_parser`、mapping `unsupported_sides`+`default_currency`、import 分派與 `source_reconciliation`；commit `1199e55`；9 passed | 2026-11-20；抽出列分類／扁平列／核對 helper；commit `b2b7dc1` | **43 passed**（`uv run pytest -q`） | 規格 commit `5ade9a8`；本機 Preview：65 辨識／63 現股 ok／2 現沖 error；價金 1800949／費 2533／稅 2765 matched；來源與正式 DB 未改 |
+| `esun_xlsx_v1` | 玉山真 XLSX：日期繼承、次列代號、四類型、小計排除、來源核對、現沖不進 FIFO（當時規格） | 2026-11-20；`uv run pytest tests/test_esun_xlsx_*.py -v`；**8 failed / 1 passed**；失敗為 `ProfileError`／`ModuleNotFoundError`；commit `adb6fcc` | 2026-11-20；commit `1199e55`；9 passed | 2026-11-20；commit `b2b7dc1` | **43 passed** | 規格 `5ade9a8`；當時 Preview：63 ok／2 現沖 error（已被 `day_trade_v1` 覆寫行為，本列不改寫歷史） |
+| `day_trade_v1` | 現沖改為 DAY_TRADE 可入庫；同日無序 FIFO（含先賣後買）；不占 CASH | 2026-11-20；`uv run pytest tests/test_day_trade_*.py tests/test_esun_xlsx_*.py -v`；**12 failed / 6 passed**；缺 `trade_type_map`、現沖仍 `DAY_TRADE_UNSUPPORTED`、同日 `ORDER_AMBIGUITY`／跨日誤配；commit `6e473ab` | 2026-11-20；schema／profile／normalizer／同日 DAY_TRADE FIFO／報表標籤；commit `e72f8b5` | GREEN 已抽出 `_run_day_trade_group` 等；另 `5a57791` 穩固費用斷言；無獨立 restruct commit | **52 passed** | 規格 `d24c966`；Preview：65 ok／0 error；matched；來源與正式 DB 未改 |
 
 **記錄欄位最低要求**
 
@@ -222,3 +238,4 @@ uv run pytest -v --tb=line
 | 2026-11-20 | **回歸基準入庫** `cf4e68e`：新增 `.cursor/rules/tdd-rule.mdc`；提交程式／測試／文件；排除真實 DB／對帳單／報表；`statement_sample.html` 改為合成測資。此 commit **不是** TDD 完成標記。 |
 | 2026-11-20 | **文件架構整理**：建立 `docs/test/TDD.md` 為唯一正式規範；`tdd-rule.mdc` 改為強制引用；移除 `.cursor/TDD_GUIDE.md`（內容已整併）；更新契約測試過時註解；本檔補記基準 Commit `cf4e68e` 並修正「尚未入庫」等過時描述。 |
 | 2026-11-20 | **`esun_xlsx_v1` TDD**：分支 `feature/esun-xlsx-parser`；規格 `5ade9a8` → RED `adb6fcc`（8 failed）→ GREEN `1199e55` → REFACTOR `b2b7dc1`；全量 **43 passed**；真實玉山僅 Preview，未入正式 DB。 |
+| 2026-11-20 | **`day_trade_v1` TDD**：規格 `d24c966` → RED `6e473ab`（12 failed）→ GREEN `e72f8b5` → 斷言穩固 `5a57791`；全量 **52 passed**；Preview 65 ok／0 error；未 apply／migrate 正式 DB。 |
