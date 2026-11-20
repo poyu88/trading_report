@@ -90,7 +90,8 @@ trading_report/
 │   └── SPEC.md
 ├── configs/
 │   └── profiles/
-│       └── statement_html_v1.json
+│       ├── statement_html_v1.json
+│       └── esun_xlsx_v1.json
 ├── backend/
 │   ├── __init__.py
 │   ├── cli.py                   # python -m backend.cli
@@ -102,6 +103,7 @@ trading_report/
 │   │   ├── detector.py
 │   │   ├── csv_parser.py
 │   │   ├── excel_parser.py
+│   │   ├── esun_xlsx_parser.py  # 玉山 XLSX 結構重塑
 │   │   ├── html_parser.py
 │   │   ├── mapping.py
 │   │   ├── normalizer.py
@@ -195,6 +197,56 @@ trading_report/
 
 *備註：HTML 表頭的空白與 `<br>` 必須先正規化成統一字串；profile 的 key 用解析後的標準化表頭比對，且要明確回報未匹配欄。正式 profile 需涵蓋其餘 18 欄原始欄位的留存。*
 
+### 4.2.1 玉山真 XLSX（`esun_xlsx_v1`）
+
+來源 `玉山.xlsx`：真 XLSX，資料區表頭非第 1 列。結構規則：
+
+| 列類型 | 特徵 | 處理 |
+|---|---|---|
+| 日期列 | 僅成交日（date／可解析日期字串），其餘業務欄空白 | 更新「目前日期」；本身不產生交易 |
+| 成交列 | 交易類別為四種之一，含名稱／股數／單價／價金／費用 | 繼承目前日期；下一列必須為代號列 |
+| 代號列 | 交易類別空白，股票名稱欄為數值代號（可能為負） | 與上一成交列合併；代號正規化為正整數字串 |
+| 小計列 | 儲存格含「小計」 | 排除，不入庫 |
+| 頁尾／說明 | 「資料筆數」「說明」等 | 排除；頁尾金額供來源核對 |
+
+示範 profile（欄名以正規化後比對）：
+
+```json
+{
+  "profile_id": "esun_xlsx_v1",
+  "version": 1,
+  "source_format": "esun_xlsx",
+  "required_headers": ["交易類別", "股票名稱", "成交股數", "成交單價", "成交價金"],
+  "column_map": {
+    "交易類別": "side_raw",
+    "股票名稱": "name",
+    "成交股數": "quantity",
+    "成交單價": "unit_price",
+    "成交價金": "gross_amount",
+    "手續費": "commission",
+    "交易稅": "tax",
+    "利息": "interest",
+    "淨收付金額": "net_settlement",
+    "成交日": "trade_date",
+    "股票代號": "symbol"
+  },
+  "exclude_row_prefixes": ["資料筆數", "說明"],
+  "side_map": {
+    "現股買進": "BUY",
+    "現股賣出": "SELL"
+  },
+  "unsupported_sides": {
+    "現沖買進": "DAY_TRADE_UNSUPPORTED",
+    "現沖賣出": "DAY_TRADE_UNSUPPORTED"
+  },
+  "default_currency": "TWD",
+  "date_formats": ["%Y/%m/%d", "%Y-%m-%d"],
+  "gross_tolerance": "1"
+}
+```
+
+**現沖與一般現股 FIFO 邊界**：`現股*` → `BUY`/`SELL`、`trade_type=CASH`，可入庫並進 FIFO。`現沖*` → 可辨識並計入來源筆數／金額核對，但標記 `DAY_TRADE_UNSUPPORTED`，**不寫入 `trades`、不進 CASH FIFO**。缺日期繼承或缺次列代號 → 列級驗證錯誤。profile／結構失敗（找不到表頭等）→ apply 整批不寫入並 rollback。
+
 ### 4.3 Canonical Trade 模型
 
 ```python
@@ -226,10 +278,12 @@ class Trade:
 
 - `symbol_and_name` 拆為股票代碼及名稱；股票代碼始終為字串。
 - `現股買進 → BUY`、`現股賣出 → SELL`；其他語意一律先列未支援例外。
-- `臺幣`／`TWD` 標準化為 `TWD`；未知幣別不得推定。
-- 小數、逗號、負號採明確 parser；`Decimal(text.replace(',', ''))`；不得用 `float()`。
-- 日期從 `YYYY/MM/DD` 等已確認格式轉為 `date`，禁止不明格式的月份／日期猜測。
-- `quantity` 必須是正整數；單價、成交金額、費用不得為負（若出現應透過交易類別規則核實）。
+- 玉山次列代號：來源數值取絕對值後轉整數字串（如 `-4971.0` → `4971`）；禁止以 float 科學記號或帶小數點字串入庫。
+- `現沖買進`／`現沖賣出`：使用 profile `unsupported_sides` → `DAY_TRADE_UNSUPPORTED`（見 §4.2.1），不得默默當現股。
+- `臺幣`／`TWD` 標準化為 `TWD`；未知幣別不得推定。無幣別欄時僅在 profile 明示 `default_currency` 時使用。
+- 小數、逗號、負號採明確 parser；`Decimal(text.replace(',', ''))`；不得用 `float()` 做金額計算。
+- 日期從 `YYYY/MM/DD` 等已確認格式轉為 `date`，禁止不明格式的月份／日期猜測；玉山成交列繼承日期列。
+- `quantity` 必須是正整數；單價、成交金額、費用不得為負（若出現應透過交易類別規則核實）；淨收付可為負（買進流出）。
 - 交易原始 JSON 完整保留，包括其他稅費／利息／融資欄位，即使 V1 不做對應交易類型處理。
 - 對來源帳戶及證券別沒有充分資訊時，由使用者指定並寫入批次，不能偷偷使用另一券商帳戶。
 
@@ -501,8 +555,14 @@ uv run python -m backend.cli db init --db data/trading.db
 # 預覽檔案與欄位映射（不入庫）
 uv run python -m backend.cli import preview --file "input/Statement (2).xls" --profile statement_html_v1
 
+# 玉山真 XLSX 預覽（不入庫；現沖列為例外）
+uv run python -m backend.cli import preview --file "input/玉山.xlsx" --profile esun_xlsx_v1
+
 # 入庫：每批指定券商與帳戶
 uv run python -m backend.cli import apply --file "input/Statement (2).xls" --broker "群益" --account "main" --profile statement_html_v1
+
+# 玉山入庫（僅現股寫入 trades；現沖記 raw error；正式驗收前勿寫入正式 DB）
+uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/tmp_esun.db
 
 # 執行 FIFO，將配對版本保存 SQLite
 uv run python -m backend.cli match fifo --account "main"
@@ -538,9 +598,14 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | ING-02 | 兩筆「總合」列 | 排除，不當作交易 |
 | ING-03 | UTF-8 BOM／CP950 的 CSV | 正確解析；未知編碼報錯 |
 | ING-04 | 真正的 XLS、XLSX | 成功讀取並映射同一 canonical schema |
+| ING-05 | 玉山 XLSX：非首列表頭＋四種交易類型 | 結構重塑成功；現股／現沖皆可辨識 |
+| ING-06 | 玉山：日期列繼承＋次列代號 | 成交列取得正確日期；代號為正整數字串 |
+| ING-07 | 玉山：小計／頁尾／說明列 | 排除，不當作可入庫現股交易 |
+| ING-08 | 玉山：來源資料筆數與價金／費／稅合計 | 與頁尾「資料筆數」及金額欄一致（含現沖列計入核對） |
 | NORM-01 | 股票代碼有前導零 | DB、XLSX 均保留文字原樣 |
 | NORM-02 | 千分位、Decimal 金額、小數價 | 不透過 float 計算 |
 | NORM-03 | 未支援交易類型、日期錯誤 | 進例外而非默默納入 FIFO |
+| NORM-04 | 玉山次列負數代號（如 `-4971.0`） | 正規化為文字 `4971`，無科學記號／小數點殘留 |
 | DB-01 | 同帳戶同檔重匯入 | 第二次新增 0 筆交易 |
 | DB-02 | 相同條件真實兩筆成交 | 不因欄位相同就誤刪 |
 | DB-03 | 非法寫入、交易中途故障 | 交易回滾；既有資料完整 |
