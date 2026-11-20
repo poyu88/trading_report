@@ -138,5 +138,8 @@ def test_day_trade_fee_once_on_split() -> None:
     ]
     rows = project_detail_rows(trade_views, alloc_views, result.unsold)
     sell_fees = [(r.sell_commission, r.sell_tax) for r in rows if r.sell_trade_id == "ds1"]
-    assert sell_fees[0] == (Decimal("18"), Decimal("36"))
-    assert all(c == 0 and t == 0 for c, t in sell_fees[1:])
+    assert len(sell_fees) >= 2
+    assert sum(c for c, _ in sell_fees) == Decimal("18")
+    assert sum(t for _, t in sell_fees) == Decimal("36")
+    # 費用只落在一個片段
+    assert sum(1 for c, t in sell_fees if c != 0 or t != 0) == 1
