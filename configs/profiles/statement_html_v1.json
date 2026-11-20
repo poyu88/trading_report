@@ -1,0 +1,39 @@
+{
+  "profile_id": "statement_html_v1",
+  "version": 1,
+  "source_format": "html_table",
+  "table_index": 0,
+  "required_headers": ["商品", "成交日", "買賣別", "成交股數"],
+  "column_map": {
+    "商品": "symbol_and_name",
+    "成交日": "trade_date",
+    "買賣別": "side_raw",
+    "幣別": "currency_raw",
+    "成交價": "unit_price",
+    "成交股數": "quantity",
+    "成交金額": "gross_amount",
+    "手續費": "commission",
+    "交易稅": "tax",
+    "淨收付": "net_settlement",
+    "融資金額/擔保價款": "margin_amount",
+    "自備款/保證金": "self_margin",
+    "利息": "interest",
+    "融券手續費": "short_commission",
+    "標借費": "borrow_fee",
+    "證所稅": "securities_tax",
+    "健保費": "nhi_fee",
+    "下單來源別": "order_channel"
+  },
+  "exclude_row_prefixes": ["總合("],
+  "side_map": {
+    "現股買進": "BUY",
+    "現股賣出": "SELL"
+  },
+  "currency_map": {
+    "臺幣": "TWD",
+    "台幣": "TWD",
+    "TWD": "TWD"
+  },
+  "date_formats": ["%Y/%m/%d", "%Y-%m-%d"],
+  "gross_tolerance": "1"
+}
