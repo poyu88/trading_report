@@ -2,38 +2,25 @@
 alwaysApply: true
 ---
 
-# Test-Driven Development Rules
+# TDD 強制開發規則
 
-## 核心原則
+所有新增功能、功能修改及 Bug 修正，
+必須遵循：
 
-所有新增功能與 Bug 修正必須遵循：
+docs/test/TDD.md
 
-RED → GREEN → REFACTOR → REGRESSION
+## 執行要求
 
-## RED
-- 先建立失敗測試。
-- 測試必須因預期業務行為尚未滿足而失敗。
-- 記錄 pytest 失敗結果。
-- 先提交測試 Commit。
+1. 開發前先閱讀 TDD.md。
+2. 嚴格遵循 RED → GREEN → REFACTOR → REGRESSION。
+3. RED 必須是實際業務行為尚未滿足造成的失敗。
+4. GREEN 只能做讓測試通過的最小實作。
+5. REFACTOR 不得改變既有業務行為。
+6. REGRESSION 執行完整 uv run pytest -q。
+7. 保留真實測試輸出與 Git Commit。
+8. 更新 docs/test/TDD_STATUS.md。
+9. 不得虛構 RED 歷史或削弱既有斷言。
+10. 不得使用真實交易資料進行自動化測試。
 
-## GREEN
-- 僅進行滿足測試所需的最小實作。
-- 不得刪除或弱化測試斷言。
-- 確認目標測試通過。
-- 提交實作 Commit。
-
-## REFACTOR
-- 改善程式品質，但不得改變業務行為。
-- 相關測試必須保持通過。
-- 記錄重構內容及結果。
-
-## REGRESSION
-- 執行 uv run pytest -q。
-- 必須全部通過才能宣稱完成。
-- 更新 docs/test/TDD_STATUS.md。
-
-## 安全要求
-- 使用 tmp_path 與合成交易資料。
-- 不得修改正式 SQLite 資料庫。
-- 不得修改真實交易來源檔案。
-- 不得虛構歷史 RED/GREEN/REFACTOR 證據。
+若 TDD.md 不存在或內容不一致，
+先報告問題，不得自行假定符合規範。

@@ -1,10 +1,10 @@
 # TDD 測試狀態與稽核紀錄
 
-依 `.cursor/TDD_GUIDE.md`、`docs/spec/SPEC.md` §12、以及本檔生命週期追蹤表維護。
+依 `docs/test/TDD.md`、`docs/spec/SPEC.md` §12、以及本檔生命週期追蹤表維護。
 
 > **稽核結論（2026-11-20）**：目前 **34 個測試全部通過**，屬有效的**特徵化／回歸安全網**；**沒有**可驗證的「測試先失敗 → 最小實作 → 重構」TDD 生命週期證據。不得將事後補測且直接綠燈的案例宣稱為 RED。
 >
-> **回歸基準 Commit**：將程式碼、測試與 `tdd-rule` 首次入庫的 commit 僅作為**現有功能回歸測試基準版本**，**不得**標記或解讀為「已完成 TDD」。真正的 TDD 自下一筆新需求起，依 `.cursor/rules/tdd-rule.mdc` 執行 RED→GREEN→REFACTOR→REGRESSION，並記入 §6.2。
+> **回歸基準 Commit**：`cf4e68e`（`add：建立現有功能回歸測試基準版本（非 TDD 完成）`）。將程式碼、測試與 `tdd-rule` 首次入庫的 commit 僅作為**現有功能回歸測試基準版本**，**不得**標記或解讀為「已完成 TDD」。真正的 TDD 自下一筆新需求起，依 `docs/test/TDD.md`（`.cursor/rules/tdd-rule.mdc` 強制引用）執行 RED→GREEN→REFACTOR→REGRESSION，並記入 §6.2。
 
 ---
 
@@ -25,28 +25,28 @@
 
 ## 2. Git 歷史稽核：測試是否先於實作？
 
-### 已提交（`git log`；基準入庫後請以 `git log` 為準）
+### 已提交（`git log`）
 
 | Commit | 日期 | 內容 |
 |---|---|---|
 | `f17e068` | 2026-11-20 | `add：初始化專案文件與 Cursor 開發設置`（rules／hooks／初版 PRD／SPEC） |
 | `dce0921` | 2026-11-20 | `doc：重寫 PRD 與 SPEC 為 Database-first 架構` |
-| _(回歸基準)_ | 2026-11-20 | 見 §9：入庫 `backend/`、`tests/`、`.cursor/rules/tdd-rule.mdc` 等；**非 TDD 完成** |
+| `cf4e68e` | 2026-11-20 | **回歸基準**：`add：建立現有功能回歸測試基準版本（非 TDD 完成）`；入庫 `backend/`、`tests/`、`.cursor/rules/tdd-rule.mdc`、`docs/test/TDD_STATUS.md` 等；**非 TDD 完成** |
 
 ### 刻意不入庫（機密／真實資料）
 
-由 `.gitignore` 排除：`data/`（含 `trading.db`、`source_archive/`）、`input/`（含真實 `群益.xls`）、`output/`、`.env*`、`*.db`。Fixtures 僅合成 HTML。
+由 `.gitignore` 排除：`data/`（含 `trading.db`、`source_archive/`）、`input/`（含真實對帳單）、`output/`、`.env*`、`*.db`。Fixtures 僅合成 HTML。
 
 ### 判定
 
 | 問題 | 判定 |
 |---|---|
-| 是否有「測試 commit 早於功能 commit」？ | **否**。測試與實作均尚未入庫，無可比對的 commit 序。 |
-| 是否有 RED／GREEN／REFACTOR 分階段 commit？ | **否**。生命週期追蹤表目前為空（見 §6）。 |
+| 是否有「測試 commit 早於功能 commit」？ | **否**。`cf4e68e` 同 commit 同時入庫實作與測試，無分階段 RED→GREEN 序。 |
+| 是否有 RED／GREEN／REFACTOR 分階段 commit？ | **否**。生命週期追蹤表 §6.2 目前為空。 |
 | 檔案時間線（輔助，非正式 Git 證據） | `backend/` 約 18:24–18:53 寫入；多數 `tests/test_*.py` 約 18:45–18:46；`test_tdd_cli_contract.py` 約 19:10（CLI 已存在後）；`test_db_transactions.py` 約 19:22（功能已存在後補寫）。 |
 | 先前 Agent 執行紀錄 | 契約測試**首次對現況執行即 12/12 PASS**；`test_db_transactions` 僅遇一次 **fixture／session 用法錯誤**（`DetachedInstanceError`），修正測試後即 PASS——**非業務行為缺失的 RED**。 |
 
-**結論**：依 `TDD_GUIDE.md` 定義，現況應標為**特徵化／回歸測試**，不是已完成的 TDD 開發史。
+**結論**：依 `docs/test/TDD.md` 定義，現況應標為**特徵化／回歸測試**，不是已完成的 TDD 開發史。
 
 ---
 
@@ -137,20 +137,20 @@
 | REP-05／REP-06 無 Excel／公式注入 | 契約有「無公式」部分；注入字串案例不足 |
 | AUD-03 同版 FIFO 可重現且舊 run 不覆寫 | 未見獨立斷言 |
 
-新增上述缺口時，**必須先 RED**（見 §7），不得直接補綠燈測試並宣稱 TDD。
+新增上述缺口時，**必須先 RED**（見 `docs/test/TDD.md`），不得直接補綠燈測試並宣稱 TDD。
 
 ---
 
 ## 6. 功能 TDD 生命週期追蹤
 
 > 僅在**確實發生**該階段時填寫。禁止回填虛構的失敗結果或假 commit。  
-> Commit 欄在程式尚未入庫前填 `（尚未 commit）`；入庫後填短 SHA。
+> Commit 欄填短 SHA。
 
 ### 6.1 既有功能（歷史——非 TDD）
 
 | 功能／規則 | RED | GREEN | REFACTOR | 全量 pytest | 判定 |
 |---|---|---|---|---|---|
-| P0 匯入／FIFO／明細／CLI（初版實作） | 無證據 | 無分階段證據 | 無證據 | 事後全綠（34） | **特徵化／回歸** |
+| P0 匯入／FIFO／明細／CLI（初版實作） | 無證據 | 無分階段證據 | 無證據 | 事後全綠（34）；基準 `cf4e68e` | **特徵化／回歸** |
 | CLI 契約 01–12 | 首次對現況執行即 PASS；無失敗紀錄 | 不適用（無先紅） | 不適用 | 含於 34 passed | **回歸契約** |
 | `test_db_transactions`（2026-11-20 補） | 僅測試寫法錯誤一次；**非**業務 RED | 功能已存在；測通即綠 | 未做結構重構 | 補測後 34 passed | **回歸** |
 
@@ -170,7 +170,7 @@
 
 ## 7. 強制流程（自本稽核起）
 
-對任何**新增功能**或 **Bug 修復**：
+對任何**新增功能**或 **Bug 修復**，完整政策見 `docs/test/TDD.md`。摘要：
 
 1. **RED**：先寫／擴充分會因「預期行為尚未實現」而失敗的測試；執行並保存失敗輸出。
 2. **GREEN**：只做最小實作使該測試通過；不得為綠燈刪減斷言。
@@ -178,7 +178,7 @@
 4. 於 §6.2 登錄三階段結果與 Git commit。
 5. 測試只准使用合成資料與 `tmp_path`／臨時 DB；**禁止**讀寫 `data/trading.db`、真實 `input/` 附件、正式 `output/` 報表，也禁止把真實對帳單提交進 Git。
 
-既有 34 項繼續作為回歸門檻；它們的存在**不構成**歷史 TDD 完成證明。
+既有 34 項繼續作為回歸門檻；它們的存在**不構成**歷史 TDD 完成證明。回歸基準 Commit：`cf4e68e`。
 
 ---
 
@@ -191,6 +191,8 @@ uv run pytest tests/test_tdd_cli_contract.py -q -x --tb=short
 uv run pytest -v --tb=line
 ```
 
+詳見 `docs/test/TDD.md` §4。
+
 ---
 
 ## 9. 稽核變更紀錄
@@ -199,4 +201,5 @@ uv run pytest -v --tb=line
 |---|---|
 | 2026-11-20 | 初建狀態檔（僅列契約 PASS，未區分 TDD／回歸）。 |
 | 2026-11-20 | **本稽核**：實跑 34 PASS；Git 僅文件 commit；程式／測試未入庫；全數標為回歸；新增生命週期追蹤與強制 RED 政策；不製造假 RED、不破壞既有實作。 |
-| 2026-11-20 | **回歸基準入庫**：新增 `.cursor/rules/tdd-rule.mdc`；提交程式／測試／文件；排除真實 DB／對帳單／報表；`statement_sample.html` 改為合成測資。此 commit **不是** TDD 完成標記。 |
+| 2026-11-20 | **回歸基準入庫** `cf4e68e`：新增 `.cursor/rules/tdd-rule.mdc`；提交程式／測試／文件；排除真實 DB／對帳單／報表；`statement_sample.html` 改為合成測資。此 commit **不是** TDD 完成標記。 |
+| 2026-11-20 | **文件架構整理**：建立 `docs/test/TDD.md` 為唯一正式規範；`tdd-rule.mdc` 改為強制引用；移除 `.cursor/TDD_GUIDE.md`（內容已整併）；更新契約測試過時註解；本檔補記基準 Commit `cf4e68e` 並修正「尚未入庫」等過時描述。 |

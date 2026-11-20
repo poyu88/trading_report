@@ -1,12 +1,14 @@
 """trading_report public-CLI contract tests (synthetic data only).
 
-Place in <project>/tests/test_tdd_cli_contract.py and run:
+Run:
     uv run pytest tests/test_tdd_cli_contract.py -q -x
 
-These tests are intentionally strict RED/GREEN TDD acceptance contracts based on
-PRD.md + SPEC.md + README CLI. They have not been run against the user's local
-source code; small fixture/CLI adaptations may be needed if the implementation
-uses a different import profile or output convention.
+Black-box acceptance contracts based on docs/prd/PRD.md, docs/spec/SPEC.md, and
+README CLI. Policy: docs/test/TDD.md. Current suite status: docs/test/TDD_STATUS.md
+(characterization / regression baseline at commit cf4e68e; not historical TDD).
+
+If the implementation uses a different import profile or output convention,
+adapt fixtures/CLI wiring — do not weaken business assertions.
 
 Every test uses pytest's temporary directory, never data/trading.db or real input.
 """
@@ -157,7 +159,7 @@ def cell_decimal(cell) -> Decimal:
     return Decimal(str(cell.value))
 
 
-# ── INGEST / DB: TDD Red → Green ─────────────────────────────────────────
+# ── INGEST / DB: contract (regression baseline) ──────────────────────────
 
 def test_01_preview_does_not_insert_trades(env):
     source = make_html_xls(env["input"] / "preview.xls", [
