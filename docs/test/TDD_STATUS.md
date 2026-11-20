@@ -50,7 +50,7 @@
 | 修復 | Bugbot／Cloud Agent：融資等未支援交易類別不得靜默丟棄 → `UNSUPPORTED_TRADE_TYPE` |
 | Commits | RED `fb8d5f2` → GREEN `a0df837` → doc `592e1a5`（分支 `cursor/fix-esun-unsupported-rows-d1e5`） |
 
-### 1.5 本機整合補充覆蓋後（本分支最新 REGRESSION）
+### 1.5 本機整合補充覆蓋後（歷史 REGRESSION）
 
 | 項目 | 結果 |
 |---|---|
@@ -60,7 +60,19 @@
 | 耗時 | 約 74s（2026-11-21） |
 | 正式 DB | **未** apply／migrate |
 | 整合 | Fast-forward 合併 Cloud PR #2；保留其 RED／GREEN／doc；另補融資＋配股 preview、apply→`raw_rows`、來源核對區分；**非** Cloud 原始 RED 回填 |
-| 補充 commit | `7a3a2f8`（測試）；本檔 doc commit 見最新 `git log` |
+| 補充 commit | `7a3a2f8`（測試）；整合 doc `6c231a2` |
+
+### 1.6 合併前文件對齊後（本分支最新 REGRESSION）
+
+| 項目 | 結果 |
+|---|---|
+| 指令 | `uv run pytest -q --tb=line` |
+| 收集數 | 55 |
+| 結果 | **55 passed**（0 failed / 0 skipped） |
+| 耗時 | 約 68s（2026-11-21） |
+| 正式 DB | mtime 仍為 2026-11-20 18:51:21；**未** apply／migrate |
+| 文件 | 對齊 PRD §2.3／SPEC §4.2.1／ING-08／README：候選列／已正規化／未支援／來源核對；**未改** parser 業務規則 |
+| TDD 證據 | Cloud RED／GREEN（`fb8d5f2`／`a0df837`）與本機補充（`7a3a2f8`）歷史**未改寫** |
 
 ---
 
@@ -191,7 +203,7 @@
 | ING-04 真 XLS／XLSX（通用） | 玉山路徑覆蓋真 XLSX；通用 OLE／非玉山 XLSX 仍無獨立案例 |
 | NORM-02 千分位／禁 float | 未見獨立斷言 |
 | NORM-03 未支援類型／壞日期 | 玉山融資／配股已有 preview／raw_rows／來源核對區分；通用 HTML／壞日期仍弱 |
-| ING-08 頁尾含未支援列時 | SPEC 表已寫「未支援不計入來源核對」→ `matched=false`；PRD §2.3／ING-08 敘述仍偏「全筆一致」，建議後續修訂 |
+| ING-08 頁尾含未支援列時 | **已對齊文件**（PRD §2.3／SPEC §4.2.1／ING-08）：未支援不計入 `recognized_*` → `matched=false`；自動化見本機補充測試 |
 | FEE-03 gross 尾差守恆 | 未見獨立斷言 |
 | REP-05／REP-06 無 Excel／公式注入 | 契約有「無公式」部分；注入字串案例不足 |
 | AUD-03 同版 FIFO 可重現且舊 run 不覆寫 | 未見獨立斷言 |
@@ -270,3 +282,4 @@ uv run pytest -v --tb=line
 | 2026-11-20 | **`day_trade_v1` TDD**：規格 `d24c966` → RED `6e473ab`（12 failed）→ GREEN `e72f8b5` → 斷言穩固 `5a57791`；全量 **52 passed**；Preview 65 ok／0 error；未 apply／migrate 正式 DB。 |
 | 2026-11-20 | **Cloud Agent `esun_unsupported_rows_v1`**：RED `fb8d5f2`（融資靜默消失）→ GREEN `a0df837`（候選列輸出／未支援不計 recognized）→ doc `592e1a5`；全量 **53 passed**。 |
 | 2026-11-21 | **本機整合**：`feature/esun-xlsx-parser` fast-forward 合併上述 3 commits；保留 Cloud 歷史；另補融資／配股／`raw_rows`／來源核對區分（`7a3a2f8`，**非** Cloud RED 回填）；全量 **55 passed**；未 Push／Merge PR／改正式 DB。 |
+| 2026-11-21 | **合併前文件對齊**：修訂 PRD §2.3、SPEC §4.2.1／ING-08、README、本檔缺口列；區分候選列／已正規化／未支援／來源核對；全量 **55 passed**；**未** Push／Merge／寫正式 DB；文件變更待使用者確認後再 commit／push。 |
