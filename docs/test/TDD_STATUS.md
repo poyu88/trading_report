@@ -2,7 +2,7 @@
 
 依 `docs/test/TDD.md`、`docs/spec/SPEC.md` §12、以及本檔生命週期追蹤表維護。
 
-> **稽核結論（2026-11-20）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。`esun_xlsx_v1` 與後續 **`day_trade_v1`** 均有可驗證 TDD 生命週期（見 §6.2）。
+> **稽核結論（2026-11-20）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。`esun_xlsx_v1`、`day_trade_v1` 與 **`esun_unsupported_rows_v1`** 均有可驗證 TDD 生命週期（見 §6.2）。
 >
 > **回歸基準 Commit**：`cf4e68e`。分支基準：`c537d8b`。
 
@@ -28,7 +28,7 @@
 | 結果 | **43 passed** |
 | 日期 | 2026-11-20 |
 
-### 1.3 現沖 DAY_TRADE 支援後（本分支最新 REGRESSION）
+### 1.3 現沖 DAY_TRADE 支援後（歷史 REGRESSION）
 
 | 項目 | 結果 |
 |---|---|
@@ -38,6 +38,16 @@
 | 耗時 | 約 61s（2026-11-20） |
 | 正式 DB | `data/trading.db` mtime 仍為 2026-11-20 18:51:21；**未** apply／migrate |
 | 真實 Preview | `trade_count=65`、`error_count=0`、buy 23／sell 42；`source_reconciliation.matched=true`（價金 1800949／費 2533／稅 2765）；來源 SHA／mtime 不變 |
+
+### 1.4 玉山未支援列例外後（本分支最新 REGRESSION）
+
+| 項目 | 結果 |
+|---|---|
+| 指令 | `uv run pytest -q --tb=line` |
+| 收集數 | 53（原 52 + 1） |
+| 結果 | **53 passed**（0 failed / 0 skipped） |
+| 耗時 | 約 28s（2026-11-20） |
+| 修復 | Bugbot：融資等未支援交易類別不得靜默丟棄 → `UNSUPPORTED_TRADE_TYPE` |
 
 ---
 
@@ -192,6 +202,7 @@
 |---|---|---|---|---|---|---|
 | `esun_xlsx_v1` | 玉山真 XLSX：日期繼承、次列代號、四類型、小計排除、來源核對、現沖不進 FIFO（當時規格） | 2026-11-20；`uv run pytest tests/test_esun_xlsx_*.py -v`；**8 failed / 1 passed**；失敗為 `ProfileError`／`ModuleNotFoundError`；commit `adb6fcc` | 2026-11-20；commit `1199e55`；9 passed | 2026-11-20；commit `b2b7dc1` | **43 passed** | 規格 `5ade9a8`；當時 Preview：63 ok／2 現沖 error（已被 `day_trade_v1` 覆寫行為，本列不改寫歷史） |
 | `day_trade_v1` | 現沖改為 DAY_TRADE 可入庫；同日無序 FIFO（含先賣後買）；不占 CASH | 2026-11-20；`uv run pytest tests/test_day_trade_*.py tests/test_esun_xlsx_*.py -v`；**12 failed / 6 passed**；缺 `trade_type_map`、現沖仍 `DAY_TRADE_UNSUPPORTED`、同日 `ORDER_AMBIGUITY`／跨日誤配；commit `6e473ab` | 2026-11-20；schema／profile／normalizer／同日 DAY_TRADE FIFO／報表標籤；commit `e72f8b5` | GREEN 已抽出 `_run_day_trade_group` 等；另 `5a57791` 穩固費用斷言；無獨立 restruct commit | **52 passed** | 規格 `d24c966`；Preview：65 ok／0 error；matched；來源與正式 DB 未改 |
+| `esun_unsupported_rows_v1` | 玉山非四種交易類別（如融資）不得靜默丟棄；須進 `UNSUPPORTED_TRADE_TYPE` | 2026-11-20；`uv run pytest tests/test_esun_xlsx_parser.py::test_unsupported_trade_type_becomes_exception_not_silent_drop -v`；**1 failed**；`error_count == 0`（融資列被 skip）；commit `fb8d5f2` | 2026-11-20；parser 對非結構首欄列仍輸出扁平列；未支援不計入來源核對；commit `a0df837` | 無獨立 restruct | **53 passed** | Bugbot Medium；SPEC 補「未支援成交列」列 |
 
 **記錄欄位最低要求**
 
