@@ -113,3 +113,19 @@ def write_esun_trade_without_date(path: Path) -> Path:
     ws.append(["", -3162])
     wb.save(path)
     return path
+
+
+def write_esun_with_unsupported_trade_type(path: Path) -> Path:
+    """含融資買進（未支援）與一筆現股買進 → 未支援列應成例外，現股仍可辨識。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "工作表1"
+    ws.append(HEADERS)
+    ws.append([date(2025, 1, 9)])
+    ws.append(["融資買進", "精確", 1000, 40.0, 40000, 50, 0, 0, 0, 0, 0, -40050, 0, 0])
+    ws.append(["", -3162])
+    ws.append(["現股買進", "精確", 500, 41.0, 20500, 30, 0, 0, 0, 0, 0, -20530, 0, 0])
+    ws.append(["", -3162])
+    ws.append(["2025/01/09 小計", "", "", "", "", "", "", "", "", "", "", -60580])
+    wb.save(path)
+    return path

@@ -9,6 +9,7 @@ from backend.ingest.mapping import load_profile
 from tests.esun_xlsx_fixtures import (
     write_esun_missing_symbol_row,
     write_esun_trade_without_date,
+    write_esun_with_unsupported_trade_type,
     write_synthetic_esun_xlsx,
 )
 
@@ -77,3 +78,23 @@ def test_trade_before_date_banner_is_error(tmp_path: Path) -> None:
     preview = preview_import(path, "esun_xlsx_v1")
     assert preview.trade_count == 0
     assert preview.error_count >= 1
+
+
+def test_unsupported_trade_type_becomes_exception_not_silent_drop(tmp_path: Path) -> None:
+    """NORM-03／FR-02：融資等未支援類型須進例外，不得靜默丟棄。"""
+    from backend.services.import_service import preview_import
+
+    path = write_esun_with_unsupported_trade_type(tmp_path / "esun_margin.xlsx")
+    preview = preview_import(path, "esun_xlsx_v1")
+
+    assert preview.trade_count == 1
+    assert preview.error_count == 1
+    errors = [r for r in preview.rows if r.status == "error"]
+    assert len(errors) == 1
+    assert errors[0].symbol == "3162"
+    assert errors[0].message is not None
+    assert "UNSUPPORTED_TRADE_TYPE" in errors[0].message or "未支援" in errors[0].message
+    ok = [r for r in preview.rows if r.status == "ok"]
+    assert len(ok) == 1
+    assert ok[0].symbol == "3162"
+    assert ok[0].side == "BUY"
