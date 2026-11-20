@@ -233,19 +233,24 @@ trading_report/
   "exclude_row_prefixes": ["資料筆數", "說明"],
   "side_map": {
     "現股買進": "BUY",
-    "現股賣出": "SELL"
+    "現股賣出": "SELL",
+    "現沖買進": "BUY",
+    "現沖賣出": "SELL"
   },
-  "unsupported_sides": {
-    "現沖買進": "DAY_TRADE_UNSUPPORTED",
-    "現沖賣出": "DAY_TRADE_UNSUPPORTED"
+  "trade_type_map": {
+    "現股買進": "CASH",
+    "現股賣出": "CASH",
+    "現沖買進": "DAY_TRADE",
+    "現沖賣出": "DAY_TRADE"
   },
+  "unsupported_sides": {},
   "default_currency": "TWD",
   "date_formats": ["%Y/%m/%d", "%Y-%m-%d"],
   "gross_tolerance": "1"
 }
 ```
 
-**現沖與一般現股 FIFO 邊界**：`現股*` → `BUY`/`SELL`、`trade_type=CASH`，可入庫並進 FIFO。`現沖*` → 可辨識並計入來源筆數／金額核對，但標記 `DAY_TRADE_UNSUPPORTED`，**不寫入 `trades`、不進 CASH FIFO**。缺日期繼承或缺次列代號 → 列級驗證錯誤。profile／結構失敗（找不到表頭等）→ apply 整批不寫入並 rollback。
+**現沖與一般現股 FIFO 邊界**：`現股*` → BUY／SELL、`trade_type=CASH`；`現沖*` → BUY／SELL、`trade_type=DAY_TRADE`；皆可入庫。DAY_TRADE 與 CASH 為獨立 lot pool。同日無序現沖**必須**與當日對應買賣相互 FIFO（當日 BUY 建 lot → 當日 SELL FIFO，含先賣後買），**不得**因缺 time／sequence 標 `ORDER_AMBIGUITY` 而跳過；lot 不跨日、不消耗 CASH。未配平進 `reconciliation_issues`，不是解析錯誤。缺日期繼承或缺次列代號 → 列級驗證錯誤。profile／結構失敗 → apply 整批不寫入並 rollback。
 
 ### 4.3 Canonical Trade 模型
 
@@ -261,7 +266,7 @@ class Trade:
     trade_time: time | None
     trade_sequence: int | None # 真實或人工核准的順序；不可自行虛構
     side: Literal["BUY", "SELL"]
-    trade_type: Literal["CASH"]
+    trade_type: Literal["CASH", "DAY_TRADE"]
     currency: str               # 預設 TWD，僅來源/設定有證據時
     quantity: int
     unit_price: Decimal
@@ -277,9 +282,9 @@ class Trade:
 ### 4.4 正規化規則
 
 - `symbol_and_name` 拆為股票代碼及名稱；股票代碼始終為字串。
-- `現股買進 → BUY`、`現股賣出 → SELL`；其他語意一律先列未支援例外。
+- `現股買進/賣出`、`現沖買進/賣出` 經 `side_map` → BUY／SELL；`trade_type_map` → CASH／DAY_TRADE；其他語意一律先列未支援例外（`unsupported_sides`／`UNSUPPORTED_TRADE_TYPE`）。
 - 玉山次列代號：來源數值取絕對值後轉整數字串（如 `-4971.0` → `4971`）；禁止以 float 科學記號或帶小數點字串入庫。
-- `現沖買進`／`現沖賣出`：使用 profile `unsupported_sides` → `DAY_TRADE_UNSUPPORTED`（見 §4.2.1），不得默默當現股。
+- 現沖股數、單價、成交金額、手續費、交易稅採與現股相同正規化；費用用來源值，不重算不分攤。
 - `臺幣`／`TWD` 標準化為 `TWD`；未知幣別不得推定。無幣別欄時僅在 profile 明示 `default_currency` 時使用。
 - 小數、逗號、負號採明確 parser；`Decimal(text.replace(',', ''))`；不得用 `float()` 做金額計算。
 - 日期從 `YYYY/MM/DD` 等已確認格式轉為 `date`，禁止不明格式的月份／日期猜測；玉山成交列繼承日期列。
@@ -318,7 +323,7 @@ CREATE TABLE IF NOT EXISTS trades (
     trade_time TEXT,                -- 可空；原始有值才填
     trade_sequence INTEGER,         -- 無可信順序時 NULL
     side TEXT NOT NULL CHECK (side IN ('BUY','SELL')),
-    trade_type TEXT NOT NULL CHECK (trade_type = 'CASH'),
+    trade_type TEXT NOT NULL CHECK (trade_type IN ('CASH', 'DAY_TRADE')),
     currency TEXT NOT NULL,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit_price_txt TEXT NOT NULL,
@@ -354,12 +359,12 @@ ON trades(account_id, symbol, currency, trade_date, trade_time);
 
 ### 6.1 Scope 與排序
 
-分組鍵：`account_id, symbol, currency, trade_type`；同一個組內按照**可證實**的成交順序處理交易。日內時間或原始序號缺失、且影響買賣合法先後或 FIFO lot 選擇時，產生 `ORDER_AMBIGUITY` 例外；不能僅憑輸入檔排序捏造交易先後。
+分組鍵：`account_id, symbol, currency, trade_type`；CASH 與 DAY_TRADE 為獨立 pool。
 
-- 明確較早日期的 BUY 可配對較晚日期的 SELL。
-- 同日如有可靠時間／成交編號／使用者核准次序，可配對；否則需要同日買入才能覆蓋賣出或同日多買成本不同而先後無法判別時，應待確認。
+- **CASH**：組內依可證實成交順序處理。日內時間或原始序號缺失、且影響買賣合法先後或 FIFO lot 選擇時，產生 `ORDER_AMBIGUITY`；不能僅憑輸入檔排序捏造交易先後。明確較早日期的 BUY 可配對較晚日期的 SELL；不得配對未來買進。
+- **DAY_TRADE**：僅同日配對。同日無序現沖**不得**標 `ORDER_AMBIGUITY` 而跳過；對每個交易日先將當日全部 DAY_TRADE BUY 建成 lot，再以 FIFO 將當日 DAY_TRADE SELL 配入（含檔內先賣後買）。lot **不跨日**、**不消耗 CASH**。未配平剩餘進 `reconciliation_issues`。
 - 買賣同股票但不同帳戶不得直接相互抵銷。
-- `opening_lots` 必須由核准的真實成本與數量建立，並參與 FIFO。
+- `opening_lots` 必須由核准的真實成本與數量建立，並僅參與 **CASH** FIFO。
 
 ### 6.2 Python 型別與偽程式碼
 
@@ -555,13 +560,13 @@ uv run python -m backend.cli db init --db data/trading.db
 # 預覽檔案與欄位映射（不入庫）
 uv run python -m backend.cli import preview --file "input/Statement (2).xls" --profile statement_html_v1
 
-# 玉山真 XLSX 預覽（不入庫；現沖列為例外）
+# 玉山真 XLSX 預覽（不入庫；現股＋現沖皆應通過類型驗證）
 uv run python -m backend.cli import preview --file "input/玉山.xlsx" --profile esun_xlsx_v1
 
 # 入庫：每批指定券商與帳戶
 uv run python -m backend.cli import apply --file "input/Statement (2).xls" --broker "群益" --account "main" --profile statement_html_v1
 
-# 玉山入庫（僅現股寫入 trades；現沖記 raw error；正式驗收前勿寫入正式 DB）
+# 玉山入庫（現股 CASH＋現沖 DAY_TRADE；正式驗收前請用臨時 DB）
 uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/tmp_esun.db
 
 # 執行 FIFO，將配對版本保存 SQLite
@@ -606,6 +611,7 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | NORM-02 | 千分位、Decimal 金額、小數價 | 不透過 float 計算 |
 | NORM-03 | 未支援交易類型、日期錯誤 | 進例外而非默默納入 FIFO |
 | NORM-04 | 玉山次列負數代號（如 `-4971.0`） | 正規化為文字 `4971`，無科學記號／小數點殘留 |
+| NORM-05 | 現沖買／賣正規化 | `trade_type=DAY_TRADE`；side BUY／SELL；手續費／稅保留來源值 |
 | DB-01 | 同帳戶同檔重匯入 | 第二次新增 0 筆交易 |
 | DB-02 | 相同條件真實兩筆成交 | 不因欄位相同就誤刪 |
 | DB-03 | 非法寫入、交易中途故障 | 交易回滾；既有資料完整 |
@@ -613,8 +619,10 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | FIFO-02 | BUY 1000+500，SELL 1200 | 配對 1000+200、剩餘 300 |
 | FIFO-03 | 買進早於多次賣出 | 依順序配對、不超賣 |
 | FIFO-04 | SELL 在所有可用 BUY 前 | 未匹配例外，不配對未來 BUY |
-| FIFO-05 | 同日無可信先後且影響配對 | `ORDER_AMBIGUITY`，不得宣稱完成 |
+| FIFO-05 | 同日無可信先後且影響配對（**CASH**） | `ORDER_AMBIGUITY`，不得宣稱完成 |
 | FIFO-06 | 不同帳戶、股票、幣別 | 絕不跨組配對 |
+| FIFO-07 | 同日無序 DAY_TRADE（含先賣後買） | 當日相互 FIFO 配平；股數守恆；不標 ORDER_AMBIGUITY |
+| FIFO-08 | DAY_TRADE 與跨日／同日 CASH 並存 | 現沖不消耗 CASH lot；CASH 不消耗 DAY_TRADE lot |
 | FEE-01 | 一筆 BUY 被拆 3 段 | 該 BUY 的費用只在第一段 |
 | FEE-02 | 一筆 SELL 配對 2 個 BUY | 該 SELL 手續費與交易稅只出現一次 |
 | FEE-03 | source gross 與 price×qty 有合法尾差 | 片段 gross 合計等於來源總額，不動費用 |
