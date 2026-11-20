@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "uv run python hooks/check_sensitive_prompt.py"
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "uv run python hooks/check_sensitive_file.py"
+      }
+    ]
+  }
+}
