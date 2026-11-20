@@ -1,0 +1,37 @@
+{
+  "profile_id": "esun_xlsx_v1",
+  "version": 1,
+  "source_format": "esun_xlsx",
+  "table_index": 0,
+  "required_headers": ["交易類別", "股票名稱", "成交股數", "成交單價", "成交價金"],
+  "column_map": {
+    "交易類別": "side_raw",
+    "股票名稱": "name",
+    "成交股數": "quantity",
+    "成交單價": "unit_price",
+    "成交價金": "gross_amount",
+    "手續費": "commission",
+    "交易稅": "tax",
+    "利息": "interest",
+    "淨收付金額": "net_settlement",
+    "成交日": "trade_date",
+    "股票代號": "symbol"
+  },
+  "exclude_row_prefixes": ["資料筆數", "說明"],
+  "side_map": {
+    "現股買進": "BUY",
+    "現股賣出": "SELL"
+  },
+  "unsupported_sides": {
+    "現沖買進": "DAY_TRADE_UNSUPPORTED",
+    "現沖賣出": "DAY_TRADE_UNSUPPORTED"
+  },
+  "default_currency": "TWD",
+  "currency_map": {
+    "臺幣": "TWD",
+    "台幣": "TWD",
+    "TWD": "TWD"
+  },
+  "date_formats": ["%Y/%m/%d", "%Y-%m-%d"],
+  "gross_tolerance": "1"
+}

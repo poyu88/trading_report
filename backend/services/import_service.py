@@ -20,6 +20,7 @@ from backend.domain.exceptions import FileFormatError
 from backend.domain.models import decimal_to_txt
 from backend.ingest.csv_parser import parse_csv
 from backend.ingest.detector import FileKind, detect_file
+from backend.ingest.esun_xlsx_parser import parse_esun_xlsx
 from backend.ingest.excel_parser import parse_excel
 from backend.ingest.html_parser import ParsedTable, parse_html_table
 from backend.ingest.mapping import MappingProfile, load_profile, map_row
@@ -50,6 +51,7 @@ class ImportPreview:
     excluded_count: int
     error_count: int
     rows: list[PreviewRow]
+    source_reconciliation: dict[str, Any] | None = None
 
 
 @dataclass
@@ -76,6 +78,13 @@ def sha256_text(text: str) -> str:
 
 def _parse_with_profile(path: Path, profile: MappingProfile) -> tuple[ParsedTable, str]:
     detected = detect_file(path)
+    if profile.source_format == "esun_xlsx":
+        if detected.kind not in (FileKind.OLE_XLS, FileKind.XLSX):
+            raise FileFormatError(
+                f"esun_xlsx profile 需要真 Excel，實際為：{detected.kind.value}"
+            )
+        table = parse_esun_xlsx(path, profile)
+        return table, detected.kind.value
     if detected.kind == FileKind.HTML_TABLE:
         table = parse_html_table(path, profile, encoding=detected.encoding or "utf-8")
     elif detected.kind == FileKind.CSV:
@@ -162,6 +171,7 @@ def preview_import(path: Path, profile_id: str) -> ImportPreview:
         excluded_count=excluded,
         error_count=errors,
         rows=preview_rows,
+        source_reconciliation=table.source_reconciliation,
     )
 
 

@@ -16,6 +16,7 @@ class ParsedTable:
     headers: list[str]
     rows: list[tuple[int, list[str]]]  # (row_index, cell values)
     sheet_name: str = "table0"
+    source_reconciliation: dict | None = None
 
 
 def _cell_text(cell) -> str:  # type: ignore[no-untyped-def]

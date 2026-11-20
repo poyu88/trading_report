@@ -121,6 +121,27 @@ def normalize_mapped_row(
                 raise ValidationError("缺少股票代號")
 
         side_raw = mapped.get("side_raw", "").strip()
+        unsupported_code = profile.unsupported_sides.get(side_raw)
+        if unsupported_code:
+            return NormalizedCandidate(
+                symbol=symbol,
+                name=name,
+                trade_date=date.min,
+                side="",
+                trade_type="CASH",
+                currency="",
+                quantity=0,
+                unit_price=Decimal(0),
+                gross_amount=Decimal(0),
+                commission=Decimal(0),
+                tax=Decimal(0),
+                interest=Decimal(0),
+                net_settlement=None,
+                raw=dict(original_cells),
+                error_code=unsupported_code,
+                error_message=f"{unsupported_code}：未支援買賣別 {side_raw!r}（不進現股 FIFO）",
+            )
+
         side = profile.side_map.get(side_raw)
         if side not in ("BUY", "SELL"):
             return NormalizedCandidate(
@@ -143,7 +164,9 @@ def normalize_mapped_row(
             )
 
         currency_raw = mapped.get("currency_raw", "").strip()
-        currency = profile.currency_map.get(currency_raw)
+        currency = profile.currency_map.get(currency_raw) if currency_raw else None
+        if not currency and profile.default_currency:
+            currency = profile.default_currency
         if not currency:
             raise ValidationError(f"未知幣別：{currency_raw!r}")
 
