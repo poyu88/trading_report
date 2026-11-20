@@ -62,11 +62,28 @@ uv run python -m backend.cli audit --account "main" --db data/trading.db
 uv run python -m backend.cli db backup --output-dir data/backups --db data/trading.db
 ```
 
+### 3.1 玉山證券真 XLSX（`esun_xlsx_v1`）
+
+```powershell
+# 僅預覽（不入庫；建議先用此步核對筆數與現沖例外）
+uv run python -m backend.cli import preview --file "input\玉山.xlsx" --profile esun_xlsx_v1
+
+# 若確認後要入庫：請指定臨時／測試 DB，勿直接寫入正式 data/trading.db，除非你已備份並知情
+uv run python -m backend.cli import apply --file "input\玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/tmp_esun.db
+```
+
+玉山格式重點：
+
+- 日期列繼承、成交列下一列為股票代號（來源可能為負數，正規化為正整數字串）。
+- 四種交易類型：`現股買進`／`現股賣出` 可入庫並進一般現股 FIFO；`現沖買進`／`現沖賣出` 可辨識但標記 `DAY_TRADE_UNSUPPORTED`，**不入 `trades`、不進現股 FIFO**。
+- `YYYY/MM/DD 小計` 與頁尾說明排除；preview 會帶 `source_reconciliation` 與頁尾「資料筆數／價金／手續費／交易稅」核對。
+
 ### 注意事項
 
 - 群益這份檔有「賣出早於本批買進」的部位，**正式報表會被擋**；目前請用 `--allow-partial` 產 DRAFT，或之後補核准的期初庫存再產正式版。
 - 同一檔、同一帳戶重跑 `import apply` 不會重複入帳。
 - `--account "main"` 只是帳戶標籤，之後查詢／配對／報表都要用同一個標籤。
+- 真實對帳單與正式 `data/trading.db` 預設不納入 Git；自動化測試只用合成測資。
 
 ## 原則
 
