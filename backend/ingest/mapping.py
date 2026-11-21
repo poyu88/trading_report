@@ -33,6 +33,9 @@ class MappingProfile:
     currency_map: dict[str, str]
     date_formats: list[str]
     gross_tolerance: str
+    unsupported_sides: dict[str, str]
+    trade_type_map: dict[str, str]
+    default_currency: str | None
     raw: dict[str, Any]
 
     @property
@@ -63,6 +66,9 @@ def load_profile(profile_id: str, profiles_dir: Path | None = None) -> MappingPr
             currency_map=dict(data.get("currency_map", {})),
             date_formats=list(data.get("date_formats", ["%Y/%m/%d"])),
             gross_tolerance=str(data.get("gross_tolerance", "1")),
+            unsupported_sides=dict(data.get("unsupported_sides", {})),
+            trade_type_map=dict(data.get("trade_type_map", {})),
+            default_currency=data.get("default_currency"),
             raw=data,
         )
     except KeyError as exc:

@@ -1,4 +1,4 @@
-"""將 FIFO 配對投影為 A～W DetailRow。"""
+"""將 FIFO 配對投影為 A～W DetailRow 與配套 FIFO／未配對明細。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,15 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from backend.domain.models import DetailRow, LotRemaining
+from backend.services.report_finance import (
+    PARTIAL_MATCH_NOTE,
+    allocate_trade_fragment_amounts,
+    compute_cost,
+    compute_income,
+    q2,
+    split_sell_gross_with_residual,
+)
 
-TWOPLACES = Decimal("0.01")
 RATIO_PLACES = Decimal("0.0001")
 
 
@@ -28,6 +35,13 @@ class TradeView:
     tax: Decimal
     interest: Decimal
     broker_name: str
+    trade_type: str = "CASH"
+
+
+def _trade_type_label(trade_type: str) -> str:
+    if trade_type == "DAY_TRADE":
+        return "現沖"
+    return "現股"
 
 
 @dataclass
@@ -51,27 +65,31 @@ class AllocationView:
     sequence_no: int
 
 
-def _q2(value: Decimal) -> Decimal:
-    return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+@dataclass(frozen=True)
+class FifoTraceRow:
+    """配套「FIFO 配對及未配對明細」列。"""
 
-
-def _split_gross(total: Decimal, pieces: list[int]) -> list[Decimal]:
-    """依股數拆價金，尾差歸最後片段，合計等於 total。"""
-    if not pieces:
-        return []
-    total_qty = sum(pieces)
-    if total_qty <= 0:
-        return [Decimal(0)] * len(pieces)
-    amounts: list[Decimal] = []
-    allocated = Decimal(0)
-    for i, qty in enumerate(pieces):
-        if i == len(pieces) - 1:
-            amounts.append(total - allocated)
-        else:
-            part = _q2(total * Decimal(qty) / Decimal(total_qty))
-            amounts.append(part)
-            allocated += part
-    return amounts
+    row_kind: str  # MATCHED | UNSOLD_BUY | UNMATCHED_SELL
+    symbol: str
+    name: str | None
+    trade_type_label: str
+    buy_date: date | None
+    sell_date: date | None
+    buy_trade_id: str | None
+    sell_trade_id: str | None
+    opening_lot_id: str | None
+    allocation_id: str | None
+    quantity: int
+    unit_price: Decimal | None
+    gross_amount: Decimal | None
+    commission: Decimal | None
+    tax: Decimal | None
+    interest: Decimal | None
+    cost: Decimal | None
+    income: Decimal | None
+    profit: Decimal | None
+    broker: str
+    note: str | None = None
 
 
 def project_detail_rows(
@@ -84,9 +102,7 @@ def project_detail_rows(
     lot_map = {o.lot_id: o for o in (opening_lots or [])}
     alloc_list = sorted(allocations, key=lambda a: a.sequence_no)
 
-    # 每個買進來源的片段：先配對、後未售
     buy_fragments: dict[str, list[tuple[str, int, AllocationView | None]]] = defaultdict(list)
-    # key = buy_trade_id or opening:lot_id
     for a in alloc_list:
         if a.buy_trade_id:
             key = f"buy:{a.buy_trade_id}"
@@ -101,41 +117,55 @@ def project_detail_rows(
             key = f"lot:{lot.opening_lot_id}"
         buy_fragments[key].append(("unsold", lot.available, None))
 
-    # 賣出片段順序（費用落點）
     sell_first_alloc: dict[str, str] = {}
     for a in alloc_list:
         sell_first_alloc.setdefault(a.sell_trade_id, a.allocation_id)
 
-    # 買進價金拆分（含未售）
     buy_gross_parts: dict[str, list[Decimal]] = {}
-    buy_qty_parts: dict[str, list[int]] = {}
     for key, frags in buy_fragments.items():
         qtys = [q for _, q, _ in frags]
-        buy_qty_parts[key] = qtys
         if key.startswith("buy:"):
             trade = trade_map[key[4:]]
-            buy_gross_parts[key] = _split_gross(trade.gross_amount, qtys)
+            buy_gross_parts[key] = allocate_trade_fragment_amounts(
+                trade.unit_price,
+                trade.gross_amount,
+                qtys,
+                trade_id=trade.trade_id,
+            ).amounts
         else:
             lot = lot_map[key[4:]]
             total = lot.unit_cost * Decimal(lot.quantity)
-            # 未售／配對依剩餘與配對量拆
-            buy_gross_parts[key] = _split_gross(total, qtys)
+            buy_gross_parts[key] = allocate_trade_fragment_amounts(
+                lot.unit_cost,
+                total,
+                qtys,
+                trade_id=None,
+            ).amounts
 
-    # 賣出價金依 allocation 順序拆
     sell_allocs: dict[str, list[AllocationView]] = defaultdict(list)
     for a in alloc_list:
         sell_allocs[a.sell_trade_id].append(a)
+
     sell_gross_by_alloc: dict[str, Decimal] = {}
+    sell_has_residual: set[str] = set()
     for sell_id, alist in sell_allocs.items():
         trade = trade_map[sell_id]
-        parts = _split_gross(trade.gross_amount, [a.quantity for a in alist])
-        for a, part in zip(alist, parts, strict=True):
+        matched_parts, unmatched_gross, unmatched_qty, _alloc = split_sell_gross_with_residual(
+            trade.quantity,
+            trade.gross_amount,
+            [a.quantity for a in alist],
+            unit_price=trade.unit_price,
+            trade_id=trade.trade_id,
+        )
+        for a, part in zip(alist, matched_parts, strict=True):
             sell_gross_by_alloc[a.allocation_id] = part
+        if unmatched_qty > 0:
+            sell_has_residual.add(sell_id)
+            _ = unmatched_gross  # 殘量價金由配套明細使用
 
     rows: list[DetailRow] = []
     buy_fee_used: set[str] = set()
 
-    # 產出順序：依 buy key 的買進日、provenance、再依片段
     def sort_key(item: tuple[str, list]) -> tuple:
         key, _frags = item
         if key.startswith("buy:"):
@@ -159,6 +189,7 @@ def project_detail_rows(
                 broker = buy.broker_name
                 interest_src = buy.interest
                 buy_commission_full = buy.commission
+                type_label = _trade_type_label(buy.trade_type)
             else:
                 lot = lot_map[key[4:]]
                 buy_date = lot.buy_date
@@ -170,6 +201,7 @@ def project_detail_rows(
                 broker = lot.broker_name
                 interest_src = Decimal(0)
                 buy_commission_full = Decimal(0)
+                type_label = "現股"
 
             fee_key = key
             if fee_key not in buy_fee_used:
@@ -178,7 +210,7 @@ def project_detail_rows(
             else:
                 buy_commission = Decimal(0)
 
-            cost = _q2(buy_gross + buy_commission)
+            cost = compute_cost(buy_gross, buy_commission)
 
             if kind == "unsold" or alloc is None:
                 rows.append(
@@ -187,7 +219,7 @@ def project_detail_rows(
                         sell_date=None,
                         symbol=symbol,
                         name=name,
-                        trade_type_label="現股",
+                        trade_type_label=type_label,
                         buy_price=buy_price,
                         buy_qty=qty,
                         buy_commission=buy_commission,
@@ -219,17 +251,28 @@ def project_detail_rows(
             is_first_sell = sell_first_alloc.get(sell.trade_id) == alloc.allocation_id
             sell_commission = sell.commission if is_first_sell else Decimal(0)
             sell_tax = sell.tax if is_first_sell else Decimal(0)
-            interest = interest_src if (idx == 0 and interest_src) else (
-                sell.interest if is_first_sell and sell.interest else None
-            )
-            if interest == 0:
-                interest = Decimal(0) if is_first_sell else None
+            sell_interest = sell.interest if is_first_sell else Decimal(0)
 
-            income = _q2(sell_gross - sell_commission - sell_tax)
-            profit = _q2(income - cost)
+            # M 欄：第一賣出費用片段顯示賣出利息（含明確 0）；其餘空白
+            if is_first_sell:
+                interest: Decimal | None = sell_interest
+            elif idx == 0 and interest_src:
+                interest = interest_src
+            else:
+                interest = None
+
+            income = compute_income(
+                sell_gross,
+                sell_commission=sell_commission,
+                sell_tax=sell_tax,
+                sell_interest=sell_interest,
+            )
+            profit = q2(income - cost)
             profit_rate = None
             if cost > 0:
                 profit_rate = (profit / cost).quantize(RATIO_PLACES, rounding=ROUND_HALF_UP)
+
+            note = PARTIAL_MATCH_NOTE if (is_first_sell and sell.trade_id in sell_has_residual) else None
 
             rows.append(
                 DetailRow(
@@ -237,7 +280,7 @@ def project_detail_rows(
                     sell_date=sell.trade_date,
                     symbol=symbol,
                     name=name or sell.name,
-                    trade_type_label="現股",
+                    trade_type_label=type_label,
                     buy_price=buy_price,
                     buy_qty=qty,
                     buy_commission=buy_commission,
@@ -245,7 +288,7 @@ def project_detail_rows(
                     sell_qty=qty,
                     sell_commission=sell_commission,
                     sell_tax=sell_tax,
-                    interest=interest if interest is not None else None,
+                    interest=interest,
                     margin_amount=None,
                     margin_annual_rate=None,
                     cost=cost,
@@ -255,7 +298,7 @@ def project_detail_rows(
                     actual_return_rate=None,
                     broker=broker,
                     market_correlation=None,
-                    note=None,
+                    note=note,
                     buy_trade_id=buy_trade_id,
                     sell_trade_id=sell.trade_id,
                     opening_lot_id=opening_lot_id,
@@ -263,7 +306,6 @@ def project_detail_rows(
                 )
             )
 
-    # 穩定排序
     rows.sort(
         key=lambda r: (
             r.symbol,
@@ -273,3 +315,139 @@ def project_detail_rows(
         )
     )
     return rows
+
+
+def project_fifo_trace_rows(
+    trades: Iterable[TradeView],
+    allocations: Iterable[AllocationView],
+    unsold: Iterable[LotRemaining],
+    opening_lots: Iterable[OpeningLotView] | None = None,
+) -> list[FifoTraceRow]:
+    """產出 MATCHED／UNSOLD_BUY／UNMATCHED_SELL 配套列。"""
+    trade_map = {t.trade_id: t for t in trades}
+    alloc_list = sorted(allocations, key=lambda a: a.sequence_no)
+    detail_rows = project_detail_rows(trades, allocations, unsold, opening_lots)
+
+    sell_allocs: dict[str, list[AllocationView]] = defaultdict(list)
+    for a in alloc_list:
+        sell_allocs[a.sell_trade_id].append(a)
+
+    sell_gross_by_alloc: dict[str, Decimal] = {}
+    for sell_id, alist in sell_allocs.items():
+        sell = trade_map[sell_id]
+        matched_parts, _unmatched_gross, _unmatched_qty, _alloc = split_sell_gross_with_residual(
+            sell.quantity,
+            sell.gross_amount,
+            [a.quantity for a in alist],
+            unit_price=sell.unit_price,
+            trade_id=sell.trade_id,
+        )
+        for a, part in zip(alist, matched_parts, strict=True):
+            sell_gross_by_alloc[a.allocation_id] = part
+
+    trace: list[FifoTraceRow] = []
+    for r in detail_rows:
+        if r.allocation_id:
+            trace.append(
+                FifoTraceRow(
+                    row_kind="MATCHED",
+                    symbol=r.symbol,
+                    name=r.name,
+                    trade_type_label=r.trade_type_label,
+                    buy_date=r.buy_date,
+                    sell_date=r.sell_date,
+                    buy_trade_id=r.buy_trade_id,
+                    sell_trade_id=r.sell_trade_id,
+                    opening_lot_id=r.opening_lot_id,
+                    allocation_id=r.allocation_id,
+                    quantity=r.buy_qty,
+                    unit_price=r.sell_price,
+                    gross_amount=sell_gross_by_alloc.get(r.allocation_id),
+                    commission=r.sell_commission,
+                    tax=r.sell_tax,
+                    interest=r.interest,
+                    cost=r.cost,
+                    income=r.income,
+                    profit=r.profit,
+                    broker=r.broker,
+                    note=r.note,
+                )
+            )
+        else:
+            buy_gross = r.cost - r.buy_commission
+            trace.append(
+                FifoTraceRow(
+                    row_kind="UNSOLD_BUY",
+                    symbol=r.symbol,
+                    name=r.name,
+                    trade_type_label=r.trade_type_label,
+                    buy_date=r.buy_date,
+                    sell_date=None,
+                    buy_trade_id=r.buy_trade_id,
+                    sell_trade_id=None,
+                    opening_lot_id=r.opening_lot_id,
+                    allocation_id=None,
+                    quantity=r.buy_qty,
+                    unit_price=r.buy_price,
+                    gross_amount=buy_gross,
+                    commission=r.buy_commission,
+                    tax=None,
+                    interest=None,
+                    cost=r.cost,
+                    income=None,
+                    profit=None,
+                    broker=r.broker,
+                    note=None,
+                )
+            )
+
+    for sell in sorted(
+        [t for t in trade_map.values() if t.side == "SELL"],
+        key=lambda t: (t.symbol, t.trade_date, t.trade_id),
+    ):
+        alist = sell_allocs.get(sell.trade_id, [])
+        _matched_parts, unmatched_gross, unmatched_qty, _alloc = split_sell_gross_with_residual(
+            sell.quantity,
+            sell.gross_amount,
+            [a.quantity for a in alist],
+            unit_price=sell.unit_price,
+            trade_id=sell.trade_id,
+        )
+        if unmatched_qty <= 0 or unmatched_gross is None:
+            continue
+        fully_unmatched = len(alist) == 0
+        commission = sell.commission if fully_unmatched else Decimal(0)
+        tax = sell.tax if fully_unmatched else Decimal(0)
+        interest = sell.interest if fully_unmatched else Decimal(0)
+        note = (
+            "完全未配對；費用見本列／資料庫原值，未落入主明細 A～W"
+            if fully_unmatched
+            else "未配對殘量；費用已落主明細第一已配對片段，本列不重複計費"
+        )
+        trace.append(
+            FifoTraceRow(
+                row_kind="UNMATCHED_SELL",
+                symbol=sell.symbol,
+                name=sell.name,
+                trade_type_label=_trade_type_label(sell.trade_type),
+                buy_date=None,
+                sell_date=sell.trade_date,
+                buy_trade_id=None,
+                sell_trade_id=sell.trade_id,
+                opening_lot_id=None,
+                allocation_id=None,
+                quantity=unmatched_qty,
+                unit_price=sell.unit_price,
+                gross_amount=unmatched_gross,
+                commission=commission,
+                tax=tax,
+                interest=interest,
+                cost=None,
+                income=None,
+                profit=None,
+                broker=sell.broker_name,
+                note=note,
+            )
+        )
+
+    return trace

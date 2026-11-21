@@ -22,14 +22,21 @@ from backend.db.models import (
 from backend.domain.exceptions import BlockingExceptionError
 from backend.domain.models import LotRemaining, txt_to_decimal
 from backend.reports.audit_writer import write_audit_files
+from backend.reports.conservation_writer import write_conservation_csv
 from backend.reports.detail_projector import (
     AllocationView,
     OpeningLotView,
     TradeView,
     project_detail_rows,
+    project_fifo_trace_rows,
 )
 from backend.reports.detail_writer import write_detail_xlsx
+from backend.reports.fifo_trace_writer import write_fifo_trace_xlsx
 from backend.services.reconciliation import build_audit
+from backend.services.report_finance import (
+    collect_amount_conservation_issues,
+    enrich_sell_issue_finance,
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -103,6 +110,7 @@ def generate_detail_report(
             tax=txt_to_decimal(t.tax_txt),
             interest=txt_to_decimal(t.interest_txt),
             broker_name=broker_name,
+            trade_type=t.trade_type,
         )
         for t in trades
     ]
@@ -133,13 +141,46 @@ def generate_detail_report(
     unsold = _compute_unsold(trade_views, alloc_views, lot_views)
 
     rows = project_detail_rows(trade_views, alloc_views, unsold, lot_views)
+    trace_rows = project_fifo_trace_rows(trade_views, alloc_views, unsold, lot_views)
     draft = allow_partial and audit.blocking_issue_count > 0
     xlsx_path = write_detail_xlsx(rows, output_dir, draft=draft)
+    trace_path = write_fifo_trace_xlsx(trace_rows, output_dir)
+    conservation_path = write_conservation_csv(
+        trade_views, alloc_views, trace_rows, output_dir
+    )
+
+    trade_by_id = {t.trade_id: t for t in trade_views}
+    enriched_issues: list[dict] = []
+    for issue in audit.issues:
+        detail = dict(issue.get("detail") or {})
+        tid = issue.get("trade_id")
+        if issue.get("code") == "INSUFFICIENT_PRIOR_BUYS" and tid and tid in trade_by_id:
+            detail = enrich_sell_issue_finance(
+                sell_trade=trade_by_id[tid],
+                allocations=[a for a in alloc_views if a.sell_trade_id == tid],
+                base_detail=detail,
+            )
+        enriched_issues.append({**issue, "detail": detail})
+
+    amount_issues = collect_amount_conservation_issues(trade_views, alloc_views, unsold)
+    enriched_issues.extend(amount_issues)
+    audit.issues = enriched_issues
+    audit.issue_count = len(enriched_issues)
+    if amount_issues:
+        # 超容許差不得讓 conservation_ok 維持 true
+        audit.conservation_ok = False
+
     audit_path, exc_path = write_audit_files(
         xlsx_path,
         audit,
         rows,
-        extra={"draft": draft, "schema_version": REPORT_SCHEMA_VERSION},
+        extra={
+            "draft": draft,
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "fifo_trace_file": str(trace_path),
+            "conservation_file": str(conservation_path),
+            "amount_conservation_issue_count": len(amount_issues),
+        },
     )
 
     report = ReportRun(

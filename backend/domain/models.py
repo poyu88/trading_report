@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 Side = Literal["BUY", "SELL"]
-TradeType = Literal["CASH"]
+TradeType = Literal["CASH", "DAY_TRADE"]
 
 
 def decimal_to_txt(value: Decimal) -> str:
