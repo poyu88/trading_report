@@ -1,10 +1,10 @@
 # PRD.md — 股票交易正規化、FIFO 配對與報表系統
 
-> 專案：`trading_report`  
-> 文件版本：v2.0（全新設計，不沿用前版 Excel 直接填表架構）  
-> 日期：2026-11-20  
-> 需求優先順序：P0 必要、P1 後續擴充  
-> 執行環境：Windows 10/11、Cursor Agent、Python 3.11+  
+> 專案：`trading_report`
+> 文件版本：v2.0（全新設計，不沿用前版 Excel 直接填表架構）
+> 日期：2026-11-20
+> 需求優先順序：P0 必要、P1 後續擴充
+> 執行環境：Windows 10/11、Cursor Agent、Python 3.11+
 > 原則：**本機資料庫、免費／開源、原始交易不變、交易明細與統計分離**。
 
 ## 1. 產品定位
@@ -250,5 +250,15 @@
 - SQLAlchemy SQLite 官方：https://docs.sqlalchemy.org/en/20/dialects/sqlite.html
 - python-calamine：https://pypi.org/project/python-calamine/
 - uv：https://docs.astral.sh/uv/
+
+## 14. 品質開發流程（引用）
+
+功能開發與 Bug 修復的端到端流程（PRD／SPEC → TDD → Commit → Push → PR → GitHub CI → Code Review → UAT → Merge）見：
+
+- [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md)
+
+測試方法見 [`docs/test/TDD.md`](../test/TDD.md)；實際結果見 [`docs/test/TDD_STATUS.md`](../test/TDD_STATUS.md)。
+財務與欄位契約以本文及 `docs/spec/SPEC.md` 為準；流程文件**不**覆寫本 PRD 的業務規則。
+本機 pytest／GitHub CI 通過**不**等同人工 UAT 通過。
 
 > 本文是新專案規格；以兩份附件作為**來源格式與報表欄位參考**。示例金額與交易分配為說明用，不代表附件內的實際成交數值。

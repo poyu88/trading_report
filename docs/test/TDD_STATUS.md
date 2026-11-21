@@ -114,7 +114,7 @@
 | RCA | `docs/test/RCA_capital_fifo_finance.md`：現況無必修 Bug；HIST-01 僅歷史舊 DRAFT |
 | 判定 | **特徵化／回歸**（行為已存在於共用財務層；**非**虛構 RED） |
 
-### 1.10 GitHub Actions pytest CI（本分支最新 REGRESSION）
+### 1.10 GitHub Actions pytest CI（歷史 REGRESSION → 已合併）
 
 | 項目 | 結果 |
 |---|---|
@@ -127,7 +127,20 @@
 | 正式 DB／真實對帳單／UAT Excel／財務報表 | **未**讀寫／上傳／覆寫 |
 | 業務碼 | **未**改 FIFO／財務邏輯；**無** skip／放寬財務斷言 |
 | CI 安全稽核 | 見 §9；測試僅合成 fixture／`tmp_path`；路徑以 `pathlib`；fixture 檔名全小寫 |
-| 判定 | **基礎設施／回歸驗證**（非業務 RED→GREEN）；本機已 commit，Push／PR 待使用者執行 |
+| 合併 | PR **#5** 已合併至 `master`（Merge `92f5ab3`）；CI 已在 PR 與 master Push 成功執行（以 GitHub Actions 為準） |
+| 判定 | **基礎設施／回歸驗證**（非業務 RED→GREEN） |
+
+### 1.11 品質開發流程文件整合（本任務；僅文件／規範）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `docs/quality-development-workflow`（自同步 `master`＠`92f5ab3` 建立） |
+| 變更範圍 | 新增 `docs/DEVELOPMENT_WORKFLOW.md`、`.cursor/rules/dev-workflow-rule.mdc`；增量更新 PRD／SPEC／TDD／README／本檔／`commit-rule.mdc`；`py-env.mdc` 3.13→**3.11**（對齊 `.python-version`／`pyproject.toml`／CI） |
+| 業務碼／FIFO／Parser／DB／Workflow YAML | **未**修改 |
+| 本機 REGRESSION | `uv run pytest -q` → **94 passed**／60.03s（2026-11-21）；`git diff --check` 通過；相對連結抽查 OK |
+| 本機 Commit | 隨本變更入庫（訊息 `docs: establish quality development workflow and agent rules`） |
+| Push／PR／Merge | **未**執行（待使用者下一階段 GitHub 操作） |
+| 判定 | **文件／規範**；非業務 TDD；本機 pytest ≠ GitHub CI ≠ 財務 UAT |
 
 ---
 
@@ -271,7 +284,7 @@
 
 ## 6. 功能 TDD 生命週期追蹤
 
-> 僅在**確實發生**該階段時填寫。禁止回填虛構的失敗結果或假 commit。  
+> 僅在**確實發生**該階段時填寫。禁止回填虛構的失敗結果或假 commit。
 > Commit 欄填短 SHA。
 
 ### 6.1 既有功能（歷史——非 TDD）
@@ -304,13 +317,21 @@
 
 ## 7. 強制流程（自本稽核起）
 
-對任何**新增功能**或 **Bug 修復**，完整政策見 `docs/test/TDD.md`。摘要：
+對任何**新增功能**或 **Bug 修復**：
+
+- **測試方法**：完整政策見 `docs/test/TDD.md`。
+- **端到端交付**：見 `docs/DEVELOPMENT_WORKFLOW.md`（Commit→Push→PR→GitHub CI→Review→UAT→Merge）。
+
+TDD 摘要：
 
 1. **RED**：先寫／擴充分會因「預期行為尚未實現」而失敗的測試；執行並保存失敗輸出。
 2. **GREEN**：只做最小實作使該測試通過；不得為綠燈刪減斷言。
 3. **REFACTOR**：可改善設計；之後**必須**全量 `uv run pytest`，且不得弱化既有驗收。
 4. 於 §6.2 登錄三階段結果與 Git commit。
 5. 測試只准使用合成資料與 `tmp_path`／臨時 DB；**禁止**讀寫 `data/trading.db`、真實 `input/` 附件、正式 `output/` 報表，也禁止把真實對帳單提交進 Git。
+
+**防混淆**：本機 pytest／REGRESSION ≠ GitHub CI Success ≠ 人工 UAT。
+`TDD_STATUS.md` 只記錄實際執行結果，不得把計畫中的測試寫成已通過。
 
 既有 34 項繼續作為回歸門檻；它們的存在**不構成**歷史 TDD 完成證明。回歸基準 Commit：`cf4e68e`。玉山功能以 §6.2 為準。
 
@@ -347,4 +368,5 @@ uv run pytest -v --tb=line
 | 2026-11-21 | **`fragment_gross_trunc_v1` TDD**：SPEC §7.3／PRD FR-05 → RED 8 failed（禁 `split_gross`）→ GREEN `allocate_trade_fragment_amounts`；全量 **90 passed**；隔離 E2E 守恆 65/65／超限 0；人工 UAT 已通過；Commit `fix: apply TRUNC fragment pricing with bounded residual reconciliation`（不 squash／amend 既有 4 筆）。 |
 | 2026-11-21 | **群益 Phase 1 RCA**：`RCA_capital_fifo_finance.md`；隔離 `uat_capital`；現況無必修 Bug；HIST-01 僅舊 DRAFT 高估 22995。 |
 | 2026-11-21 | **`capital_html_finance_regression_v1`**：合成 HTML 回歸 4 案（防 HIST-01／費用／利息／早賣 DRAFT）；**特徵化／非 RED**；測試 `d8d9578`／doc `453e0e0`；全量 **94 passed**；未改正式程式／正式 DB；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。 |
-| 2026-11-21 | **GitHub Actions pytest CI**：分支 `feature/github-actions-pytest`；新增 `.github/workflows/pytest.yml`（`pull_request`／`push`→`master`；`permissions.contents: read`；`persist-credentials: false`；`uv sync --locked --dev`＋`uv run --locked pytest -q`）；本機 REGRESSION **94 passed**／65.52s；稽核測試僅合成／`tmp_path`、無真實資料上傳、無 FIFO／財務斷言放寬；本機已 commit；**未** Push／開 PR／Merge。 |
+| 2026-11-21 | **GitHub Actions pytest CI**：分支 `feature/github-actions-pytest`；新增 `.github/workflows/pytest.yml`（`pull_request`／`push`→`master`；`permissions.contents: read`；`persist-credentials: false`；`uv sync --locked --dev`＋`uv run --locked pytest -q`）；本機 REGRESSION **94 passed**／65.52s；稽核測試僅合成／`tmp_path`、無真實資料上傳、無 FIFO／財務斷言放寬；後經 PR **#5** 合併至 `master`（Merge `92f5ab3`）；CI 於 PR／master 成功。 |
+| 2026-11-21 | **品質開發流程文件**：分支 `docs/quality-development-workflow`；新增 `docs/DEVELOPMENT_WORKFLOW.md` 與 `.cursor/rules/dev-workflow-rule.mdc`；PRD §14／SPEC §13＋§16／TDD／README／本檔／`commit-rule.mdc` 增量引用；`py-env.mdc` 對齊 Python **3.11**；本機 REGRESSION **94 passed**／60.03s；**未**改業務碼／Workflow YAML；本機 Commit 入庫；**未** Push／PR／Merge。 |

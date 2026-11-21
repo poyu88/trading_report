@@ -95,3 +95,12 @@ uv run python -m backend.cli match fifo --account "main" --db data/tmp_esun.db
 - SQLite 為唯一交易事實來源；Excel 僅為可重建投影。
 - 明細報表只有表頭＋明細列，**不含合計列**。
 - 原始交易不因 FIFO 拆單而修改；費用不分攤，報表第一片段落點。
+
+## 開發流程
+
+功能開發與 Bug 修復請遵循 [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md)
+（PRD／SPEC → TDD → Commit → Push → PR → GitHub CI → Review → UAT → Merge）。
+
+- 測試方法：[`docs/test/TDD.md`](docs/test/TDD.md)
+- 需求／規格：[`docs/prd/PRD.md`](docs/prd/PRD.md)、[`docs/spec/SPEC.md`](docs/spec/SPEC.md)
+- 本機 pytest 通過 ≠ GitHub CI Success ≠ 人工 UAT 通過。

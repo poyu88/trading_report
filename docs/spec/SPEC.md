@@ -1,9 +1,9 @@
 # SPEC.md — 股票交易正規化／SQLite／FIFO／明細報表技術規格
 
-> 專案：`trading_report`  
-> 文件版本：v2.0（全新 Database-first 設計）  
-> 日期：2026-11-20  
-> 依據：同版 `PRD.md` 與來源檔 `Statement (2).xls`、欄位參考 `股票對帳單.xlsx`  
+> 專案：`trading_report`
+> 文件版本：v2.0（全新 Database-first 設計）
+> 日期：2026-11-20
+> 依據：同版 `PRD.md` 與來源檔 `Statement (2).xls`、欄位參考 `股票對帳單.xlsx`
 > 狀態：可供 Cursor Agent 實作的設計基線；尚未實作及驗證。
 
 ## 1. 架構與邊界
@@ -33,7 +33,7 @@
      Report Projector → Detail XLSX Writer ──> detail.xlsx
                         │                     (僅表頭 + 明細列)
                         └──────────────────> audit.json / exceptions.csv
-                                               
+
      [P1] Stats Projector ───────────────────> stats.xlsx（另一個檔案）
 ```
 
@@ -711,6 +711,8 @@ uv run python -m backend.cli db backup --output-dir data/backups
 
 **Done Definition**：P0 所有測試通過、同資料重跑不重複入庫、FIFO 數量與來源費用守恆、明細無合計列且全列符合型別、重要異常清楚報告、原始檔未修改、離線免費可執行。Agent 在開始 coding 前應先列出未決政策並將不可判定情境安全列例外。
 
+交付至 `master` 時另須遵守 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md)：TDD／本機 REGRESSION、GitHub CI（`.github/workflows/pytest.yml`）、Code Review、適用時的人工 UAT，以及使用者明確授權後才 Merge。技術 Done ≠ 流程完成。
+
 ## 14. 風險與明確限制
 
 - 本次範例交易來源包含早於該批買進的賣出；若使用者尚未提供歷史持倉，正確結果可能是**部分未匹配**，不是程式錯誤。
@@ -729,5 +731,16 @@ uv run python -m backend.cli db backup --output-dir data/backups
 - openpyxl：https://openpyxl.readthedocs.io/
 - uv：https://docs.astral.sh/uv/
 - pytest：https://docs.pytest.org/
+
+## 16. 品質開發流程（引用）
+
+端到端品質流程、Agent 權限邊界、CI／UAT／Merge 條件見：
+
+- [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md)
+- 測試方法：[`docs/test/TDD.md`](../test/TDD.md)
+- 實際測試證據：[`docs/test/TDD_STATUS.md`](../test/TDD_STATUS.md)
+- CI 實際設定：[`.github/workflows/pytest.yml`](../../.github/workflows/pytest.yml)
+
+本 SPEC 的驗證矩陣（§12）與財務契約仍為技術驗收依據；流程文件只規定交付閘門，**不**修改 FIFO／費用／報表計算規則。
 
 > 文件是設計文件，不是已執行的程式。未確認的券商交易規則不應被 Agent 擅自當成既定財務事實。
