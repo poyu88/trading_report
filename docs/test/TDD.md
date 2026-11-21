@@ -5,11 +5,14 @@
 | 文件 | 職責 |
 |---|---|
 | `docs/test/TDD.md`（本檔） | 完整 TDD 政策、流程、契約矩陣、執行方式 |
+| `docs/DEVELOPMENT_WORKFLOW.md` | 端到端品質流程（PRD→TDD→Commit→Push→PR→CI→Review→UAT→Merge） |
 | `.cursor/rules/tdd-rule.mdc` | 強制 Agent 閱讀、遵守及執行本政策 |
+| `.cursor/rules/dev-workflow-rule.mdc` | 強制 Agent 遵守端到端流程與權限邊界 |
 | `docs/test/TDD_STATUS.md` | 實際測試結果、Commit、稽核證據 |
 | `tests/test_*.py` | 可執行測試案例 |
 
 Agent 與開發者不得另建平行指南重複維護相同內容。若本檔與 `tdd-rule.mdc` 衝突，以本檔為準並回報不一致處。
+端到端交付（Push／PR／CI／UAT／Merge）以 `docs/DEVELOPMENT_WORKFLOW.md` 為準；本檔只規範測試方法，不授權 Agent 自行 Push 或 Merge。
 
 ---
 
@@ -150,6 +153,8 @@ uv run pytest tests/test_tdd_cli_contract.py::test_10_fifo_never_matches_buys_fr
 
 ---
 
-## 8. 與 SPEC 的關係
+## 8. 與 SPEC／開發流程的關係
 
 業務驗收條件以 `docs/spec/SPEC.md` §12 驗證矩陣為準。本檔規範「如何用 TDD 交付」；覆蓋缺口與實際通過狀態以 `TDD_STATUS.md` 為準，不得在狀態檔虛構通過。
+
+本機 REGRESSION（`uv run pytest`）通過後，仍須依 `docs/DEVELOPMENT_WORKFLOW.md` 完成 GitHub CI、Code Review 與（適用時）人工 UAT，才可合併。**本機 pytest ≠ GitHub CI ≠ 人工 UAT。**

@@ -1,0 +1,25 @@
+---
+alwaysApply: true
+---
+
+# 品質開發流程（強制）
+
+所有功能開發及 Bug 修復，原則上遵循：
+
+docs/DEVELOPMENT_WORKFLOW.md
+
+## Agent 必須遵守
+
+1. 開發前閱讀 PRD／SPEC／TDD／既有測試；規格採增量修改。
+2. 業務變更遵循 TDD（詳見 `docs/test/TDD.md` 與 `tdd-rule.mdc`）。
+3. 不得放寬財務斷言；不得用真實交易資料做自動化測試。
+4. 本機 pytest ≠ GitHub CI ≠ 人工 UAT；三者不可互相替代。
+5. 僅在使用者明確授權時才可本機 Commit；不得自行 Push、開 PR 或 Merge。
+6. 不得擅自使用個人 GitHub Token，或要求過大的 Repository 寫入權限。
+7. Cursor Agent 禁止執行 Force Push 或改寫遠端 Git 歷史，無例外。若確需改寫遠端歷史，僅由使用者親自評估及操作。
+8. Code Review 以獨立 Reviewer 角度輸出 PASS／PASS WITH NOTES／FAIL；未另授權不得改碼或 Merge。
+9. CI 以 `.github/workflows/pytest.yml` 為準；CI Failure 必須先調查。
+10. 不得因 PR CLEAN 或 CI 綠燈就自行 Merge。
+
+詳細階段、UAT 清單與檢查表見 `docs/DEVELOPMENT_WORKFLOW.md`。
+若該檔不存在或與本規則衝突，先報告問題，不得自行假定。

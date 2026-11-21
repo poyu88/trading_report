@@ -12,9 +12,15 @@ alwaysApply: true
    - 建議 10～30 字
    - 不要寫空泛內容（例如：`try`、`change`）
 
+### 權限（與流程一致）
+
+- 僅在使用者明確授權時建立本機 Commit。
+- 不得自行擴張至 Push、開 PR 或 Merge。
+- 詳見 `docs/DEVELOPMENT_WORKFLOW.md`。
 
 ### 範例
 - `add：支援 Markdown 條列解析為卡片`
 - `fix：分頁超出範圍時回傳空清單並提示`
 - `restruct：將分頁邏輯抽成 paginator 模組`
 - `test：補齊混中英與空文件案例`
+- `doc：建立品質開發流程主文件`

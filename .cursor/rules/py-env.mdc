@@ -4,8 +4,10 @@ alwaysApply: true
 ## Python 環境建置
 
 使用 uv 管理 Python 環境
-- 必要時以 `uv init` 初始專案使用 Python 3.13
+- 必要時以 `uv init` 初始專案使用 Python **3.11**（與 `.python-version`、`pyproject.toml` 的 `requires-python = ">=3.11"`、以及 `.github/workflows/pytest.yml` 的 `python-version: "3.11"` 對齊）
 - 套件均以 `uv add` 加入專案
+
+> 2026-11-21：原寫「3.13」與專案基準衝突，已改為 3.11，避免 Agent 誤用錯誤版本。
 
 ## Windows 環境注意事項
 
