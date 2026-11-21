@@ -101,7 +101,7 @@
 | 人工 UAT | **已通過**（2026-11-21） |
 | Commit | `fix: apply TRUNC fragment pricing with bounded residual reconciliation`（本提交；保留既有 4 筆 FIFO 修正 commits，不 squash／amend） |
 
-### 1.9 群益 HTML 財務合成回歸（本分支最新 REGRESSION）
+### 1.9 群益 HTML 財務合成回歸（歷史 REGRESSION）
 
 | 項目 | 結果 |
 |---|---|
@@ -113,6 +113,21 @@
 | 真實對帳單／舊 DRAFT | **未**讀寫／覆寫；隔離 UAT 見 `data/uat_capital.db`、`output/uat_capital/`（gitignore） |
 | RCA | `docs/test/RCA_capital_fifo_finance.md`：現況無必修 Bug；HIST-01 僅歷史舊 DRAFT |
 | 判定 | **特徵化／回歸**（行為已存在於共用財務層；**非**虛構 RED） |
+
+### 1.10 GitHub Actions pytest CI（本分支最新 REGRESSION）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/github-actions-pytest` |
+| 變更 | 新增 `.github/workflows/pytest.yml`（push／PR → `master`；`contents: read`；Python 3.11 + uv + `uv.lock`） |
+| 指令 | `uv sync --locked --dev`；`uv run --locked pytest -q --tb=line` |
+| 收集數 | 94 |
+| 結果 | **94 passed**（0 failed / 0 skipped） |
+| 耗時 | 65.52s（2026-11-21） |
+| 正式 DB／真實對帳單／UAT Excel／財務報表 | **未**讀寫／上傳／覆寫 |
+| 業務碼 | **未**改 FIFO／財務邏輯；**無** skip／放寬財務斷言 |
+| CI 安全稽核 | 見 §9；測試僅合成 fixture／`tmp_path`；路徑以 `pathlib`；fixture 檔名全小寫 |
+| 判定 | **基礎設施／回歸驗證**（非業務 RED→GREEN）；本機已 commit，Push／PR 待使用者執行 |
 
 ---
 
@@ -332,3 +347,4 @@ uv run pytest -v --tb=line
 | 2026-11-21 | **`fragment_gross_trunc_v1` TDD**：SPEC §7.3／PRD FR-05 → RED 8 failed（禁 `split_gross`）→ GREEN `allocate_trade_fragment_amounts`；全量 **90 passed**；隔離 E2E 守恆 65/65／超限 0；人工 UAT 已通過；Commit `fix: apply TRUNC fragment pricing with bounded residual reconciliation`（不 squash／amend 既有 4 筆）。 |
 | 2026-11-21 | **群益 Phase 1 RCA**：`RCA_capital_fifo_finance.md`；隔離 `uat_capital`；現況無必修 Bug；HIST-01 僅舊 DRAFT 高估 22995。 |
 | 2026-11-21 | **`capital_html_finance_regression_v1`**：合成 HTML 回歸 4 案（防 HIST-01／費用／利息／早賣 DRAFT）；**特徵化／非 RED**；測試 `d8d9578`／doc `453e0e0`；全量 **94 passed**；未改正式程式／正式 DB；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。 |
+| 2026-11-21 | **GitHub Actions pytest CI**：分支 `feature/github-actions-pytest`；新增 `.github/workflows/pytest.yml`（`pull_request`／`push`→`master`；`permissions.contents: read`；`persist-credentials: false`；`uv sync --locked --dev`＋`uv run --locked pytest -q`）；本機 REGRESSION **94 passed**／65.52s；稽核測試僅合成／`tmp_path`、無真實資料上傳、無 FIFO／財務斷言放寬；本機已 commit；**未** Push／開 PR／Merge。 |

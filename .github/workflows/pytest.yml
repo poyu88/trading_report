@@ -1,0 +1,47 @@
+
+name: Python CI
+
+# 何時自動執行
+on:
+  push:
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+  # 允許你從 GitHub 網頁手動執行
+  workflow_dispatch:
+
+# 最小權限：只能讀取程式碼
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # 取得此次 Commit 的程式碼（不持久化憑證，避免步驟內 git push／遠端寫入）
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # 安裝 uv 及 Python 3.11（與 .python-version／requires-python 對齊）
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v9
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      # 依 uv.lock 安裝專案及測試依賴（含 dependency-groups.dev：pytest／ruff）
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      # 執行完整 pytest（僅合成 fixture／tmp_path；不讀寫正式 DB／對帳單／報表）
+      - name: Run all tests
+        run: uv run --locked pytest -q
