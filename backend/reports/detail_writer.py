@@ -23,7 +23,8 @@ def _safe_text(value: str | None) -> str | None:
     return value
 
 
-def _unique_path(path: Path) -> Path:
+def unique_output_path(path: Path) -> Path:
+    """若路徑已存在則附加 _01、_02…，避免覆寫。"""
     if not path.exists():
         return path
     stem = path.stem
@@ -34,6 +35,10 @@ def _unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     raise FileExistsError(f"無法產生唯一檔名：{path}")
+
+
+# 向後相容別名
+_unique_path = unique_output_path
 
 
 def write_detail_xlsx(
