@@ -1,9 +1,13 @@
 # SPEC.md — 股票交易正規化／SQLite／FIFO／明細報表技術規格
 
 > 專案：`trading_report`
+>
 > 文件版本：v2.0（全新 Database-first 設計）
+>
 > 日期：2026-11-20
+>
 > 依據：同版 `PRD.md` 與來源檔 `Statement (2).xls`、欄位參考 `股票對帳單.xlsx`
+>
 > 狀態：可供 Cursor Agent 實作的設計基線；尚未實作及驗證。
 
 ## 1. 架構與邊界

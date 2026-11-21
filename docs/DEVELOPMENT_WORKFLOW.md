@@ -89,8 +89,10 @@ PRD / SPEC
 
 - 原則上由**使用者親自執行**。
 - Agent **不得**擅自使用個人 GitHub Token，或要求過大的 Repository 寫入權限來完成 Push。
-- **不得** Force Push，或改寫未經授權的遠端歷史。
-- 使用者未明確要求 Push 時，Agent 停在本機變更／文件審查階段。
+- **Cursor Agent 禁止執行 Force Push**（含 `--force`／`--force-with-lease` 等改寫遠端歷史的推送）。
+- **不得**因一般工作授權（含「請 Push」「請同步遠端」）而解除 Force Push 禁令。
+- 如確實需要改寫遠端歷史，**須由使用者親自評估與操作**；Agent 可說明風險，但不得代為執行。
+- 一般（非 force）Push 仍依使用者明確授權執行；未授權時 Agent 停在本機變更／文件審查階段。
 
 ### 2.5 Pull Request
 
@@ -196,7 +198,8 @@ UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audi
 | 讀取規格／程式／測試結果 | 允許 | — |
 | 修改業務程式／測試 | 僅在任務授權範圍內 | 財務契約不得擅自放寬 |
 | 本機 `git commit` | **禁止** | 使用者明確要求「請 commit」等 |
-| `git push`／Force Push | **禁止** | 使用者明確要求且非破壞性指令 |
+| 一般 `git push`（非 force） | **禁止** | 使用者明確要求 Push（仍不得擴張為 Force Push／PR／Merge） |
+| Force Push／改寫遠端歷史 | **禁止** | **無例外**（僅使用者親自評估與操作；Agent 永不執行） |
 | 建立／合併 PR | **禁止** | 使用者明確要求 |
 | 取得／使用個人 GitHub Token 或擴大 repo 寫入權限 | **禁止** | 無例外（由使用者自行操作） |
 | 修改 `.github/workflows/*` | 僅在任務明確要求時 | 不得順便「加強」未要求的 CI 行為 |
