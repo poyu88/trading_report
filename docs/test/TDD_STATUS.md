@@ -87,7 +87,7 @@
 | 根因 | 見 `docs/test/RCA_esun_fifo_finance.md`（高估 151146.60 於 `detail_projector` 賣出價金拆分） |
 | Commits | 規格 `03a2918` → RED `65f4459`（10 failed／12 passed）→ GREEN `71e21a7`；共用計算於 GREEN 抽出 `report_finance`（無獨立 restruct commit） |
 
-### 1.8 片段價金 TRUNC＋±1 容許差（本分支最新 REGRESSION）
+### 1.8 片段價金 TRUNC＋±1 容許差（歷史 REGRESSION）
 
 | 項目 | 結果 |
 |---|---|
@@ -100,6 +100,19 @@
 | 隔離 E2E | DB `data/uat_esun_trunc_20261121.db`；輸出 `output/uat_esun_trunc/交易明細_DRAFT_2026-11-21_09-59-30*`；守恆 **65/65** ok、超限 **0**；相對 `09-12-41` 差異 35 格 |
 | 人工 UAT | **已通過**（2026-11-21） |
 | Commit | `fix: apply TRUNC fragment pricing with bounded residual reconciliation`（本提交；保留既有 4 筆 FIFO 修正 commits，不 squash／amend） |
+
+### 1.9 群益 HTML 財務合成回歸（本分支最新 REGRESSION）
+
+| 項目 | 結果 |
+|---|---|
+| 指令 | `uv run pytest tests/test_capital_html_finance_regression.py -v`；全量 `uv run pytest -q` |
+| 收集數 | 94（原 90 + 群益 HTML 財務回歸 4） |
+| 結果 | **94 passed**（0 failed / 0 skipped） |
+| 耗時 | 新測約 1.18s；全量 57.15s（2026-11-21） |
+| 正式 DB | **未** apply／migrate／覆寫 |
+| 真實對帳單／舊 DRAFT | **未**讀寫／覆寫；隔離 UAT 見 `data/uat_capital.db`、`output/uat_capital/`（gitignore） |
+| RCA | `docs/test/RCA_capital_fifo_finance.md`：現況無必修 Bug；HIST-01 僅歷史舊 DRAFT |
+| 判定 | **特徵化／回歸**（行為已存在於共用財務層；**非**虛構 RED） |
 
 ---
 
@@ -264,6 +277,7 @@
 | `esun_unsupported_local_coverage` | 本機補充：融資＋配股、apply→`raw_rows`、頁尾含未支援時核對區分 | **非 RED**：Cloud GREEN 已存在後補測；不得冒充 Cloud 原始 RED | 無新 parser 行為（沿用 `a0df837`） | 無 | 整合後 **55 passed** | 測試 commit `7a3a2f8`；fixture／斷言擴充 |
 | `esun_fifo_finance_v1` | 部分配對賣出價金含未配對殘量；收入扣利息；配套 FIFO／未配對明細；exceptions／audit 價金守恆欄；W 殘量註記 | 2026-11-21；`uv run pytest tests/test_uat_finance_conservation.py -v`；**10 failed / 12 passed**；業務失敗含收入 93585≠46585、未扣利息 14970≠14962.50、缺 `project_fifo_trace_rows`／`report_finance`、缺 W 註記；commit `65f4459`（規格 `03a2918`） | 2026-11-21；`detail_projector` 賣出 `_split_gross` 納殘量、`income` 扣息、W 註記；`report_finance`／`fifo_trace_writer`／`conservation_writer`；`report_service` 強化 audit；commit `71e21a7`；UAT 22 passed | GREEN 已抽出 `report_finance`（split／income／enrich）；無獨立 restruct commit | **77 passed** | RCA `docs/test/RCA_esun_fifo_finance.md`；隔離 E2E 見產出目錄，不覆寫舊 DRAFT |
 | `fragment_gross_trunc_v1` | 片段價金改 `TRUNC(qty×unit_price)`；`|diff|≤1` 調最後片段；超限發 `AMOUNT_CONSERVATION_OUT_OF_TOLERANCE`；廢止比例／餘額法；維持 A～W | 2026-11-21；`uv run pytest tests/test_fragment_gross_trunc.py …uat22 -q`；**8 failed / 6 passed**；投影仍呼叫已廢止 `split_gross`（比例／餘額）→ `RuntimeError`；UAT-22 期望改為 TRUNC 13332／13947 | 2026-11-21；`allocate_trade_fragment_amounts`；`detail_projector`／`conservation_writer`／`report_service` 改用 TRUNC＋audit 超限；commit `fix: apply TRUNC fragment pricing with bounded residual reconciliation` | 無獨立 restruct | **90 passed** | 規格 SPEC §7.3／PRD FR-05；隔離 E2E `output/uat_esun_trunc/`；人工 UAT 已通過；守恆 65/65／超限 0 |
+| `capital_html_finance_regression_v1` | 群益 `statement_html_v1` 合成路徑：防 HIST-01 部分配對吃全額、費用一次、利息扣減、早賣 DRAFT／exceptions 守恆欄、A～W | **非 RED**：RCA 確認現況已正確後補測；首次執行即 **4 passed**；不得冒充業務 RED | 無新業務碼（沿用 `report_finance`／projector） | 無 | **94 passed** | RCA `RCA_capital_fifo_finance.md`；測試 `tests/test_capital_html_finance_regression.py` |
 
 **記錄欄位最低要求**
 
@@ -316,3 +330,5 @@ uv run pytest -v --tb=line
 | 2026-11-21 | **合併前文件對齊**：修訂 PRD §2.3、SPEC §4.2.1／ING-08、README、本檔缺口列；區分候選列／已正規化／未支援／來源核對；全量 **55 passed**；**未** Push／Merge／寫正式 DB；文件變更待使用者確認後再 commit／push。 |
 | 2026-11-21 | **`esun_fifo_finance_v1` TDD**：RCA → 規格 `03a2918` → RED `65f4459`（10 failed）→ GREEN `71e21a7`；全量 **77 passed**；未改正式 DB／未覆寫舊 UAT DRAFT；隔離 E2E 另產時間戳檔後停等人工 UAT。 |
 | 2026-11-21 | **`fragment_gross_trunc_v1` TDD**：SPEC §7.3／PRD FR-05 → RED 8 failed（禁 `split_gross`）→ GREEN `allocate_trade_fragment_amounts`；全量 **90 passed**；隔離 E2E 守恆 65/65／超限 0；人工 UAT 已通過；Commit `fix: apply TRUNC fragment pricing with bounded residual reconciliation`（不 squash／amend 既有 4 筆）。 |
+| 2026-11-21 | **群益 Phase 1 RCA**：`RCA_capital_fifo_finance.md`；隔離 `uat_capital`；現況無必修 Bug；HIST-01 僅舊 DRAFT 高估 22995。 |
+| 2026-11-21 | **`capital_html_finance_regression_v1`**：合成 HTML 回歸 4 案（防 HIST-01／費用／利息／早賣 DRAFT）；**特徵化／非 RED**；全量 **94 passed**；未改正式程式／正式 DB。 |
