@@ -436,8 +436,9 @@ def test_uat22_sell_residual_plus_matched_equals_source_gross() -> None:
     allocs = [AllocationView("a1", "b1", None, "s1", 491, 1)]
     rows = project_detail_rows(trades, allocs, [])
     matched = [r for r in rows if r.sell_trade_id == "s1"][0]
-    # 正確已配對價金 13453.40；income = 13453.40 - 39 - 82 - 0
-    assert matched.income == Decimal("13332.40")
+    # TRUNC(491×27.4)=13453；殘量 TRUNC(509×27.4)=13946；diff=+1 → 殘量 13947
+    # income = 13453 - 39 - 82 - 0 = 13332（禁止比例 13453.40 路徑）
+    assert matched.income == Decimal("13332")
     from backend.reports.detail_projector import project_fifo_trace_rows
 
     trace = project_fifo_trace_rows(trades, allocs, [])
@@ -445,4 +446,4 @@ def test_uat22_sell_residual_plus_matched_equals_source_gross() -> None:
     assert sum((r.gross_amount or Decimal(0) for r in frags), Decimal(0)) == Decimal("27400")
     unmatched = [r for r in frags if r.row_kind == "UNMATCHED_SELL"][0]
     assert unmatched.quantity == 509
-    assert unmatched.gross_amount == Decimal("13946.60")
+    assert unmatched.gross_amount == Decimal("13947")

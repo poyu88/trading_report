@@ -33,7 +33,10 @@ from backend.reports.detail_projector import (
 from backend.reports.detail_writer import write_detail_xlsx
 from backend.reports.fifo_trace_writer import write_fifo_trace_xlsx
 from backend.services.reconciliation import build_audit
-from backend.services.report_finance import enrich_sell_issue_finance
+from backend.services.report_finance import (
+    collect_amount_conservation_issues,
+    enrich_sell_issue_finance,
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -158,7 +161,14 @@ def generate_detail_report(
                 base_detail=detail,
             )
         enriched_issues.append({**issue, "detail": detail})
+
+    amount_issues = collect_amount_conservation_issues(trade_views, alloc_views, unsold)
+    enriched_issues.extend(amount_issues)
     audit.issues = enriched_issues
+    audit.issue_count = len(enriched_issues)
+    if amount_issues:
+        # 超容許差不得讓 conservation_ok 維持 true
+        audit.conservation_ok = False
 
     audit_path, exc_path = write_audit_files(
         xlsx_path,
@@ -169,6 +179,7 @@ def generate_detail_report(
             "schema_version": REPORT_SCHEMA_VERSION,
             "fifo_trace_file": str(trace_path),
             "conservation_file": str(conservation_path),
+            "amount_conservation_issue_count": len(amount_issues),
         },
     )
 

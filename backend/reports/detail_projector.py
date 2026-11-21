@@ -11,10 +11,10 @@ from decimal import ROUND_HALF_UP, Decimal
 from backend.domain.models import DetailRow, LotRemaining
 from backend.services.report_finance import (
     PARTIAL_MATCH_NOTE,
+    allocate_trade_fragment_amounts,
     compute_cost,
     compute_income,
     q2,
-    split_gross,
     split_sell_gross_with_residual,
 )
 
@@ -92,10 +92,6 @@ class FifoTraceRow:
     note: str | None = None
 
 
-def _split_gross(total: Decimal, pieces: list[int]) -> list[Decimal]:
-    return split_gross(total, pieces)
-
-
 def project_detail_rows(
     trades: Iterable[TradeView],
     allocations: Iterable[AllocationView],
@@ -130,11 +126,21 @@ def project_detail_rows(
         qtys = [q for _, q, _ in frags]
         if key.startswith("buy:"):
             trade = trade_map[key[4:]]
-            buy_gross_parts[key] = _split_gross(trade.gross_amount, qtys)
+            buy_gross_parts[key] = allocate_trade_fragment_amounts(
+                trade.unit_price,
+                trade.gross_amount,
+                qtys,
+                trade_id=trade.trade_id,
+            ).amounts
         else:
             lot = lot_map[key[4:]]
             total = lot.unit_cost * Decimal(lot.quantity)
-            buy_gross_parts[key] = _split_gross(total, qtys)
+            buy_gross_parts[key] = allocate_trade_fragment_amounts(
+                lot.unit_cost,
+                total,
+                qtys,
+                trade_id=None,
+            ).amounts
 
     sell_allocs: dict[str, list[AllocationView]] = defaultdict(list)
     for a in alloc_list:
@@ -144,10 +150,12 @@ def project_detail_rows(
     sell_has_residual: set[str] = set()
     for sell_id, alist in sell_allocs.items():
         trade = trade_map[sell_id]
-        matched_parts, unmatched_gross, unmatched_qty = split_sell_gross_with_residual(
+        matched_parts, unmatched_gross, unmatched_qty, _alloc = split_sell_gross_with_residual(
             trade.quantity,
             trade.gross_amount,
             [a.quantity for a in alist],
+            unit_price=trade.unit_price,
+            trade_id=trade.trade_id,
         )
         for a, part in zip(alist, matched_parts, strict=True):
             sell_gross_by_alloc[a.allocation_id] = part
@@ -327,10 +335,12 @@ def project_fifo_trace_rows(
     sell_gross_by_alloc: dict[str, Decimal] = {}
     for sell_id, alist in sell_allocs.items():
         sell = trade_map[sell_id]
-        matched_parts, _unmatched_gross, _unmatched_qty = split_sell_gross_with_residual(
+        matched_parts, _unmatched_gross, _unmatched_qty, _alloc = split_sell_gross_with_residual(
             sell.quantity,
             sell.gross_amount,
             [a.quantity for a in alist],
+            unit_price=sell.unit_price,
+            trade_id=sell.trade_id,
         )
         for a, part in zip(alist, matched_parts, strict=True):
             sell_gross_by_alloc[a.allocation_id] = part
@@ -364,7 +374,7 @@ def project_fifo_trace_rows(
                 )
             )
         else:
-            buy_gross = q2(r.cost - r.buy_commission)
+            buy_gross = r.cost - r.buy_commission
             trace.append(
                 FifoTraceRow(
                     row_kind="UNSOLD_BUY",
@@ -396,10 +406,12 @@ def project_fifo_trace_rows(
         key=lambda t: (t.symbol, t.trade_date, t.trade_id),
     ):
         alist = sell_allocs.get(sell.trade_id, [])
-        _matched_parts, unmatched_gross, unmatched_qty = split_sell_gross_with_residual(
+        _matched_parts, unmatched_gross, unmatched_qty, _alloc = split_sell_gross_with_residual(
             sell.quantity,
             sell.gross_amount,
             [a.quantity for a in alist],
+            unit_price=sell.unit_price,
+            trade_id=sell.trade_id,
         )
         if unmatched_qty <= 0 or unmatched_gross is None:
             continue

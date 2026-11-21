@@ -449,17 +449,26 @@ for trade in verified_trades:
 
 ### 7.3 價金與成本計算
 
-1. 買賣股數只按 `allocation.quantity` 拆（主明細已配對列）；單價、日期、代號及來源 ID 不變。
-2. 片段成交價金在 Python 用 `Decimal` 計算。`buy_gross`／`sell_gross` 依片段股數拆來源 `gross_amount`；**賣出拆分必須把未配對殘量股數納入 `pieces`**，使：`Σ已配對片段成交價金 + 未配對殘量成交價金 = 原始成交價金`。尾差歸該交易拆分序列的最後片段。**不得把原始手續費／稅費／利息依比例分攤**。
-3. 公式：
-   - `cost = buy_gross + buy_commission`（買費僅第一買進片段）
+1. 買賣股數只按 `allocation.quantity` 拆（主明細已配對列）；單價、日期、代號及來源 ID 不變。原始 `trades` 的 `gross_amount`／`unit_price`／`quantity` **不得**因拆片段而被改寫。
+2. 片段成交價金在 Python 用 `Decimal` 計算（**禁用 float**）。對每一筆來源交易（買／賣各自、依 `trade_id` 分組），將該交易的所有片段股數（買：已配對＋未售殘量；賣：**已配對＋未配對殘量**，殘量必須納入 `pieces`）依 **FIFO 配對／殘量順序**排列後，以下列演算法分配價金（**廢止**「按原始價金比例拆＋尾差預先歸最後片段／餘額法」）：
+   - 對每個片段 `i`：`truncated_i = TRUNC(fragment_qty_i × original_unit_price)`（朝零截斷為整數 `Decimal`；**含最後片段**，不得對最後片段改用餘額法略過截斷）。
+   - `calculated_total = Σ truncated_i`；`difference = original_gross_amount − calculated_total`。
+   - 若 `difference == 0`：不調整。
+   - 若 `|difference| ≤ 1`（容許差 `Decimal("1")`）：最後片段 `+= difference`，並於 audit／守恆表記錄調整額與原因；補差後必須 `Σ最終價金 == original_gross_amount`。
+   - 若 `|difference| > 1`：**不**自動補差；保留截斷結果；發出 `AMOUNT_CONSERVATION_OUT_OF_TOLERANCE`（必填：`trade_id`、原始價金、截斷合計、`difference`、各片段 qty／truncated／最終價金）；該筆價金守恆失敗，`conservation_ok` 不得因該筆變為 true。
+   - **第一／最後片段**定義依 FIFO 配對／殘量順序，**不得**被 Excel 顯示排序改寫。
+   - **禁止** `gross × qty / total_qty` 比例分配；**禁止**最後片段用 `total − allocated` 取代先做 `TRUNC(qty×price)`。
+   - **不得把原始手續費／稅費／利息依比例分攤**。
+3. 公式（P／Q／R 以截斷並經容許內補差後的片段價金為基礎；整數 `Decimal` 路徑，禁用 float）：
+   - `cost`／成本 = `buy_gross + buy_commission`（買費僅第一買進片段）
    - `income`／收入 = `sell_gross - sell_commission - sell_tax - sell_interest`（賣費／稅／息僅第一賣出費用片段）
-   - `profit = income - cost`（僅已配對且有成本來源）
+   - `profit`／損益 = `income - cost`（僅已配對且有成本來源）
 4. 利息三態：來源有值 → 採用；確認不適用 → `0`；應有卻缺漏 → 驗證異常（不得默默當 0）。明確字串 `"0"` 視為已知 0。
 5. 注意：若某一買進的一次性買費放在尚未賣出的片段（特殊排序情況），單筆已實現損益與經濟學攤提成本不同；本版遵照**使用者指定不分攤費用**的報表呈現規則，另以 audit 說明。不得偷偷換成加權分攤。
 6. 未賣出的片段：賣價、賣量、賣費、賣稅、利息、收入、已實現損益、獲利率皆為 `None`／Excel 空白；成本可保留買入片段價金與首次買費。
 7. 未配對賣出殘量：**不**插入虛構買進承載於主明細 A～W；**不**計算完整已實現損益（成本／損益不得以 `0` 冒充）。殘量股數、價金與費用落點說明見配套明細與 exceptions／audit。
 8. `實際報酬率`、`大盤連動性` 未知定義時保持空白；不得自行複製另一欄位結果。
+9. A～W 欄名義／順序／型別不變（見 §8.1）；F／I 保留來源單價小數；G／J 為本列片段股數；P／Q／R 為依本節計算之金額。
 
 ## 8. Excel 明細輸出契約（最重要）
 
@@ -482,8 +491,8 @@ for trade in verified_trades:
 | M | 利息 | 數值或空 | 賣出利息（若適用）落於第一賣出費用片段；見 §7.2–7.3 |
 | N | 融資金額 | 數值或空 | V1 現股無則空白 |
 | O | 融資年息 | 數值或空 | V1 現股無則空白 |
-| P | 成本 | 數值 | 本列買入片段價金＋一次性買費 |
-| Q | 收入 | 數值或空 | 本列賣出片段價金－一次性賣費／稅／利息 |
+| P | 成本 | 數值 | 本列買入片段價金（§7.3 截斷±容許補差後）＋一次性買費 |
+| Q | 收入 | 數值或空 | 本列賣出片段價金（§7.3 截斷±容許補差後）－一次性賣費／稅／利息 |
 | R | 損益 | 數值或空 | Q − P（已售）；未配對不得以 0 冒充 |
 | S | 獲利率 | 數值或空 | R / P（P > 0） |
 | T | 實際報酬率 | 數值或空 | 未定義前空白 |
@@ -649,9 +658,10 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | FIFO-08 | DAY_TRADE 與跨日／同日 CASH 並存 | 現沖不消耗 CASH lot；CASH 不消耗 DAY_TRADE lot |
 | FEE-01 | 一筆 BUY 被拆 3 段 | 該 BUY 的費用只在第一段 |
 | FEE-02 | 一筆 SELL 配對 2 個 BUY | 該 SELL 手續費與交易稅只出現一次 |
-| FEE-03 | source gross 與 price×qty 有合法尾差 | 片段 gross 合計等於來源總額，不動費用 |
-| FEE-04 | 部分配對賣出（含殘量） | 已配對價金＋未配對殘量價金＝原始價金；主明細已配對列不得吃下全額 |
+| FEE-03 | source gross 與 price×qty 有合法尾差（`|diff|≤1`） | 各片段先 `TRUNC(qty×unit_price)`；容許內調最後片段後合計＝來源總額；不動費用；禁止比例／餘額法 |
+| FEE-04 | 部分配對賣出（含殘量） | 已配對價金＋未配對殘量價金＝原始價金（經 §7.3）；主明細已配對列不得吃下全額 |
 | FEE-05 | 收入含利息 | `income = sell_gross − commission − tax − interest`；息僅第一賣出費用片段 |
+| FEE-06 | `|difference| > 1` | 不自動補差；保留截斷結果；`AMOUNT_CONSERVATION_OUT_OF_TOLERANCE`；該筆守恆失敗 |
 | REP-01 | 明細輸出 A～W | 23 欄名、欄型別正確 |
 | REP-02 | 有 10 筆片段 | 恰好 1 列標題 + 10 列明細；沒有第 12 列總計 |
 | REP-03 | 無資料 | 只有表頭；沒有 `查無資料` 資料列 |
@@ -664,6 +674,7 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | AUD-03 | 重新執行同版本 FIFO | 配對結果可重現、舊 run 不遭覆寫 |
 | AUD-04 | 未配對賣出殘量 | 配套明細標 `UNMATCHED_SELL`；exceptions／audit 含 matched/unmatched qty／gross；未配對無虛構損益 |
 | AUD-05 | 部分配對 W 備註 | 第一片段註記費用全額落點與殘量；本列損益非完整原始交易損益 |
+| AUD-06 | 價金超容許差 | exceptions／audit 含 `AMOUNT_CONSERVATION_OUT_OF_TOLERANCE` 必填欄；守恆表輸出原始／截斷合計／difference／調整／最終／逐筆結果 |
 
 ### 12.1 必要測試隔離
 
