@@ -57,8 +57,10 @@ Agent 與開發者不得另建平行「風格指南」重複維護相同內容�
 
 ### 2.4 工具設定
 
-- 本政策**先寫入本檔**；**尚未**在 `pyproject.toml` 啟用 Ruff `D`（pydocstyle）規則。
-- 待專案決定啟用 D 規則時，再一併設定 `pydocstyle.convention = "google"`（或同等）與分階段清理；**不得**為宣告本政策而在未授權任務中改工具設定。
+- 本政策（Google Style docstring 寫作規範）**先寫入本檔**。
+- Ruff 凍結規則集**保留**既有預設啟用之 **`D419`**（`empty-docstring`）；**尚未**全面啟用 Google Style pydocstyle `D` 規則集合，亦**未**設定 `pydocstyle.convention = "google"`。
+- 不得因文件措辭而移除 `D419`，也不得在未授權任務一次啟用全部 `D` 規則或改寫歷史 baseline。
+- 待專案決定全面導入 Google `D` 時，另開任務設定 convention 與分階段清理。
 
 ---
 
@@ -123,7 +125,7 @@ Agent 與開發者不得另建平行「風格指南」重複維護相同內容�
 
 - **不**在未授權任務執行 `ruff check --fix`／`ruff format` 大批改寫歷史碼；財務相關建議一律人工審查。
 - **尚未**強制全庫 `ruff format` CI（歷史格式債務另案）。
-- **尚未**啟用 Google Docstring `D` 規則（見 §2.4）；啟用須另開任務與分階段清理。
+- Docstring 工具狀態見 §2.4：保留凍結清單中的 **`D419`**；**尚未**全面導入 Google Style `D` 規則集合／`google` convention（須另開任務）。
 
 ### 7.3 豁免與新碼最低要求
 

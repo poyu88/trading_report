@@ -224,11 +224,16 @@
 > - 本機 REGRESSION：**120 passed**／83.96s；`ruff check .` All checks passed；`git diff --check` 通過
 > - Commit：`06fe96a`；Push：`origin/chore/phase-d-ruff-ci`；PR：[#11](https://github.com/poyu88/trading_report/pull/11)
 >
-> **後補（2026-11-22；PR #11 CI／獨立 CR）**
+> **後補（2026-11-22；PR #11 CI／獨立 CR；保留 FAIL 史實）**
 > - GitHub CI run [`45040723414`](https://github.com/poyu88/trading_report/actions/runs/45040723414)：`pytest` **SUCCESS**；`ruff` **FAILURE**（EXE001×2：hooks 有 shebang 但非 executable；Windows 本機未觸發）
-> - 獨立 CR：**FAIL**（Blocking：EXE001 跨平台偽陰性）
-> - CR 修正（工作樹，待 Commit）：移除兩 hooks 的 shebang（實際由 `hooks.json` 以 `uv run python …` 呼叫；不改 fail-open／敏感檢查邏輯）
-> - Merge／UAT：仍未授權
+> - 獨立 CR（HEAD `06fe96a`）：**FAIL**（Blocking：EXE001 跨平台偽陰性）
+> - 當時工作樹修正方向：移除兩 hooks 的 shebang（實際由 `hooks.json` 以 `uv run python …` 呼叫；不改 fail-open／敏感檢查邏輯）
+>
+> **後補（2026-11-22；EXE001 補正 Commit 與最新 CI／第二輪 CR）**
+> - 補正 Commit：`f8b68bf` — `fix：移除 hooks shebang 以通過 CI EXE001`
+> - GitHub CI run [`45041273011`](https://github.com/poyu88/trading_report/actions/runs/45041273011)：`ruff` **SUCCESS**；`pytest` **SUCCESS**（≠ 本機；≠ 覆寫 run `45040723414` 失敗史實）
+> - 第二輪獨立 CR（HEAD `f8b68bf`）：**PASS WITH NOTES**（P1 RESOLVED；P2／P3 文件 NOTES）
+> - Merge／人工 UAT：仍須使用者明確授權
 
 ---
 
