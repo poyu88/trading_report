@@ -6,14 +6,16 @@
 | 文件 | 職責 |
 |---|---|
 | `docs/DEVELOPMENT_WORKFLOW.md`（本檔） | PRD→TDD→Commit→Push→PR→CI→Review→UAT→Merge 全流程 |
+| `docs/CODING_STANDARDS.md` | Python 風格、Docstring、Type Hints、Ruff 策略（唯一風格權威） |
 | `docs/prd/PRD.md` | 產品需求、業務規則、驗收案例 |
 | `docs/spec/SPEC.md` | 技術規格、schema、FIFO／費用／報表契約、驗證矩陣 |
 | `docs/test/TDD.md` | TDD 方法（RED→GREEN→REFACTOR→REGRESSION） |
 | `docs/test/TDD_STATUS.md` | **實際**測試結果與 Commit／稽核證據（不得寫計畫中的通過） |
-| `.github/workflows/pytest.yml` | GitHub Actions pytest CI 的實際設定 |
+| `.github/workflows/pytest.yml` | GitHub Actions pytest CI 的實際設定（目前僅 pytest；Ruff CI 為建議未實施） |
 | `.cursor/rules/dev-workflow-rule.mdc` | 強制 Agent 遵守本流程的精簡規則 |
 | `.cursor/rules/tdd-rule.mdc` | 強制 Agent 遵守 `TDD.md` |
 | `.cursor/rules/commit-rule.mdc` | Commit message 格式 |
+| `.cursor/rules/backend-rule.mdc` | uv／根目錄執行／指向 Coding Standards（依賴以 `pyproject.toml` 為準） |
 
 Agent 與開發者不得另建平行「流程指南」重複維護相同內容。若本檔與 Cursor Rule 衝突，以本檔為準並回報不一致處。
 
@@ -259,6 +261,7 @@ UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audi
 
 - **不覆寫** PRD／SPEC 財務與欄位規格；流程文件只引用。
 - **不重複** 在多份 `.mdc` 展開完整流程；詳細步驟集中於本檔。
+- Python 風格以 [`docs/CODING_STANDARDS.md`](CODING_STANDARDS.md) 為準；本檔不另寫第二套風格指南。
 - `TDD.md` 維持測試方法主文件；本檔引用其階段，不另寫第二套 TDD。
 - `TDD_STATUS.md` 只記錄實際執行；計畫中的測試不得寫成已通過。
 - GitHub Workflow 行為以 YAML 為準；本檔表格若與 YAML 不一致，**以 YAML 為準**並應修正本檔。
@@ -269,8 +272,10 @@ UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audi
 
 | 項目 | 現況 | 狀態／建議 |
 |---|---|---|
-| Python 版本敘述 | 基準為 `.python-version`＝`3.11`、`requires-python = ">=3.11"`、CI `python-version: "3.11"` | **已於本分支修正**：`py-env.mdc` 由誤寫 3.13 改為 3.11 |
-| `backend-rule.mdc` 依賴示例 | 含 LLM／embedding 等與本專案無關的示例 | 後續改為本專案實際依賴（SQLAlchemy、openpyxl 等）或標明「範本遺留」 |
+| Python 版本敘述 | 基準為 `.python-version`＝`3.11`、`requires-python = ">=3.11"`、CI `python-version: "3.11"` | **已修正**：`py-env.mdc` 由誤寫 3.13 改為 3.11 |
+| `backend-rule.mdc` | 曾含 LLM／embedding 範本與 `cd backend` | **已於 `docs/coding-standards-alignment` 修訂**：根目錄 uv；依賴以 `pyproject.toml` 為唯一權威；強制引用 `docs/CODING_STANDARDS.md` |
+| Python 風格權威 | 曾缺集中文件 | **已新增** `docs/CODING_STANDARDS.md`；稽核見 `docs/audit/CODING_STANDARDS_ALIGNMENT.md` |
+| Ruff／CI | `pyproject` 未明確設 `lint.select`；Ruff 0.16+ 預設已擴大；CI 僅 pytest | **待決策**：是否鎖定 select、是否納入 CI（建議見稽核報告；本流程 Review 結論仍為 `PASS`／`PASS WITH NOTES`／`FAIL`） |
 | TDD 階段命名 | 口語常說 RED→GREEN→REGRESSION；`TDD.md` 含 REFACTOR | 以 `TDD.md` 四階段為準；本流程已對齊 |
 
-其餘未決衝突**不阻斷**本流程文件生效；修正屬獨立文件整理任務。
+其餘未決衝突**不阻斷**本流程文件生效；工具節奏決策見 Coding Standards 稽核報告。

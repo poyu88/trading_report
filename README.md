@@ -104,4 +104,5 @@ uv run python -m backend.cli match fifo --account "main" --db data/tmp_esun.db
 
 - 測試方法：[`docs/test/TDD.md`](docs/test/TDD.md)
 - 需求／規格：[`docs/prd/PRD.md`](docs/prd/PRD.md)、[`docs/spec/SPEC.md`](docs/spec/SPEC.md)
+- 程式風格：[`docs/CODING_STANDARDS.md`](docs/CODING_STANDARDS.md)
 - 本機 pytest 通過 ≠ GitHub CI Success ≠ 人工 UAT 通過。

@@ -90,8 +90,14 @@ trading_report/
 ├── .cursor/                    # 使用者已建立的 Cursor Rules／Hooks，可另審查
 ├── hooks/
 ├── docs/
-│   ├── PRD.md
-│   └── SPEC.md
+│   ├── prd/
+│   │   └── PRD.md
+│   ├── spec/
+│   │   └── SPEC.md              # 本檔
+│   ├── CODING_STANDARDS.md      # Python 風格唯一權威
+│   ├── DEVELOPMENT_WORKFLOW.md
+│   ├── audit/
+│   └── test/
 ├── configs/
 │   └── profiles/
 │       ├── statement_html_v1.json
