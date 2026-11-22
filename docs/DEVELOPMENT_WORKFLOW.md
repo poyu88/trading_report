@@ -169,6 +169,26 @@ PRD / SPEC
 
 UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audit／exceptions），並可寫入 `TDD_STATUS.md` 或專案 RCA／驗收紀錄。
 
+**UAT 產出路徑與隔離（強制慣例）**：
+
+| 類型 | 路徑 | 說明 |
+|---|---|---|
+| Excel／稽核／例外／配對與守恆報表 | `output/uat_<主題>/` | **統一**寫入；含明細 xlsx、audit json、exceptions csv、FIFO 配對／未配對明細、價金費用守恆表等；勿寫到 `data/uat/**/results` 或其他散落目錄 |
+| SQLite 測試副本／Backup 快照 | `data/uat/<主題>/` 或既有規範之 `data/uat_<主題>.db` | 僅隔離資料庫；**不**放 Excel／報表 |
+| 正式 DB／正式報表 | `data/trading.db`、非 UAT 的 `output/` 子目錄 | **禁止**對正式資料庫執行 UAT 寫入（含 match／report／migrate／VACUUM）；不得覆寫歷史 UAT 時間戳檔 |
+
+**每次 UAT 最低產出（人工可檢查）**：
+
+1. FIFO 配對明細（含未配對）
+2. 剩餘庫存可追溯資訊
+3. 成本／收入／已實現損益（或同等稽核欄）
+4. 數量守恆結果（`conservation_ok`／守恆表）
+5. 例外清單（含 blocking 與非 blocking）
+
+有 **blocking** 例外時，明細報表檔名必須標示 **DRAFT**（使用 `--allow-partial`）；不得以正式檔名冒充已清帳。無 blocking 才可產正式（非 DRAFT）明細。
+
+`output/` 與 `data/` 已由 `.gitignore` 排除，真實 UAT 明細與 DB 副本不上傳 Git。CLI 範例：`report detail --allow-partial --output-dir output/uat_<主題> --db <隔離副本>`（`--db` 置於子命令參數之後）。
+
 ### 2.9 Merge
 
 只有同時符合以下條件，才可合併：

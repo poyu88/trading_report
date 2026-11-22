@@ -311,7 +311,7 @@ class Trade:
 | `raw_rows` | `id`, `batch_id`, `sheet_name`, `row_index`, `raw_json`, `row_sha256`, `parse_status`, `error_code` | 原始列與解析結果；`UNIQUE(batch_id, sheet_name, row_index)` |
 | `trades` | `id`, `raw_row_id`, `account_id`, `symbol`, `trade_date`, `trade_time`, `sequence`, `side`, `trade_type`, `currency`, `quantity`, `unit_price_txt`, `gross_amount_txt`, `commission_txt`, `tax_txt`, `interest_txt`, `net_settlement_txt`, `external_trade_id` | `UNIQUE(raw_row_id)`；經驗證正規化交易，原值不因 FIFO 改變 |
 | `opening_lots` | `id`, `account_id`, `symbol`, `currency`, `buy_date`, `quantity`, `unit_cost_txt`, `approval_note`, `source_reference`, `status` | 使用者核准的期初持倉；不能憑空建立成本 |
-| `allocation_runs` | `id`, `algorithm_version`, `input_fingerprint`, `started_at_utc`, `finished_at_utc`, `status`, `config_json` | 每次配對版本；不可覆蓋舊版本 |
+| `allocation_runs` | `id`, `algorithm_version`, `input_fingerprint`, `started_at_utc`, `finished_at_utc`, `status`, `config_json` | 每次配對版本；不可覆蓋舊版本。現行 CASH 庫存優先政策之 `algorithm_version`＝`fifo_v2_cash_prior_inventory`；`config_json` 應含 `cash_same_day_policy=prior_inventory_first` |
 | `fifo_allocations` | `id`, `run_id`, `buy_trade_id`, `opening_lot_id`, `sell_trade_id`, `allocated_quantity`, `sequence_no` | 買進來源二選一；一筆賣出可對多筆買進；`allocated_quantity > 0` |
 | `reconciliation_issues` | `id`, `run_id`, `batch_id`, `trade_id`, `issue_code`, `severity`, `detail_json`, `resolved_at_utc` | 待處理例外；指向資料來源 |
 | `report_runs` | `id`, `allocation_run_id`, `report_type`, `file_path`, `file_sha256`, `created_at_utc`, `status`, `schema_version` | 報表版本、輸出追溯 |
@@ -368,10 +368,12 @@ ON trades(account_id, symbol, currency, trade_date, trade_time);
 
 分組鍵：`account_id, symbol, currency, trade_type`；CASH 與 DAY_TRADE 為獨立 pool。
 
-- **CASH**：組內依可證實成交順序處理。日內時間或原始序號缺失、且影響買賣合法先後或 FIFO lot 選擇時，產生 `ORDER_AMBIGUITY`；不能僅憑輸入檔排序捏造交易先後。明確較早日期的 BUY 可配對較晚日期的 SELL；不得配對未來買進。
+- **CASH**：按交易日處理。每日先以**開盤前可用庫存**（含期初 lot 與先前日期買進剩餘）沖減當日全部 SELL，再將當日 BUY 入庫；**當日 BUY 不可供當日 SELL 使用**。即使來源有 `trade_time`／`trade_sequence`，亦不依真實成交時間穿插買賣。同側決定性會計穩定鍵 `_cash_day_sort_key`＝`(trade_time or "", trade_sequence or INF, source_order, trade_id)`：有 time／seq 時僅用於**同側**（同日多筆 SELL 之間、或多筆 BUY 之間）排序；`source_order`／CSV 列號**不得**宣稱＝真實成交時間。同日缺序**不再**標 `ORDER_AMBIGUITY`；庫存不足則 `INSUFFICIENT_PRIOR_BUYS`（可部分配對），且不得自動改 DAY_TRADE。明確較早日期的 BUY 可配對較晚日期的 SELL；不得配對未來買進（含同日未來買）。
 - **DAY_TRADE**：僅同日配對。同日無序現沖**不得**標 `ORDER_AMBIGUITY` 而跳過；對每個交易日先將當日全部 DAY_TRADE BUY 建成 lot，再以 FIFO 將當日 DAY_TRADE SELL 配入（含檔內先賣後買）。lot **不跨日**、**不消耗 CASH**。未配平剩餘進 `reconciliation_issues`。
 - 買賣同股票但不同帳戶不得直接相互抵銷。
 - `opening_lots` 必須由核准的真實成本與數量建立，並僅參與 **CASH** FIFO。
+- **數量守恆（audit）**：供給＝`approved opening_lots.quantity + BUY qty`；`supply = sold_from_buys + sold_from_openings + unsold`；`sell_qty = allocated_sell + unmatched`；每筆 BUY／opening lot／SELL 不得超配；僅統計**當次 run** 的 allocations。未核准 lot 不計入供給。
+- **`input_fingerprint`**：須納入影響配對結果之欄位，至少含 trades 的 `account_id`／`source_order`／time／seq／價量側別類型，以及 lots 的 `account_id`／`currency`；並標記 `algorithm_version` 與 `cash_same_day_policy`。同輸入重跑可重現業務鍵；舊 run 列不可覆寫。
 
 ### 6.2 Python 型別與偽程式碼
 
@@ -392,25 +394,23 @@ class LotRemaining:
     available: int
     trade_date: date
 
-# 前置：輸入已按「已確認的」順序排序；否則先報 ORDER_AMBIGUITY
-fifo = deque()
-for trade in verified_trades:
-    if trade.side == 'BUY':
-        fifo.append(LotRemaining(trade.id, None, trade.quantity, trade.trade_date))
-        continue
-
-    sell_left = trade.quantity
-    while sell_left > 0 and fifo:
-        lot = fifo[0]
-        matched = min(lot.available, sell_left)
-        save_allocation(buy=lot, sell=trade, quantity=matched)
-        lot.available -= matched
-        sell_left -= matched
-        if lot.available == 0:
-            fifo.popleft()
-
-    if sell_left > 0:
-        record_issue('INSUFFICIENT_PRIOR_BUYS', trade.id, sell_left)
+# CASH：按日先沖開盤前庫存（全部當日 SELL），再入庫當日 BUY；不因缺序報 ORDER_AMBIGUITY
+fifo = deque(opening_lots)  # 依 (buy_date, lot_id)
+for day in sorted(by_day):
+    for sell in sorted(day_sells[day], key=cash_day_sort_key):
+        sell_left = sell.quantity
+        while sell_left > 0 and fifo and fifo[0].trade_date <= sell.trade_date:
+            lot = fifo[0]
+            matched = min(lot.available, sell_left)
+            save_allocation(buy=lot, sell=sell, quantity=matched)
+            lot.available -= matched
+            sell_left -= matched
+            if lot.available == 0:
+                fifo.popleft()
+        if sell_left > 0:
+            record_issue('INSUFFICIENT_PRIOR_BUYS', sell.id, sell_left)
+    for buy in sorted(day_buys[day], key=cash_day_sort_key):
+        fifo.append(LotRemaining(buy.id, None, buy.quantity, buy.trade_date))
 
 # fifo 尚存股數即未售；未配對賣出不可硬配到未來買進。
 ```
@@ -421,9 +421,11 @@ for trade in verified_trades:
 
 對每個買進 `b`：`sum(allocation.qty where buy=b) <= buy.quantity`。
 
+對每個核准期初 lot `o`：`sum(allocation.qty where opening_lot=o) <= o.quantity`。
+
 對每個賣出 `s`：`sum(allocation.qty where sell=s) <= sell.quantity`。
 
-每筆 allocation：`qty > 0`，同帳戶、同股票、同幣別；買進不晚於賣出（若同日依可信排序）。
+每筆 allocation：`qty > 0`，同帳戶、同股票、同幣別；買進日期不大於賣出日期（CASH 同日僅以開盤前庫存配對，不當日買解當日賣）。
 
 核對指標：`buy_qty = sold_allocated_qty + unsold_qty`；`sell_qty = allocated_sell_qty + unmatched_sell_qty`。
 
@@ -656,7 +658,7 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | FIFO-02 | BUY 1000+500，SELL 1200 | 配對 1000+200、剩餘 300 |
 | FIFO-03 | 買進早於多次賣出 | 依順序配對、不超賣 |
 | FIFO-04 | SELL 在所有可用 BUY 前 | 未匹配例外，不配對未來 BUY |
-| FIFO-05 | 同日無可信先後且影響配對（**CASH**） | `ORDER_AMBIGUITY`，不得宣稱完成 |
+| FIFO-05 | 同日 CASH 買賣（含缺 time／seq） | 開盤前庫存優先沖減；當日 BUY 不可解套當日 SELL；不足 → `INSUFFICIENT_PRIOR_BUYS`；**不**標 `ORDER_AMBIGUITY`；不得自動 DAY_TRADE |
 | FIFO-06 | 不同帳戶、股票、幣別 | 絕不跨組配對 |
 | FIFO-07 | 同日無序 DAY_TRADE（含先賣後買） | 當日相互 FIFO 配平；股數守恆；不標 ORDER_AMBIGUITY |
 | FIFO-08 | DAY_TRADE 與跨日／同日 CASH 並存 | 現沖不消耗 CASH lot；CASH 不消耗 DAY_TRADE lot |
@@ -675,7 +677,7 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | REP-07 | 檔案同秒輸出 | 不覆寫既有檔案，附加唯一流水號 |
 | AUD-01 | 阻擋性例外 | 正式版不可成功；`--allow-partial` DRAFT+例外 |
 | AUD-02 | SQLite 備份與還原 | 可 `integrity_check` 並核對交易筆數／配對結果 |
-| AUD-03 | 重新執行同版本 FIFO | 配對結果可重現、舊 run 不遭覆寫 |
+| AUD-03 | 重新執行同版本 FIFO | 配對結果可重現、舊 run 不遭覆寫；新 run 寫入 `fifo_v2_cash_prior_inventory` 且 fingerprint 含 source_order／帳戶等 |
 | AUD-04 | 未配對賣出殘量 | 配套明細標 `UNMATCHED_SELL`；exceptions／audit 含 matched/unmatched qty／gross；未配對無虛構損益 |
 | AUD-05 | 部分配對 W 備註 | 第一片段註記費用全額落點與殘量；本列損益非完整原始交易損益 |
 | AUD-06 | 價金超容許差 | exceptions／audit 含 `AMOUNT_CONSERVATION_OUT_OF_TOLERANCE` 必填欄；守恆表輸出原始／截斷合計／difference／調整／最終／逐筆結果 |

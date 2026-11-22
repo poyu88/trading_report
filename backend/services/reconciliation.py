@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -12,10 +13,11 @@ from sqlalchemy.orm import Session
 from backend.db.models import (
     AllocationRun,
     FifoAllocation,
+    OpeningLotRow,
     ReconciliationIssueRow,
     TradeRow,
 )
-from backend.domain.models import txt_to_decimal
+from backend.domain.models import OpeningLot, txt_to_decimal
 from backend.services.allocation_service import quantity_conservation
 
 
@@ -60,7 +62,29 @@ def build_audit(session: Session, account_id: str, run_id: str | None = None) ->
             )
         )
 
-    cons = quantity_conservation(trades, allocations)
+    opening_rows = list(
+        session.scalars(
+            select(OpeningLotRow).where(
+                OpeningLotRow.account_id == account_id,
+                OpeningLotRow.status == "approved",
+            )
+        )
+    )
+    openings = [
+        OpeningLot(
+            lot_id=r.id,
+            account_id=r.account_id,
+            symbol=r.symbol,
+            currency=r.currency,
+            buy_date=date.fromisoformat(r.buy_date),
+            quantity=r.quantity,
+            unit_cost=txt_to_decimal(r.unit_cost_txt),
+            approval_note=r.approval_note,
+            source_reference=r.source_reference,
+        )
+        for r in opening_rows
+    ]
+    cons = quantity_conservation(trades, allocations, opening_lots=openings)
     commission = sum((txt_to_decimal(t.commission_txt) for t in trades), Decimal(0))
     tax = sum((txt_to_decimal(t.tax_txt) for t in trades), Decimal(0))
 
