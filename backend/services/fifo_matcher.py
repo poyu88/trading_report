@@ -44,43 +44,13 @@ def _group_key(account_id: str, symbol: str, currency: str, trade_type: str) -> 
 
 
 def detect_order_ambiguity(trades: list[MatchInputTrade]) -> list[ReconciliationIssue]:
-    """同日同組同時有買與賣且無時間／序號時，列為阻擋性例外。
+    """CASH 同日不再因缺 time／seq 標 ORDER_AMBIGUITY。
 
-    DAY_TRADE 同日無序改走當日 FIFO，不在此攔截。
+    會計政策改為「開盤前庫存優先沖減 → 賣完再入庫當日買」；
+    DAY_TRADE 本就不進此邏輯。保留函式與呼叫點以相容既有流程。
     """
-    issues: list[ReconciliationIssue] = []
-    by_day: dict[tuple, list[MatchInputTrade]] = defaultdict(list)
-    for t in trades:
-        if t.trade_type == "DAY_TRADE":
-            continue
-        key = (_group_key(t.account_id, t.symbol, t.currency, t.trade_type), t.trade_date)
-        by_day[key].append(t)
-
-    for day_trades in by_day.values():
-        sides = {t.side for t in day_trades}
-        if not ({"BUY", "SELL"} <= sides):
-            continue
-        if all(t.trade_time or t.trade_sequence is not None for t in day_trades):
-            continue
-        buys = [t for t in day_trades if t.side == "BUY"]
-        sells = [t for t in day_trades if t.side == "SELL"]
-        buy_prices = {t.unit_price for t in buys}
-        affects = len(buys) > 1 and len(buy_prices) > 1 and len(sells) > 0
-        if affects or (buys and sells):
-            for t in day_trades:
-                issues.append(
-                    ReconciliationIssue(
-                        issue_code="ORDER_AMBIGUITY",
-                        severity="blocking",
-                        trade_id=t.trade_id,
-                        detail={
-                            "trade_date": t.trade_date.isoformat(),
-                            "symbol": t.symbol,
-                            "reason": "同日買賣缺少可信時間或序號",
-                        },
-                    )
-                )
-    return issues
+    _ = trades
+    return []
 
 
 def _append_buy_lot(
@@ -150,31 +120,31 @@ def _match_sell_against_lots(
     return seq_counter
 
 
+def _cash_day_sort_key(trade: MatchInputTrade) -> tuple:
+    """會計政策穩定鍵：非真實成交序；不得把 source_order／CSV 列號當真實時間。"""
+    return (
+        trade.trade_time or "",
+        trade.trade_sequence if trade.trade_sequence is not None else 10**9,
+        trade.source_order,
+        trade.trade_id,
+    )
+
+
 def _run_cash_group(
     *,
     run_id: str,
     group_trades: list[MatchInputTrade],
     opening_lots: list[OpeningLot],
-    ambiguous_trade_ids: set[str],
     allocations: list[Allocation],
     issues: list[ReconciliationIssue],
     unsold: list[LotRemaining],
     seq_counter: int,
 ) -> int:
-    if any(t.trade_id in ambiguous_trade_ids for t in group_trades):
-        return seq_counter
+    """CASH：按日先沖開盤前庫存（全部當日 SELL），再入庫當日 BUY。
 
-    ordered = sorted(
-        group_trades,
-        key=lambda t: (
-            t.trade_date,
-            t.trade_time or "",
-            t.trade_sequence if t.trade_sequence is not None else 10**9,
-            t.source_order,
-            t.trade_id,
-        ),
-    )
-
+    當日 BUY 不可供當日 SELL 使用；不足日產生 INSUFFICIENT_PRIOR_BUYS，
+    不短路其他日期的配對迴圈。
+    """
     fifo: deque[LotRemaining] = deque()
     provenance = 0
     for ol in sorted(opening_lots, key=lambda x: (x.buy_date, x.lot_id)):
@@ -190,19 +160,34 @@ def _run_cash_group(
         )
         provenance += 1
 
-    for trade in ordered:
-        if trade.side == "BUY":
-            provenance = _append_buy_lot(fifo, trade, provenance)
-            continue
-        seq_counter = _match_sell_against_lots(
-            run_id=run_id,
-            trade=trade,
-            fifo=fifo,
-            allocations=allocations,
-            issues=issues,
-            seq_counter=seq_counter,
-            allow_future_buy=False,
+    by_day: dict[date, list[MatchInputTrade]] = defaultdict(list)
+    for t in group_trades:
+        by_day[t.trade_date].append(t)
+
+    for day in sorted(by_day.keys()):
+        day_trades = by_day[day]
+        sells = sorted(
+            [t for t in day_trades if t.side == "SELL"],
+            key=_cash_day_sort_key,
         )
+        buys = sorted(
+            [t for t in day_trades if t.side == "BUY"],
+            key=_cash_day_sort_key,
+        )
+
+        for sell in sells:
+            seq_counter = _match_sell_against_lots(
+                run_id=run_id,
+                trade=sell,
+                fifo=fifo,
+                allocations=allocations,
+                issues=issues,
+                seq_counter=seq_counter,
+                allow_future_buy=False,
+            )
+
+        for buy in buys:
+            provenance = _append_buy_lot(fifo, buy, provenance)
 
     unsold.extend([lot for lot in fifo if lot.available > 0])
     return seq_counter
@@ -261,7 +246,6 @@ def run_fifo(
 ) -> MatchResult:
     trade_list = list(trades)
     ambiguity = detect_order_ambiguity(trade_list)
-    ambiguous_trade_ids = {i.trade_id for i in ambiguity if i.trade_id}
 
     groups: dict[tuple, list[MatchInputTrade]] = defaultdict(list)
     for t in trade_list:
@@ -292,7 +276,6 @@ def run_fifo(
                 run_id=run_id,
                 group_trades=group_trades,
                 opening_lots=lots_by_group.get(key, []),
-                ambiguous_trade_ids=ambiguous_trade_ids,
                 allocations=allocations,
                 issues=issues,
                 unsold=unsold,
