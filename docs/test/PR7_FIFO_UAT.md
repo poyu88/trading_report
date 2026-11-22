@@ -33,6 +33,24 @@
 |---|---|---|---|
 | 基準 | worktree `77f3ed7` | `baseline_before.db` | `match fifo` → `audit`（`--db` 於子命令後） |
 | 候選 | 修正後工作樹 | `candidate_after.db` | 同上；並再 `match` 一次驗證冪等 |
+| DRAFT 報表 | 候選 | `candidate_after.db` | `report detail --allow-partial --output-dir output/uat_pr7_fifo` |
+
+**報表輸出慣例**（與 `DEVELOPMENT_WORKFLOW.md` §2.8 一致）：
+
+| 類型 | 路徑 |
+|---|---|
+| 測試 DB／Backup 快照／比對 log／彙總 json | `data/uat/pr7_fifo/` |
+| 人工查閱之 Excel／稽核／例外／配對與守恆報表 | `output/uat_pr7_fifo/` |
+
+本次 DRAFT 已產出（2026-11-22 16:27:47；檔名含 **DRAFT**，因 blocking 仍存在）：
+
+- `output/uat_pr7_fifo/交易明細_DRAFT_2026-11-22_16-27-47.xlsx`
+- `output/uat_pr7_fifo/交易明細_DRAFT_2026-11-22_16-27-47_audit.json`
+- `output/uat_pr7_fifo/交易明細_DRAFT_2026-11-22_16-27-47_exceptions.csv`
+- `output/uat_pr7_fifo/FIFO配對及未配對明細_2026-11-22_16-27-47.xlsx`
+- `output/uat_pr7_fifo/價金費用守恆核對_2026-11-22_16-27-47.csv`
+
+> **DRAFT 已產出 ≠ 人工驗收完成。** 上列僅證明報表產線可跑且路徑合規；Excel 內容仍待人工開啟核對。
 
 ## 4. 配對彙總對照
 
@@ -96,11 +114,12 @@
 | `uv run pytest tests/test_fifo.py -q` | **17 passed** |
 | `uv run pytest -q` | **120 passed**／65.16s |
 
-## 9. 安全
+## 9. 安全與產物分區
 
-- 未寫入 `data/trading.db`
-- UAT DB／log／json 僅在 `data/uat/pr7_fifo/`（gitignore）
-- 本摘要可提交；真實明細不上傳
+- 未寫入 `data/trading.db`（正式庫禁 UAT 寫入）
+- **測試資料庫及原始證據**：`data/uat/pr7_fifo/`（快照、baseline／candidate 副本、比對 log、`uat_summary.json` 等；gitignore）
+- **人工查閱報告**：`output/uat_pr7_fifo/`（DRAFT Excel、audit、exceptions、FIFO 配對明細、價金費用守恆表；gitignore）
+- 本摘要可提交 Git；真實明細／DB／xlsx **不上傳**
 
 ## 10. 剩餘風險
 
@@ -114,8 +133,11 @@
 
 - NOTES：CLI 全域前置 `--db` 會被子命令 parents 預設覆寫為 `None`（既有問題）；UAT／文件已改為子命令後傳遞。建議後續修 argparse，但不阻斷本 PR。
 
-## 12. 結論
+## 12. 結論（狀態區分）
 
-**APPROVE**（就 CR 修正與副本 UAT 而言）
+| 層級 | 狀態 | 說明 |
+|---|---|---|
+| 程式與副本 UAT（match／audit／1589／守恆／事實表） | **APPROVE** | 見 §4～§8；無 D 類無法解釋差異 |
+| Excel 人工開啟與內容核對（DRAFT 明細／FIFO／損益／例外） | **待簽核** | DRAFT 已於 `output/uat_pr7_fifo/` 產出（§3）；**產出 ≠ 驗收完成**，須使用者開啟核對後才可標「人工 UAT 通過」 |
 
-不 Merge、不 Force Push；待 GitHub CI 與使用者授權後再合併。
+不 Merge、不 Force Push；待 GitHub CI、上表人工簽核與使用者明確授權後再合併。
