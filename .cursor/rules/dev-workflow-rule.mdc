@@ -14,6 +14,12 @@ docs/DEVELOPMENT_WORKFLOW.md
 2. 業務變更遵循 TDD（詳見 `docs/test/TDD.md` 與 `tdd-rule.mdc`）。
 3. 不得放寬財務斷言；不得用真實交易資料做自動化測試。
 4. 本機 pytest ≠ GitHub CI ≠ 人工 UAT；三者不可互相替代。
+4a. UAT 路徑與隔離（與 `docs/DEVELOPMENT_WORKFLOW.md` §2.8 一致，不得自行放寬）：
+   - Excel／稽核／例外／配對與守恆報表 → `output/uat_<主題>/`
+   - SQLite 測試副本 → `data/uat/<主題>/` 或既有 `data/uat_<主題>.db`
+   - **禁止**對正式 DB（如 `data/trading.db`）執行 UAT 寫入
+   - 每次 UAT 須有人工可查之 FIFO 明細、剩餘庫存、損益、數量守恆與例外清單
+   - 有 blocking 必須產出 **DRAFT**（`--allow-partial`），不得冒充正式報表
 5. 僅在使用者明確授權時才可本機 Commit；不得自行 Push、開 PR 或 Merge。
 6. 不得擅自使用個人 GitHub Token，或要求過大的 Repository 寫入權限。
 7. Cursor Agent 禁止執行 Force Push 或改寫遠端 Git 歷史，無例外。若確需改寫遠端歷史，僅由使用者親自評估及操作。
