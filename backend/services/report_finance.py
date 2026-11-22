@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any, Protocol
@@ -296,19 +297,23 @@ def enrich_sell_issue_finance(
 
 
 def collect_amount_conservation_issues(
-    trades: list[_ConservationTrade],
-    allocations: list[_ConservationAlloc],
-    unsold: list[_ConservationUnsold],
+    trades: Sequence[_ConservationTrade],
+    allocations: Sequence[_ConservationAlloc],
+    unsold: Sequence[_ConservationUnsold],
 ) -> list[dict[str, Any]]:
     """逐筆檢查買／賣價金守恆；超限回傳 AMOUNT_CONSERVATION_OUT_OF_TOLERANCE。
 
     Args:
-        trades: 具 side／trade_id／quantity／gross_amount／unit_price 的交易列。
+        trades: 具 side／trade_id／quantity／gross_amount／unit_price 的交易列（唯讀序列）。
         allocations: 具 sell／buy trade id、quantity、sequence_no 的配對列。
         unsold: 具 buy_trade_id／available 的未售庫存。
 
     Returns:
         超容許差之 issue 字典清單（含 ``detail`` 守恆欄）；通過則空清單。
+
+    Note:
+        參數使用 ``Sequence``（非 ``list``）以避免 Protocol 與具體 ``list[TradeView]``
+        等型別在靜態檢查時因 list invariant 不相容；執行期僅迭代、不改寫輸入。
     """
     from collections import defaultdict
 

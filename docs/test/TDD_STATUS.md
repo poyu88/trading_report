@@ -196,7 +196,14 @@
 | Ruff（tracked） | 222 → **3**（剩餘 hooks BLE001×2、契約測 PLW1510×1，刻意保留） |
 | 本機 REGRESSION | `uv run pytest -q --tb=line` → **120 passed**／69.47s（2026-11-22） |
 | 判定 | **品質 REFACTOR／回歸**（非業務 RED→GREEN）；Phase D `lint.select`／窄集合 CI **另案** |
-| Commit | **尚未**建立（待使用者授權） |
+| Commit（寫入當時） | **尚未**建立（待使用者授權） |
+
+> **後補（2026-11-22；不覆寫上方「寫入當時」列）**  
+> - Commit：`ad80c06` — `restruct：Phase C 品質整理與公開 API docstring`  
+> - Push／PR：[PR #10](https://github.com/poyu88/trading_report/pull/10)（`feature/phase-c-python-quality` → `master`）  
+> - GitHub CI：Actions run [`45035063117`](https://github.com/poyu88/trading_report/actions/runs/45035063117) → **SUCCESS**（僅 pytest；≠ 本機 pytest 替代）  
+> - 獨立 CR：**PASS WITH NOTES**；Finding 1（`Sequence[Protocol]`）／Finding 2（本後補）於後續 commit 補正；Finding 3／4 另案追蹤  
+> - CR Finding 1／2 補正後本機 REGRESSION：`uv run pytest -q --tb=line` → **120 passed**／68.91s（2026-11-22）；財務迴圈未改  
 
 ---
 
