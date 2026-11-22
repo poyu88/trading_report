@@ -8,7 +8,7 @@
 >
 > 依據：同版 `PRD.md` 與來源檔 `Statement (2).xls`、欄位參考 `股票對帳單.xlsx`
 >
-> 狀態：可供 Cursor Agent 實作的設計基線；尚未實作及驗證。
+> 狀態：**P0 契約生效且已實作／驗證**（見 `docs/test/TDD_STATUS.md`、程式 `backend/`）。Milestone D（統計／UI）仍為 P1 未實作。本檔為技術／財務契約權威，非綠地設計草稿。
 
 ## 1. 架構與邊界
 
@@ -16,7 +16,7 @@
 [input: .csv / .xls / .xlsx]
           │
           ▼
-   FileDetector + Parsers   ← 券商 profiles/*.yaml（或 .json）
+   FileDetector + Parsers   ← 券商 configs/profiles/*.json
           │
           ▼
    RawRow → Normalizer → Validator
@@ -69,19 +69,17 @@
 
 ### 2.1 Windows / Cursor Terminal 初始化
 
-```powershell
-# 專案根目錄：若沒有 pyproject.toml 才需執行
-uv init --python 3.11
-uv add sqlalchemy alembic python-calamine beautifulsoup4 openpyxl
-uv add --dev pytest ruff
+**既有專案（現行）**：在儲存庫根目錄執行 `uv sync`，勿再跑 `uv init` 覆寫設定。
 
-# 資料庫 schema migration 由 Agent 建立 Alembic migrations 後再執行
+```powershell
+# 專案根目錄
+uv sync
 uv run alembic upgrade head
 uv run pytest
 uv run ruff check .
 ```
 
-> `uv init` 需視既有專案結構調整；不要在已有專案設定時盲目覆寫 `pyproject.toml`。Dependencies 的版本由 `uv.lock` 鎖定，不依賴 `latest` 浮動版本。
+> 僅在**尚無** `pyproject.toml` 的綠地才考慮 `uv init --python 3.11` 與 `uv add …`；已有專案禁止盲目覆寫。Dependencies 的版本由 `uv.lock` 鎖定，不依賴 `latest` 浮動版本。
 
 ## 3. 專案目錄
 
@@ -127,12 +125,16 @@ trading_report/
 │   │   ├── fifo_matcher.py
 │   │   ├── allocation_service.py
 │   │   ├── reconciliation.py
+│   │   ├── report_finance.py    # TRUNC／價金守恆／收入公式
+│   │   ├── report_service.py
 │   │   └── backup_service.py
 │   └── reports/
 │       ├── detail_projector.py
 │       ├── detail_writer.py
 │       ├── field_schema.py
-│       └── audit_writer.py
+│       ├── audit_writer.py
+│       ├── fifo_trace_writer.py
+│       └── conservation_writer.py
 ├── alembic/
 │   └── versions/
 ├── tests/
@@ -145,7 +147,8 @@ trading_report/
 │   ├── test_opening_lots.py
 │   ├── test_report_schema.py
 │   ├── test_report_no_totals.py
-│   └── test_end_to_end.py
+│   ├── test_end_to_end.py
+│   └── …（其餘見 git；含 day_trade／esun／TRUNC／UAT 守恆等）
 ├── data/                        # 私有，不納入 Git
 │   ├── trading.db
 │   ├── source_archive/
@@ -492,7 +495,7 @@ for day in sorted(by_day):
 | B | 賣出日期 | Excel 日期或空 | SELL trade 日期 |
 | C | 股票代號 | 字串（`@`） | `symbol`，保留前導零 |
 | D | 商品名稱 | 字串或空 | `name` |
-| E | 類別 | 字串 | `現股` |
+| E | 類別 | 字串 | `現股`（CASH）或 `現沖`（DAY_TRADE） |
 | F | 買價 | 數值 | BUY unit price |
 | G | 股數（買） | 正整數 | allocation quantity／open remaining |
 | H | 手續費（買） | 數值 | 該來源買進費用僅第一列填入 |
@@ -589,14 +592,14 @@ class DetailRow:
 
 ## 9. 統計報表與明細分離
 
-- V1 `report detail` 只輸出 `detail.xlsx`、`audit.json`、`exceptions.csv`（及必要 `detail_index.csv`）。
-- P1 才加入 `report stats`，讀取 `trades / fifo_allocations` 並輸出另一個 Excel `交易統計_時間.xlsx`。
+- V1 `report detail` 輸出主明細 `.xlsx`、`_audit.json`、`_exceptions.csv`，並依 §8.2.1 另產「FIFO 配對及未配對明細」與「價金費用守恆」配套檔（見 `report_service`）。
+- P1 才加入 `report stats`，讀取 `trades / allocations` 並輸出另一個 Excel `交易統計_時間.xlsx`（尚未實作）。
 - 統計維度：期間、帳戶、券商、股票代號與幣別。已實現損益、未實現持股數與費用應清楚定義；不能拿各個分段報表列的金額做隱含加總來代替正式的交易稽核。
 - 不跨幣別無匯率加總；統計報表可以有合計列，**但明細報表嚴格沒有**。
 
 ## 10. CLI 介面約定
 
-以下為設計規格，需由 Agent 實作，不代表現有指令已可執行：
+以下為**現行已實作**之 CLI 契約（參數細節以 `uv run python -m backend.cli --help` 為準）。UAT／Agent 驗收請另遵 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8 隔離路徑，勿對正式 `data/trading.db` 寫入。
 
 ```powershell
 # 資料庫初始化
@@ -611,8 +614,8 @@ uv run python -m backend.cli import preview --file "input/玉山.xlsx" --profile
 # 入庫：每批指定券商與帳戶
 uv run python -m backend.cli import apply --file "input/Statement (2).xls" --broker "群益" --account "main" --profile statement_html_v1
 
-# 玉山入庫（現股 CASH＋現沖 DAY_TRADE；正式驗收前請用臨時 DB）
-uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/tmp_esun.db
+# 玉山入庫（現股 CASH＋現沖 DAY_TRADE；正式驗收前請用隔離／臨時 DB）
+uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/uat/esun/tmp.db
 
 # 執行 FIFO，將配對版本保存 SQLite
 uv run python -m backend.cli match fifo --account "main"
@@ -620,8 +623,8 @@ uv run python -m backend.cli match fifo --account "main"
 # 產生純交易明細，不包含底部總計
 uv run python -m backend.cli report detail --account "main" --output-dir output
 
-# 需要時才允許產生標記 DRAFT 的未完成結果
-uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output
+# 需要時才允許產生標記 DRAFT 的未完成結果（UAT 建議 output/uat_<主題>）
+uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output/uat_example
 
 # 稽核與本機備份
 uv run python -m backend.cli audit --account "main"
@@ -755,4 +758,4 @@ uv run python -m backend.cli db backup --output-dir data/backups
 
 本 SPEC 的驗證矩陣（§12）與財務契約仍為技術驗收依據；流程文件只規定交付閘門，**不**修改 FIFO／費用／報表計算規則。
 
-> 文件是設計文件，不是已執行的程式。未確認的券商交易規則不應被 Agent 擅自當成既定財務事實。
+> 本檔為生效中的技術／財務契約；實作與驗證證據見程式碼與 `docs/test/TDD_STATUS.md`。未確認的券商交易規則不應被 Agent 擅自當成既定財務事實。

@@ -7,7 +7,7 @@ alwaysApply: true
 2. 採用以下格式：
    - `英文類別：一句繁體中文話進行描述`
 3. 類型僅能使用下列其一（擇一）：
-   - `add`、`fix`、`restruct`、`test`、`doc`、
+   - `add`、`fix`、`restruct`、`test`、`doc`
 4. 描述需精簡、具體，可讓人看懂「改了什麼」：
    - 建議 10～30 字
    - 不要寫空泛內容（例如：`try`、`change`）

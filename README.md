@@ -10,7 +10,7 @@
 在專案根目錄操作：
 
 ```powershell
-cd c:\Users\billh\python_test\trading_report
+cd <repo-root>
 uv sync
 uv run pytest
 ```
@@ -19,13 +19,11 @@ uv run pytest
 
 ### 1. 準備來源檔
 
-把券商匯出檔放到 `input/`，例如：
+把券商匯出檔放到 `input/`（真實對帳單勿提交至 Git），例如：
 
 ```powershell
-Copy-Item "c:\Users\billh\OneDrive\桌面\群益.xls" "input\群益.xls"
+Copy-Item ".\來源檔.xls" ".\input\statement.xls"
 ```
-
-真實對帳單請放 `input/`，勿提交至 Git。
 
 ### 2. 標準流程（匯入 → 配對 → 報表）
 
@@ -34,10 +32,10 @@ Copy-Item "c:\Users\billh\OneDrive\桌面\群益.xls" "input\群益.xls"
 uv run python -m backend.cli db init --db data/trading.db
 
 # （可選）先預覽，不入庫
-uv run python -m backend.cli import preview --file "input/群益.xls" --profile statement_html_v1 --db data/trading.db
+uv run python -m backend.cli import preview --file "input/statement.xls" --profile statement_html_v1 --db data/trading.db
 
 # 正式入庫（指定券商與帳戶標籤）
-uv run python -m backend.cli import apply --file "input/群益.xls" --broker "群益" --account "main" --profile statement_html_v1 --db data/trading.db
+uv run python -m backend.cli import apply --file "input/statement.xls" --broker "群益" --account "main" --profile statement_html_v1 --db data/trading.db
 
 # FIFO 買賣配對
 uv run python -m backend.cli match fifo --account "main" --db data/trading.db
@@ -51,6 +49,22 @@ uv run python -m backend.cli report detail --account "main" --allow-partial --ou
 
 - `交易明細_DRAFT_*.xlsx`（或正式版 `交易明細_*.xlsx`）
 - 同名的 `_audit.json`、`_exceptions.csv`
+- 以及 FIFO 配對／未配對明細、價金費用守恆等配套檔（見 SPEC §8.2.1）
+
+### 2.1 UAT／Agent 驗收（強制隔離）
+
+人工 UAT 或 Agent 驗收**禁止**對正式 `data/trading.db` 寫入。路徑慣例以 [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md) §2.8 為準：
+
+| 類型 | 路徑 |
+|---|---|
+| Excel／稽核／例外／配對與守恆報表 | `output/uat_<主題>/` |
+| SQLite 測試副本 | `data/uat/<主題>/` 或 `data/uat_<主題>.db` |
+
+```powershell
+# 範例：隔離副本上配對並產 DRAFT
+uv run python -m backend.cli match fifo --account "main" --db data/uat/example/copy.db
+uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output/uat_example --db data/uat/example/copy.db
+```
 
 ### 3. 常用輔助指令
 
@@ -66,13 +80,13 @@ uv run python -m backend.cli db backup --output-dir data/backups --db data/tradi
 
 ```powershell
 # 僅預覽（不入庫；建議先核對 65 筆類型驗證與來源合計）
-uv run python -m backend.cli import preview --file "input\玉山.xlsx" --profile esun_xlsx_v1
+uv run python -m backend.cli import preview --file "input\esun.xlsx" --profile esun_xlsx_v1
 
-# 若確認後要入庫：請指定臨時／測試 DB，勿直接寫入正式 data/trading.db，除非你已備份並知情
-uv run python -m backend.cli import apply --file "input\玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/tmp_esun.db
+# 若確認後要入庫：請指定隔離／測試 DB，勿直接寫入正式 data/trading.db，除非你已備份並知情
+uv run python -m backend.cli import apply --file "input\esun.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/uat/esun/tmp.db
 
 # 配對（現沖僅同日 DAY_TRADE pool；與解析錯誤分開看 exceptions）
-uv run python -m backend.cli match fifo --account "main" --db data/tmp_esun.db
+uv run python -m backend.cli match fifo --account "main" --db data/uat/esun/tmp.db
 ```
 
 玉山格式重點：
@@ -106,3 +120,13 @@ uv run python -m backend.cli match fifo --account "main" --db data/tmp_esun.db
 - 需求／規格：[`docs/prd/PRD.md`](docs/prd/PRD.md)、[`docs/spec/SPEC.md`](docs/spec/SPEC.md)
 - 程式風格：[`docs/CODING_STANDARDS.md`](docs/CODING_STANDARDS.md)
 - 本機 pytest 通過 ≠ GitHub CI Success ≠ 人工 UAT 通過。
+
+## 證據與歷史文件索引
+
+| 文件 | 用途 |
+|---|---|
+| [`docs/test/TDD_STATUS.md`](docs/test/TDD_STATUS.md) | 實際測試／Commit／REGRESSION 證據 |
+| [`docs/test/PR7_FIFO_UAT.md`](docs/test/PR7_FIFO_UAT.md) | PR #7 副本 UAT 摘要（歷史證據） |
+| [`docs/test/RCA_esun_fifo_finance.md`](docs/test/RCA_esun_fifo_finance.md) | 玉山財務 RCA（歷史快照；契約以現行 SPEC 為準） |
+| [`docs/test/RCA_capital_fifo_finance.md`](docs/test/RCA_capital_fifo_finance.md) | 群益財務 RCA（歷史快照） |
+| [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](docs/audit/CODING_STANDARDS_ALIGNMENT.md) | Coding Standards 對齊稽核紀錄 |

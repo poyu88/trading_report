@@ -1,5 +1,7 @@
 # Coding Standards 一致性稽核報告
 
+> **歷史稽核證據（Class C）**：記錄 Coding Standards 對齊當次基準與 Ruff baseline。現行風格權威為 [`docs/CODING_STANDARDS.md`](../CODING_STANDARDS.md)；勿把本檔分支名當成現行工作樹狀態。
+
 | 項目 | 內容 |
 |---|---|
 | 分支 | `docs/coding-standards-alignment` |

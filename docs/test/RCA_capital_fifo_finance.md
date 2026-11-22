@@ -1,5 +1,7 @@
 # 根因報告：群益 FIFO／財務正確性稽核（Phase 1 只讀）
 
+> **歷史快照（Class C）**：記錄當時只讀稽核結論。現行財務契約以 `docs/spec/SPEC.md` 為準；勿當操作手冊。
+
 日期：2026-11-21  
 分支：`feature/capital-fifo-finance-audit`（HEAD `27b411d`，與 master 同步）  
 依據：

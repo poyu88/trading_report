@@ -273,9 +273,22 @@ UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audi
 | 項目 | 現況 | 狀態／建議 |
 |---|---|---|
 | Python 版本敘述 | 基準為 `.python-version`＝`3.11`、`requires-python = ">=3.11"`、CI `python-version: "3.11"` | **已修正**：`py-env.mdc` 由誤寫 3.13 改為 3.11 |
-| `backend-rule.mdc` | 曾含 LLM／embedding 範本與 `cd backend` | **已於 `docs/coding-standards-alignment` 修訂**：根目錄 uv；依賴以 `pyproject.toml` 為唯一權威；強制引用 `docs/CODING_STANDARDS.md` |
+| `backend-rule.mdc` | 曾含 LLM／embedding 範本與 `cd backend` | **已修訂**（見 [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](audit/CODING_STANDARDS_ALIGNMENT.md)）：根目錄 uv；依賴以 `pyproject.toml` 為唯一權威；強制引用 `docs/CODING_STANDARDS.md` |
 | Python 風格權威 | 曾缺集中文件 | **已新增** `docs/CODING_STANDARDS.md`；稽核見 `docs/audit/CODING_STANDARDS_ALIGNMENT.md` |
 | Ruff／CI | `pyproject` 未明確設 `lint.select`；Ruff 0.16+ 預設已擴大；CI 僅 pytest | **待決策**：是否鎖定 select、是否納入 CI（建議見稽核報告；本流程 Review 結論仍為 `PASS`／`PASS WITH NOTES`／`FAIL`） |
 | TDD 階段命名 | 口語常說 RED→GREEN→REGRESSION；`TDD.md` 含 REFACTOR | 以 `TDD.md` 四階段為準；本流程已對齊 |
 
 其餘未決衝突**不阻斷**本流程文件生效；工具節奏決策見 Coding Standards 稽核報告。
+
+---
+
+## 8. 文件維護慣例（最小約束）
+
+目的：避免第二套 Markdown／風格權威，並降低 Agent 誤讀歷史證據。
+
+1. **權威不雙重維護**：流程→本檔；風格→`CODING_STANDARDS`；TDD 方法→`TDD.md`；業務→PRD；技術／財務契約→SPEC；依賴→`pyproject.toml`；CI→`.github/workflows/pytest.yml`。Rules／BUGBOT 只做精簡指針。
+2. **相對連結**：自檔案位置計算；新增連結前確認 Git 已追蹤目標。
+3. **現行 vs 歷史**：Class A／B（權威／操作）可最小修正過時指令；Class C（TDD_STATUS／RCA／UAT／audit）**保留史實**，僅追加具日期與基準 Commit 的後補說明。
+4. **命令列區塊**：優先標 `powershell`（Windows）；並註明於專案**根目錄**執行。
+5. **最小修改**：一次只修誤導、斷鏈與明確錯誤；不做全庫美化，不與 Python 重構混在同一 PR。
+6. **證據索引**：見 README「證據與歷史文件索引」；RCA／UAT 檔頂應標明歷史快照性質。

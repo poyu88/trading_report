@@ -1,10 +1,14 @@
 # TDD 測試狀態與稽核紀錄
 
+> **文件性質**：本檔為**歷史／現行測試證據**（Class C）。勿當操作手冊或第二套 SPEC。契約以 PRD／SPEC 為準；TDD 方法以 `docs/test/TDD.md` 為準。
+
 依 `docs/test/TDD.md`、`docs/spec/SPEC.md` §12、以及本檔生命週期追蹤表維護。
 
 > **稽核結論（2026-11-21）**：既有 **34** 項屬**特徵化／回歸安全網**（基準 `cf4e68e`）。`esun_xlsx_v1`、`day_trade_v1`、Cloud Agent **`esun_unsupported_rows_v1`**，以及本機整合後的補充覆蓋，均見 §6.2。
 >
 > **回歸基準 Commit**：`cf4e68e`。分支基準：`c537d8b`。
+>
+> **後補（2026-11-22；不覆寫上方歷史列）**：PR #6（品質流程）、PR #7（CASH 庫存優先 FIFO／CR 修正）、PR #8（Coding Standards）**已**合入 `master`（當時 tip 參考 `58430d5`）。全量通過數以本檔最新 §1.x REGRESSION 為準（PR #7 後曾記錄 **120 passed**）。
 
 ---
 
@@ -171,6 +175,16 @@
 | 副本 UAT | 見 `docs/test/PR7_FIFO_UAT.md`；基準 worktree＠`77f3ed7` vs 候選；1589 同日賣沖 2/3 舊庫存；結論 **APPROVE** |
 | 判定 | **有證據 TDD**（見 §6.2 `pr7_fifo_cr_fixes_v1`） |
 
+### 1.14 歷史文件一致性 Phase B（本任務；僅文件／Rules）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `docs/history-standardization-phase-b`（自 `master`＠`58430d5`） |
+| 變更範圍 | SPEC／PRD 狀態與欄 E／§9／CLI 敘述；README UAT 路徑；BUGBOT 指針；TDD.md 導覽；本檔後補；Workflow §7 路徑＋§8 文件慣例；Class C 橫幅；`commit-rule` 尾符號 |
+| 業務碼／測試／CI YAML | **未**修改 |
+| 本機 REGRESSION | `uv run pytest -q` → **120 passed**／56.69s（2026-11-22）；`git diff --check` 通過；正式 DB **未**動 |
+| 判定 | **文件整理**（非業務 TDD）；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/` |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -192,7 +206,7 @@
 | 問題 | 判定 |
 |---|---|
 | 是否有「測試 commit 早於功能 commit」？ | **否**。`cf4e68e` 同 commit 同時入庫實作與測試，無分階段 RED→GREEN 序。 |
-| 是否有 RED／GREEN／REFACTOR 分階段 commit？ | **否**。生命週期追蹤表 §6.2 目前為空。 |
+| 是否有 RED／GREEN／REFACTOR 分階段 commit？ | **否**（針對初版 `cf4e68e` 入庫）。**凍結註**：撰寫本列時 §6.2 為空；其後 §6.2 已填多筆有證據 TDD——**勿**再解讀為「目前仍空」。 |
 | 檔案時間線（輔助，非正式 Git 證據） | `backend/` 約 18:24–18:53 寫入；多數 `tests/test_*.py` 約 18:45–18:46；`test_tdd_cli_contract.py` 約 19:10（CLI 已存在後）；`test_db_transactions.py` 約 19:22（功能已存在後補寫）。 |
 | 先前 Agent 執行紀錄 | 契約測試**首次對現況執行即 12/12 PASS**；`test_db_transactions` 僅遇一次 **fixture／session 用法錯誤**（`DetachedInstanceError`），修正測試後即 PASS——**非業務行為缺失的 RED**。 |
 
@@ -306,7 +320,7 @@
 | FEE-03／FEE-06／AUD-06 TRUNC±1／超限 | **已覆蓋**（`test_fragment_gross_trunc.py` 案 A／B／±1／±2／禁比例餘額法） |
 | FEE-04／FEE-05／AUD-04／AUD-05 | **已覆蓋**（`test_uat_finance_conservation.py` UAT-01～22；UAT-22 期望已對齊 TRUNC） |
 | REP-05／REP-06 無 Excel／公式注入 | 契約有「無公式」部分；注入字串案例不足 |
-| AUD-03 同版 FIFO 可重現且舊 run 不覆寫 | 未見獨立斷言 |
+| AUD-03 同版 FIFO 可重現且舊 run 不覆寫 | **後補（2026-11-22）**：已由 `tests/test_fifo_cr_fixes.py`／§6.2 `pr7_fifo_cr_fixes_v1` 覆蓋；本列原「未見獨立斷言」為 PR7 前快照 |
 
 新增上述缺口時，**必須先 RED**（見 `docs/test/TDD.md`），不得直接補綠燈測試並宣稱 TDD。
 
@@ -407,3 +421,4 @@ uv run pytest -v --tb=line
 | 2026-11-21 | **PR #6 殘餘 N1／N2 文件對齊**（工作區；不預寫尚未產生之 Commit SHA）：① 本檔 §1.11／§9 對齊真實狀態（`461fd37`＋`2176c42`、已 Push、PR #6、CI Success、Code Review PASS WITH NOTES、Merge 尚未）；② `.cursor/rules/dev-workflow-rule.mdc` Force Push 改為無例外措辭，與 `DEVELOPMENT_WORKFLOW.md` 一致；未改業務碼／測試／CI YAML；未 amend／rebase 既有 Commit。 |
 | 2026-11-22 | **`cash_prior_inventory_fifo_v1` TDD**：分支 `feat/cash-prior-inventory-fifo`；RED 12 failed（`ORDER_AMBIGUITY`／time 解套）→ GREEN 按日先賣後買；全量 **106 passed**／76.53s；SPEC／PRD／README／FIFO-05 對齊；正式 DB **未** apply／migrate；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。 |
 | 2026-11-22 | **`pr7_fifo_cr_fixes_v1` TDD**：RED 9 failed → GREEN 版本／守恆／fingerprint／SQLite IT；全量 **120 passed**／65.16s；副本 UAT（基準＠`77f3ed7`）1589 通過、`ORDER_AMBIGUITY` 不再於新 run 出現；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`、`data/uat/`。 |
+| 2026-11-22 | **歷史文件一致性 Phase B**：分支 `docs/history-standardization-phase-b`；修正 SPEC／PRD 過時狀態與欄 E、README UAT 隔離範例、BUGBOT 斷鏈改指針、TDD 導覽、Workflow §8 文件慣例、Class C 橫幅；**未**改業務碼／財務演算法／CI YAML；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。REGRESSION 見 §1.14。 |
