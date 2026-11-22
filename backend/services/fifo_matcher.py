@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from backend.config import ALGORITHM_VERSION
 from backend.domain.models import Allocation, LotRemaining, OpeningLot, ReconciliationIssue, Trade
 
 
@@ -292,10 +293,18 @@ def run_fifo(
 
 
 def input_fingerprint(trades: Iterable[MatchInputTrade], opening_lots: Iterable[OpeningLot]) -> str:
+    """雜湊影響配對結果的輸入欄位（含排序穩定鍵與帳戶／幣別）。
+
+    `source_order` 僅為決定性會計穩定鍵／來源列號 tie-breaker，
+    **不得**解讀為已驗證的真實成交時間。
+    """
     payload = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "cash_same_day_policy": "prior_inventory_first",
         "trades": [
             {
                 "id": t.trade_id,
+                "account_id": t.account_id,
                 "date": t.trade_date.isoformat(),
                 "side": t.side,
                 "type": t.trade_type,
@@ -305,16 +314,19 @@ def input_fingerprint(trades: Iterable[MatchInputTrade], opening_lots: Iterable[
                 "currency": t.currency,
                 "seq": t.trade_sequence,
                 "time": t.trade_time,
+                "source_order": t.source_order,
             }
             for t in sorted(trades, key=lambda x: x.trade_id)
         ],
         "lots": [
             {
                 "id": o.lot_id,
+                "account_id": o.account_id,
                 "date": o.buy_date.isoformat(),
                 "qty": o.quantity,
                 "cost": str(o.unit_cost),
                 "symbol": o.symbol,
+                "currency": o.currency,
             }
             for o in sorted(opening_lots, key=lambda x: x.lot_id)
         ],

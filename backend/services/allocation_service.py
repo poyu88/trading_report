@@ -89,7 +89,14 @@ def match_fifo_for_account(session: Session, account_id: str) -> tuple[Allocatio
         started_at_utc=datetime.now(UTC),
         finished_at_utc=datetime.now(UTC),
         status=status,
-        config_json=json.dumps({"account_id": account_id}, ensure_ascii=False),
+        config_json=json.dumps(
+            {
+                "account_id": account_id,
+                "cash_same_day_policy": "prior_inventory_first",
+                "algorithm_version": ALGORITHM_VERSION,
+            },
+            ensure_ascii=False,
+        ),
         account_id=account_id,
     )
     session.add(run)
@@ -126,30 +133,65 @@ def match_fifo_for_account(session: Session, account_id: str) -> tuple[Allocatio
 def quantity_conservation(
     trades: list[TradeRow],
     allocations: list[FifoAllocation],
+    opening_lots: list[OpeningLot] | None = None,
 ) -> dict[str, Decimal | int | bool]:
-    """核對買賣數量守恆。"""
+    """核對買賣／期初庫存數量守恆（僅統計呼叫端傳入的當次 run allocations）。
+
+    供給 = approved opening qty + BUY qty；
+    守恆：supply = sold_from_buys + sold_from_openings + unsold_implied；
+    賣出：sell_qty = allocated_sell + unmatched_implied。
+    每筆 BUY／opening lot／SELL 不得超配。
+    """
+    lots = list(opening_lots or [])
     buy_qty = sum(t.quantity for t in trades if t.side == "BUY")
     sell_qty = sum(t.quantity for t in trades if t.side == "SELL")
+    opening_qty = sum(o.quantity for o in lots)
+    supply_qty = opening_qty + buy_qty
     allocated = sum(a.allocated_quantity for a in allocations)
 
     sold_by_buy: dict[str, int] = {}
+    sold_by_opening: dict[str, int] = {}
+    sold_by_sell: dict[str, int] = {}
     for a in allocations:
         if a.buy_trade_id:
             sold_by_buy[a.buy_trade_id] = sold_by_buy.get(a.buy_trade_id, 0) + a.allocated_quantity
+        if a.opening_lot_id:
+            sold_by_opening[a.opening_lot_id] = (
+                sold_by_opening.get(a.opening_lot_id, 0) + a.allocated_quantity
+            )
+        sold_by_sell[a.sell_trade_id] = sold_by_sell.get(a.sell_trade_id, 0) + a.allocated_quantity
 
+    sold_from_buys = sum(sold_by_buy.values())
+    sold_from_openings = sum(sold_by_opening.values())
     ok = True
+
     for t in trades:
         if t.side == "BUY":
             if sold_by_buy.get(t.id, 0) > t.quantity:
                 ok = False
         else:
-            matched = sum(a.allocated_quantity for a in allocations if a.sell_trade_id == t.id)
-            if matched > t.quantity:
+            if sold_by_sell.get(t.id, 0) > t.quantity:
                 ok = False
+
+    lot_by_id = {o.lot_id: o for o in lots}
+    for lot_id, sold in sold_by_opening.items():
+        lot = lot_by_id.get(lot_id)
+        if lot is None or sold > lot.quantity:
+            ok = False
+
+    # 配對不得超過供給或賣出；且來源拆分須等於 allocated
+    if sold_from_buys + sold_from_openings != allocated:
+        ok = False
+    if allocated > supply_qty or allocated > sell_qty:
+        ok = False
 
     return {
         "buy_qty": buy_qty,
         "sell_qty": sell_qty,
+        "opening_qty": opening_qty,
+        "supply_qty": supply_qty,
         "allocated_qty": allocated,
-        "ok": ok and allocated <= buy_qty and allocated <= sell_qty,
+        "sold_from_buys": sold_from_buys,
+        "sold_from_openings": sold_from_openings,
+        "ok": ok,
     }
