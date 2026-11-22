@@ -59,10 +59,16 @@ uv run python -m backend.cli report detail --account "main" --allow-partial --ou
 | Excel／稽核／例外／配對與守恆報表 | `output/uat_<主題>/` |
 | SQLite 測試副本 | `data/uat/<主題>/` 或 `data/uat_<主題>.db` |
 
-隔離 `--db` **必須事先建立**（例如自正式庫唯讀 backup／檔案複製），並已備妥本次驗收所需測試資料；下列指令**不會**自動建立空庫或匯入資料。
+隔離 `--db` **必須事先建立**，並已備妥本次驗收所需測試資料；下列指令**不會**自動建立空庫或匯入資料。
+
+建立隔離資料庫時：
+
+- **優先**使用 SQLite Backup API（例如 `uv run python -m backend.cli db backup …`，或程式內 `sqlite3.Connection.backup()`／同等一致性快照）自正式庫產出副本。
+- 資料庫正在使用 **WAL** 模式時，**不得**直接複製單一 `.db` 檔作為可靠備份。
+- 完成備份後應確認完整性（如 `PRAGMA integrity_check`），再於**隔離副本**執行 UAT；禁止對正式 `data/trading.db` 寫入。
 
 ```powershell
-# 前置：已存在 data/uat/example/copy.db（含帳戶／交易等測資）
+# 前置：已用 Backup API 產出 data/uat/example/copy.db（含帳戶／交易等測資；已做 integrity check）
 # 範例：隔離副本上配對與報表
 uv run python -m backend.cli match fifo --account "main" --db data/uat/example/copy.db
 # --allow-partial 不保證一定是 DRAFT；僅在有 blocking 時檔名含 DRAFT

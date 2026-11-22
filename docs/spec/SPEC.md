@@ -89,7 +89,7 @@ uv run ruff check .
 **C. 隔離 UAT**
 
 - 驗收請用隔離副本（`data/uat/...`）與 `output/uat_<主題>/`；路徑與禁寫正式庫見 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8。
-- UAT 用的 `--db` 必須事先建立並備妥測試資料；細節見 README §2.1。
+- UAT 用的 `--db` 必須事先以**一致性快照**建立並備妥測試資料（見 §10.2／§11；細節亦見 README §2.1）。
 
 > 僅在**尚無** `pyproject.toml` 的綠地才考慮 `uv init --python 3.11` 與 `uv add …`；已有專案禁止盲目覆寫。Dependencies 的版本由 `uv.lock` 鎖定，不依賴 `latest` 浮動版本。
 
@@ -644,9 +644,12 @@ uv run python -m backend.cli db backup --output-dir data/backups --db data/tradi
 
 ### 10.2 UAT／Agent 驗收（必須隔離 `--db`）
 
-UAT／Agent 驗收**禁止**對正式 `data/trading.db` 寫入。路徑見 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8。下列指令一律顯式指定隔離 `--db`；該檔須**事先**由備份／複製建立並備妥測試資料（勿在此預設對正式庫 `db init`／migration）。
+UAT／Agent 驗收**禁止**對正式 `data/trading.db` 寫入。路徑見 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8。下列指令一律顯式指定隔離 `--db`。
+
+隔離資料庫應**優先**使用 SQLite Backup API（`sqlite3.Connection.backup()`、`VACUUM INTO`，或 `db backup` CLI）建立一致性快照。資料庫正在使用 **WAL** 模式時，**不得**直接複製單一 `.db` 檔作為可靠備份（與 §11 一致）。完成備份並確認完整性（如 `PRAGMA integrity_check`）後，再於隔離副本執行 UAT。勿在此預設對正式庫 `db init`／migration。
 
 ```powershell
+# 前置：已用 Backup API 產出隔離 DB，並通過 integrity check
 # 玉山入庫至隔離 DB（現股 CASH＋現沖 DAY_TRADE）
 uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/uat/esun/tmp.db
 
