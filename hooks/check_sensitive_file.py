@@ -1,7 +1,9 @@
-#!/usr/bin/env python3
 """
 檢查要讀取的檔案是否為敏感檔案的腳本
 用於 Cursor beforeReadFile hook
+
+由 `.cursor/hooks.json` 以 `uv run python hooks/check_sensitive_file.py` 呼叫，
+不依賴 shebang／executable bit（避免 Linux CI EXE001 與 Windows 檔案模式不一致）。
 """
 
 import json

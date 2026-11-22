@@ -217,12 +217,18 @@
 | Ruff Baseline（修改前） | tracked 61 `.py`；診斷 **3**（BLE001×2、PLW1510×1）；format `--check`：**25** would reformat（僅記錄） |
 | Ruff（修改後本機） | `uv run --no-sync ruff check --no-cache .` → **All checks passed**（修復 PLW1510×1；刻意豁免 BLE001×2） |
 | 本機 REGRESSION | `uv run --no-sync pytest -q --tb=line` → **120 passed**／83.96s（2026-11-22） |
-| GitHub CI／PR／Merge／人工 UAT／獨立 CR | **尚未**執行／建立（不得寫成已成功） |
+| GitHub CI／PR／Merge／人工 UAT／獨立 CR | 見下方後補（寫入當時為尚未） |
 | 判定 | **品質基礎設施**（非業務 RED→GREEN）；Format 全庫／Google D 另案 |
 
 > **後補（2026-11-22；本機驗證後）**
 > - 本機 REGRESSION：**120 passed**／83.96s；`ruff check .` All checks passed；`git diff --check` 通過
-> - Commit／Push／PR／GitHub CI／獨立 CR／UAT：待使用者授權後補
+> - Commit：`06fe96a`；Push：`origin/chore/phase-d-ruff-ci`；PR：[#11](https://github.com/poyu88/trading_report/pull/11)
+>
+> **後補（2026-11-22；PR #11 CI／獨立 CR）**
+> - GitHub CI run [`45040723414`](https://github.com/poyu88/trading_report/actions/runs/45040723414)：`pytest` **SUCCESS**；`ruff` **FAILURE**（EXE001×2：hooks 有 shebang 但非 executable；Windows 本機未觸發）
+> - 獨立 CR：**FAIL**（Blocking：EXE001 跨平台偽陰性）
+> - CR 修正（工作樹，待 Commit）：移除兩 hooks 的 shebang（實際由 `hooks.json` 以 `uv run python …` 呼叫；不改 fail-open／敏感檢查邏輯）
+> - Merge／UAT：仍未授權
 
 ---
 

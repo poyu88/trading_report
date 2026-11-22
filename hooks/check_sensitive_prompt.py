@@ -1,7 +1,9 @@
-#!/usr/bin/env python3
 """
 檢查提示內容中是否包含敏感資訊的腳本
 用於 Cursor beforeSubmitPrompt hook
+
+由 `.cursor/hooks.json` 以 `uv run python hooks/check_sensitive_prompt.py` 呼叫，
+不依賴 shebang／executable bit（避免 Linux CI EXE001 與 Windows 檔案模式不一致）。
 """
 
 import json
