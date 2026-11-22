@@ -69,15 +69,27 @@
 
 ### 2.1 Windows / Cursor Terminal 初始化
 
-**既有專案（現行）**：在儲存庫根目錄執行 `uv sync`，勿再跑 `uv init` 覆寫設定。
+**既有專案（現行）**：先切換到儲存庫根目錄（含 `pyproject.toml`），執行環境安裝與檢查。勿再跑 `uv init` 覆寫設定。
+
+**A. 環境安裝（安全預設；不寫入交易 DB）**
 
 ```powershell
-# 專案根目錄
+# 於專案根目錄
 uv sync
-uv run alembic upgrade head
 uv run pytest
 uv run ruff check .
 ```
+
+**B. Schema／正式 DB（非日常預設；需明確意圖）**
+
+- `uv run alembic upgrade head`、`db init`、對 `data/trading.db` 的 `import`／`match`／`report` 等會寫入資料庫的指令，**不得**當成一般環境初始化步驟。
+- 僅在使用者明確授權、且已備份／知情時，才對正式 DB 執行 migration 或業務寫入。
+- Agent／文件示例**不**預設執行 migration。
+
+**C. 隔離 UAT**
+
+- 驗收請用隔離副本（`data/uat/...`）與 `output/uat_<主題>/`；路徑與禁寫正式庫見 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8。
+- UAT 用的 `--db` 必須事先建立並備妥測試資料；細節見 README §2.1。
 
 > 僅在**尚無** `pyproject.toml` 的綠地才考慮 `uv init --python 3.11` 與 `uv add …`；已有專案禁止盲目覆寫。Dependencies 的版本由 `uv.lock` 鎖定，不依賴 `latest` 浮動版本。
 
@@ -599,10 +611,12 @@ class DetailRow:
 
 ## 10. CLI 介面約定
 
-以下為**現行已實作**之 CLI 契約（參數細節以 `uv run python -m backend.cli --help` 為準）。UAT／Agent 驗收請另遵 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8 隔離路徑，勿對正式 `data/trading.db` 寫入。
+以下為**現行已實作**之 CLI 契約（參數細節以 `uv run python -m backend.cli --help` 為準）。財務／配對規則仍見本檔 §6–§8；本節不變更業務契約。
+
+### 10.1 一般／正式庫操作（契約示意）
 
 ```powershell
-# 資料庫初始化
+# 資料庫初始化（會寫入指定 DB；非正式環境日常預設）
 uv run python -m backend.cli db init --db data/trading.db
 
 # 預覽檔案與欄位映射（不入庫）
@@ -612,23 +626,38 @@ uv run python -m backend.cli import preview --file "input/Statement (2).xls" --p
 uv run python -m backend.cli import preview --file "input/玉山.xlsx" --profile esun_xlsx_v1
 
 # 入庫：每批指定券商與帳戶
-uv run python -m backend.cli import apply --file "input/Statement (2).xls" --broker "群益" --account "main" --profile statement_html_v1
-
-# 玉山入庫（現股 CASH＋現沖 DAY_TRADE；正式驗收前請用隔離／臨時 DB）
-uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/uat/esun/tmp.db
+uv run python -m backend.cli import apply --file "input/Statement (2).xls" --broker "群益" --account "main" --profile statement_html_v1 --db data/trading.db
 
 # 執行 FIFO，將配對版本保存 SQLite
-uv run python -m backend.cli match fifo --account "main"
+uv run python -m backend.cli match fifo --account "main" --db data/trading.db
 
 # 產生純交易明細，不包含底部總計
-uv run python -m backend.cli report detail --account "main" --output-dir output
+uv run python -m backend.cli report detail --account "main" --output-dir output --db data/trading.db
 
-# 需要時才允許產生標記 DRAFT 的未完成結果（UAT 建議 output/uat_<主題>）
-uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output/uat_example
+# 有 blocking 時才允許以 --allow-partial 產生 DRAFT（無 blocking 時仍為正式檔名）
+uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output --db data/trading.db
 
 # 稽核與本機備份
-uv run python -m backend.cli audit --account "main"
-uv run python -m backend.cli db backup --output-dir data/backups
+uv run python -m backend.cli audit --account "main" --db data/trading.db
+uv run python -m backend.cli db backup --output-dir data/backups --db data/trading.db
+```
+
+### 10.2 UAT／Agent 驗收（必須隔離 `--db`）
+
+UAT／Agent 驗收**禁止**對正式 `data/trading.db` 寫入。路徑見 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md) §2.8。下列指令一律顯式指定隔離 `--db`；該檔須**事先**由備份／複製建立並備妥測試資料（勿在此預設對正式庫 `db init`／migration）。
+
+```powershell
+# 玉山入庫至隔離 DB（現股 CASH＋現沖 DAY_TRADE）
+uv run python -m backend.cli import apply --file "input/玉山.xlsx" --broker "玉山" --account "main" --profile esun_xlsx_v1 --db data/uat/esun/tmp.db
+
+# 隔離副本上配對
+uv run python -m backend.cli match fifo --account "main" --db data/uat/esun/tmp.db
+
+# 隔離輸出；--allow-partial 僅在存在 blocking 時產 DRAFT 檔名
+uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output/uat_esun --db data/uat/esun/tmp.db
+
+# 隔離稽核
+uv run python -m backend.cli audit --account "main" --db data/uat/esun/tmp.db
 ```
 
 設計約定：`--db` 可由環境變數 `TRADING_DB_PATH` 替代，但程式不得直接寫死使用者的 Windows 帳戶資料夾；任何會修改 DB 的 CLI 命令都要顯示異動摘要。

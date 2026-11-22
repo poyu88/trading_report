@@ -7,10 +7,9 @@
 - Python 3.11+
 - 套件管理：`uv`（勿用 pip／poetry）
 
-在專案根目錄操作：
+先切換到本專案根目錄（含 `pyproject.toml` 的目錄；例如本機 clone 後的 `trading_report` 資料夾），再執行：
 
 ```powershell
-cd <repo-root>
 uv sync
 uv run pytest
 ```
@@ -41,13 +40,13 @@ uv run python -m backend.cli import apply --file "input/statement.xls" --broker 
 uv run python -m backend.cli match fifo --account "main" --db data/trading.db
 
 # 產出明細報表
-# 若有「缺期初庫存」等阻擋例外，需加 --allow-partial（會標 DRAFT）
+# --allow-partial：僅在存在 blocking 例外時產出 DRAFT 檔名；無 blocking 時仍為正式檔名
 uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output --db data/trading.db
 ```
 
 輸出會在 `output/`：
 
-- `交易明細_DRAFT_*.xlsx`（或正式版 `交易明細_*.xlsx`）
+- `交易明細_DRAFT_*.xlsx`（僅當有 blocking 且使用 `--allow-partial`）或正式版 `交易明細_*.xlsx`
 - 同名的 `_audit.json`、`_exceptions.csv`
 - 以及 FIFO 配對／未配對明細、價金費用守恆等配套檔（見 SPEC §8.2.1）
 
@@ -60,9 +59,13 @@ uv run python -m backend.cli report detail --account "main" --allow-partial --ou
 | Excel／稽核／例外／配對與守恆報表 | `output/uat_<主題>/` |
 | SQLite 測試副本 | `data/uat/<主題>/` 或 `data/uat_<主題>.db` |
 
+隔離 `--db` **必須事先建立**（例如自正式庫唯讀 backup／檔案複製），並已備妥本次驗收所需測試資料；下列指令**不會**自動建立空庫或匯入資料。
+
 ```powershell
-# 範例：隔離副本上配對並產 DRAFT
+# 前置：已存在 data/uat/example/copy.db（含帳戶／交易等測資）
+# 範例：隔離副本上配對與報表
 uv run python -m backend.cli match fifo --account "main" --db data/uat/example/copy.db
+# --allow-partial 不保證一定是 DRAFT；僅在有 blocking 時檔名含 DRAFT
 uv run python -m backend.cli report detail --account "main" --allow-partial --output-dir output/uat_example --db data/uat/example/copy.db
 ```
 
