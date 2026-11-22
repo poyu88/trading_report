@@ -64,6 +64,15 @@ def _opening_lots(session: Session, account_id: str) -> list[OpeningLot]:
 
 
 def match_fifo_for_account(session: Session, account_id: str) -> tuple[AllocationRun, MatchResult]:
+    """自 DB 載入帳戶成交與期初庫存，執行 FIFO 並寫入配對結果。
+
+    Args:
+        session: SQLAlchemy Session（呼叫端負責 commit／rollback）。
+        account_id: 帳戶主鍵（非標籤）。
+
+    Returns:
+        ``(AllocationRun 列, MatchResult)``；blocking 時 run status 仍寫入供 DRAFT。
+    """
     trade_rows = list(
         session.execute(
             select(TradeRow, RawRow.row_index)

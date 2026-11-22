@@ -179,10 +179,10 @@ def test_hist01_partial_sell_income_is_fragment_not_full_gross(
     assert len(sold) == 1
     assert sold[0][9] == 1000
     # 片段價金 15000 − 30 − 90 − 0 = 14880；若 HIST-01 回歸會變成 29880
-    assert Decimal(str(sold[0][16])) == Decimal("14880")
+    assert Decimal(str(sold[0][16])) == Decimal(14880)
     assert sold[0][22] == PARTIAL_MATCH_NOTE
     # 絕不可接近全額收入
-    assert Decimal(str(sold[0][16])) != Decimal("29880")
+    assert Decimal(str(sold[0][16])) != Decimal(29880)
 
     audit_obj = json.loads(audit.read_text(encoding="utf-8"))
     assert audit_obj["draft"] is True
@@ -193,9 +193,9 @@ def test_hist01_partial_sell_income_is_fragment_not_full_gross(
     detail = json.loads(exc_rows[0]["detail_json"])
     assert detail["matched_quantity"] == 1000
     assert detail["unmatched_quantity"] == 1000
-    assert Decimal(detail["matched_gross"]) == Decimal("15000")
-    assert Decimal(detail["unmatched_gross"]) == Decimal("15000")
-    assert Decimal(detail["source_gross"]) == Decimal("30000")
+    assert Decimal(detail["matched_gross"]) == Decimal(15000)
+    assert Decimal(detail["unmatched_gross"]) == Decimal(15000)
+    assert Decimal(detail["source_gross"]) == Decimal(30000)
     assert detail["amount_conservation_ok"] is True
 
     cons = list(out.glob("價金費用守恆核對_*.csv"))
@@ -261,10 +261,10 @@ def test_html_multi_buy_fee_once_and_full_match(db_session, tmp_path: Path) -> N
     buy_fees = [Decimal(str(r[7] or 0)) for r in data]
     sell_fees = [Decimal(str(r[10] or 0)) for r in data if r[10] is not None]
     sell_taxes = [Decimal(str(r[11] or 0)) for r in data if r[11] is not None]
-    assert sum(buy_fees) == Decimal("30")  # 20+10，各一次
+    assert sum(buy_fees) == Decimal(30)  # 20+10，各一次
     assert sum(1 for f in buy_fees if f != 0) == 2
-    assert sum(sell_fees) == Decimal("18")
-    assert sum(sell_taxes) == Decimal("36")
+    assert sum(sell_fees) == Decimal(18)
+    assert sum(sell_taxes) == Decimal(36)
     assert sum(1 for f in sell_fees if f != 0) == 1
 
 
@@ -303,8 +303,8 @@ def test_html_income_deducts_nonzero_interest_on_first_fragment(
     sold = [r for r in ws.iter_rows(min_row=2, values_only=True) if r[9] is not None]
     assert len(sold) == 1
     # 11000 − 12 − 33 − 5 = 10950
-    assert Decimal(str(sold[0][16])) == Decimal("10950")
-    assert Decimal(str(sold[0][12])) == Decimal("5")  # 利息欄
+    assert Decimal(str(sold[0][16])) == Decimal(10950)
+    assert Decimal(str(sold[0][12])) == Decimal(5)  # 利息欄
 
 
 def test_early_sell_blocks_formal_and_draft_lists_insufficient(
@@ -368,5 +368,5 @@ def test_early_sell_blocks_formal_and_draft_lists_insufficient(
     assert any(r["code"] == "INSUFFICIENT_PRIOR_BUYS" for r in exc_rows)
     detail = json.loads(next(r for r in exc_rows if r["code"] == "INSUFFICIENT_PRIOR_BUYS")["detail_json"])
     assert detail["unmatched_quantity"] == 250
-    assert Decimal(detail["unmatched_gross"]) == Decimal("25000")
+    assert Decimal(detail["unmatched_gross"]) == Decimal(25000)
     assert detail["matched_quantity"] == 0

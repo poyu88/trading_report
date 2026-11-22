@@ -5,9 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import load_workbook
-from sqlalchemy import func, select
 
-from backend.db.models import TradeRow
 from backend.db.repositories import find_account_by_label
 from backend.domain.exceptions import BlockingExceptionError
 from backend.services.allocation_service import match_fifo_for_account
@@ -26,7 +24,7 @@ def test_e2e_sample_with_partial_report(db_session, fixtures_dir: Path, tmp_path
 
     account = find_account_by_label(db_session, "main")
     assert account is not None
-    run, match = match_fifo_for_account(db_session, account.id)
+    _run, match = match_fifo_for_account(db_session, account.id)
     db_session.commit()
     assert match.blocking  # 合成甲 9991 早賣無買
     assert any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in match.issues)

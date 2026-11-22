@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 檢查要讀取的檔案是否為敏感檔案的腳本
 用於 Cursor beforeReadFile hook
@@ -8,8 +7,7 @@
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
-
+from typing import Any
 
 # 敏感檔案名單（可根據需求擴充）
 SENSITIVE_FILES = [
@@ -92,12 +90,12 @@ def main() -> None:
 
         # 解析 JSON
         try:
-            data: Dict[str, Any] = json.loads(input_data)
+            data: dict[str, Any] = json.loads(input_data)
         except json.JSONDecodeError as e:
             # JSON 解析失敗，輸出錯誤並允許讀取（避免阻擋使用者）
             result = {
                 "permission": "allow",
-                "user_message": f"JSON 解析錯誤: {str(e)}",
+                "user_message": f"JSON 解析錯誤: {e!s}",
             }
             output = json.dumps(result, ensure_ascii=False)
             sys.stdout.buffer.write(output.encode("utf-8"))
@@ -141,7 +139,7 @@ def main() -> None:
         # 發生未預期的錯誤，輸出錯誤訊息但允許讀取（避免阻擋使用者）
         result = {
             "permission": "allow",
-            "user_message": f"檢查過程中發生錯誤: {str(e)}",
+            "user_message": f"檢查過程中發生錯誤: {e!s}",
         }
         output = json.dumps(result, ensure_ascii=False)
         sys.stdout.buffer.write(output.encode("utf-8"))

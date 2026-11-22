@@ -41,9 +41,9 @@ def test_day_trade_buy_and_sell_normalize_with_fees() -> None:
     assert buy.trade_type == "DAY_TRADE"
     assert buy.quantity == 1000
     assert buy.unit_price == Decimal("50.5")
-    assert buy.gross_amount == Decimal("50500")
-    assert buy.commission == Decimal("71")
-    assert buy.tax == Decimal("0")
+    assert buy.gross_amount == Decimal(50500)
+    assert buy.commission == Decimal(71)
+    assert buy.tax == Decimal(0)
 
     sell = normalize_mapped_row(
         {
@@ -64,8 +64,8 @@ def test_day_trade_buy_and_sell_normalize_with_fees() -> None:
     assert sell.error_code is None
     assert sell.side == "SELL"
     assert sell.trade_type == "DAY_TRADE"
-    assert sell.commission == Decimal("74")
-    assert sell.tax == Decimal("78")
+    assert sell.commission == Decimal(74)
+    assert sell.tax == Decimal(78)
 
 
 def test_unknown_trade_type_still_errors() -> None:

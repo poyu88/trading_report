@@ -134,7 +134,7 @@ def test_unsupported_trade_types_surface_as_errors_not_silent_skip(
     assert recon is not None
     assert recon["declared_count"] == 3
     assert recon["recognized_count"] == 1  # 僅現股買進
-    assert Decimal(str(recon["gross_amount"])) == Decimal("81000")  # 頁尾宣告值
+    assert Decimal(str(recon["gross_amount"])) == Decimal(81000)  # 頁尾宣告值
     assert recon["matched"] is False  # 未支援列不計入 recognized，故與頁尾不一致
 
 

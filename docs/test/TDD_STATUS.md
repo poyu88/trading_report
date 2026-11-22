@@ -185,6 +185,19 @@
 | 本機 REGRESSION | `uv run pytest -q` → **120 passed**／56.69s（2026-11-22）；`git diff --check` 通過；正式 DB **未**動 |
 | 判定 | **文件整理**（非業務 TDD）；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/` |
 
+### 1.15 Phase C Python 品質改善（本任務；REFACTOR）
+
+| 項目 | 結果 |
+|---|---|
+| 基準 | `master`＠`471784d`；K 節預設：刪暫存、C1 含 alembic UP、C3 清測試 FURB157、C4 僅常數／RUF015／parser（**不做**大面積財務 format）、BLE001／PLW1510 保留、修 SIM222；**未**改 Phase D／CI |
+| 變更範圍 | C1 import／UP／RUF010；C2 公開 API Google docstring＋`report_finance` Protocol；C3 測試 FURB157／F841／RUF059／SIM222；C4 `AMOUNT_TOLERANCE=Decimal(1)`、UAT RUF015、`esun_xlsx_parser` SIM103／PIE810 |
+| 財務公式／FIFO 政策／報表 A～W 契約／財務 assert | **未**改寫語意；斷言**未**放寬 |
+| 正式 DB／真實對帳單／正式 output | **未**讀寫 |
+| Ruff（tracked） | 222 → **3**（剩餘 hooks BLE001×2、契約測 PLW1510×1，刻意保留） |
+| 本機 REGRESSION | `uv run pytest -q --tb=line` → **120 passed**／69.47s（2026-11-22） |
+| 判定 | **品質 REFACTOR／回歸**（非業務 RED→GREEN）；Phase D `lint.select`／窄集合 CI **另案** |
+| Commit | **尚未**建立（待使用者授權） |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？

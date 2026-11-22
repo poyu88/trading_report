@@ -120,6 +120,15 @@ def _process_rows(
 
 
 def preview_import(path: Path, profile_id: str) -> ImportPreview:
+    """預覽匯入：解析並標準化，**不**寫入資料庫。
+
+    Args:
+        path: 對帳單檔案路徑。
+        profile_id: mapping profile 識別（如 ``statement_html_v1``）。
+
+    Returns:
+        ``ImportPreview``（筆數統計、列狀態、檔案 SHA-256）。
+    """
     profile = load_profile(profile_id)
     file_hash = sha256_file(path)
     table, kind = _parse_with_profile(path, profile)
@@ -190,6 +199,18 @@ def apply_import(
     account_label: str,
     profile_id: str,
 ) -> ImportResult:
+    """正式匯入：入庫交易列並歸檔來源檔（同雜湊批次可冪等）。
+
+    Args:
+        session: SQLAlchemy Session（呼叫端負責 commit）。
+        path: 對帳單檔案路徑。
+        broker_name: 券商顯示名稱。
+        account_label: 帳戶標籤（非 DB 主鍵）。
+        profile_id: mapping profile 識別。
+
+    Returns:
+        ``ImportResult``（含 batch／trade_count；重複檔不重複入交易）。
+    """
     profile = load_profile(profile_id)
     file_hash = sha256_file(path)
     table, _kind = _parse_with_profile(path, profile)

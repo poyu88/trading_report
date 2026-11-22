@@ -40,7 +40,9 @@ class MatchResult:
     blocking: bool
 
 
-def _group_key(account_id: str, symbol: str, currency: str, trade_type: str) -> tuple:
+def _group_key(
+    account_id: str, symbol: str, currency: str, trade_type: str
+) -> tuple[str, str, str, str]:
     return (account_id, symbol, currency, trade_type)
 
 
@@ -245,6 +247,19 @@ def run_fifo(
     trades: Iterable[MatchInputTrade],
     opening_lots: Iterable[OpeningLot] | None = None,
 ) -> MatchResult:
+    """對單一帳戶輸入執行 FIFO 配對（純函式，不寫 DB）。
+
+    CASH：開盤前庫存優先沖減後再入庫當日買；DAY_TRADE：同日現沖分組。
+    帳戶／標的／幣別／交易類型互不交叉配對。
+
+    Args:
+        run_id: 本次配對執行 ID（寫入 allocation 關聯）。
+        trades: 已依帳戶篩選的成交輸入（含 source_order 穩定鍵）。
+        opening_lots: 可選期初庫存；僅參與 CASH 組。
+
+    Returns:
+        ``MatchResult``（allocations／issues／unsold／blocking）。
+    """
     trade_list = list(trades)
     ambiguity = detect_order_ambiguity(trade_list)
 

@@ -7,7 +7,6 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-
 HEADERS = [
     "交易類別",
     "股票名稱",
