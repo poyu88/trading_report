@@ -78,7 +78,7 @@
 
 | 規則 | 次數 | 備註 |
 |---|---|---|
-| FURB157 | 173 | `Decimal("…")` 字串建構；**財務碼勿盲目自動修** |
+| FURB157 | 173 | 見下方 **D.2.1**（非整數金額字串如 `Decimal("0.01")` **不**在此規則範圍） |
 | RUF015 | 8 | `list…[0]` → `next(...)` |
 | UP007 | 6 | `Optional`／`Union` → `|` |
 | F401 | 6 | unused import |
@@ -90,6 +90,19 @@
 
 主要落點：測試檔（如 `tests/test_fragment_gross_trunc.py` 等）、`hooks/`、`alembic/versions/`；業務 `backend/` 相對較少。
 
+#### D.2.1 FURB157（官方定義對齊）
+
+依 Ruff 規則 [`verbose-decimal-constructor`（FURB157）](https://docs.astral.sh/ruff/rules/verbose-decimal-constructor/)：
+
+| 項目 | 內容 |
+|---|---|
+| 檢查什麼 | `Decimal` 建構子中**不必要的**字串字面值或 `float(...)` 轉型 |
+| 典型誤用 | 整數寫成字串：`Decimal("0")`／`Decimal("1")` → 建議 `Decimal(0)`／`Decimal(1)`；或 `Decimal(float("Infinity"))` → `Decimal("Infinity")` |
+| **明確不標記** | 為精度而加引號的浮點字串，例如 `Decimal("0.1")`、`Decimal("0.01")`（官方說明：比 `Decimal(0.1)` 更精確） |
+| Fix | Ruff 標為幾乎皆可自動修（含 comment 時除外）；**本專案仍禁止對財務相關碼盲目 `--fix`** |
+
+本庫實例：`backend/services/report_finance.py` 中 `Decimal("0.01")`（`TWOPLACES`）**不**觸發 FURB157；同檔 `Decimal("1")`（`AMOUNT_TOLERANCE`）**會**觸發。即使 auto-fix 在整數案例語意通常等價，財務模組與測試仍須**人工審查**後才改建構形式，以符合「Style／Ruff 不得改變財務結果／慣例」政策。
+
 ### D.3 `uv run ruff format --check .`
 
 - **28** files would be reformatted；**46** already formatted。
@@ -99,7 +112,7 @@
 
 | 階段 | 建議 | 目的 |
 |---|---|---|
-| Phase A | 本機對照現行預設 `ruff check`；清理安全的 F401／I001；**人工審** FURB157（財務字串 Decimal） | 建立可重複 baseline 意識 |
+| Phase A | 本機對照現行預設 `ruff check`；清理安全的 F401／I001；**人工審** FURB157（整數字串 `Decimal("N")`；勿動精度字串） | 建立可重複 baseline 意識 |
 | Phase B | 在 `pyproject` **明確** `lint.select` 或 `extend-select`（接受 0.17 預設並 ignore 少數，或暫釘經典子集）；評估 CI `ruff check` | 鎖定可重現規則 |
 | Phase C | 評估 `ruff format` CI 與 Google `D` 規則 | 格式／文件字串一致 |
 
@@ -117,9 +130,32 @@
 
 ---
 
-## F. 驗證指令紀錄（執行時填入最終數字）
+## F. 驗證指令紀錄（實際執行；禁止捏造）
 
-見最終交付 §F；回歸以 `uv run pytest -q` 為準。Ruff 數字屬**歷史 baseline**，不歸咎本次文件變更。
+| 維度 | 結果 | 說明 |
+|---|---|---|
+| 驗證 Commit | `79cd5d4`（`doc：對齊 Coding Standards 與修正 backend-rule`） | 開支基準 `a770a82` |
+| **本機** pytest | `uv run pytest -q` → **120 passed** in **56.35s**（exit 0；約 2026-11-22 實作當次） | **僅本機 REGRESSION**；**≠** GitHub CI Success |
+| **本機** Ruff check | `uv run ruff check .`（未 `--fix`）→ **Found 222 errors**；201 fixable／15 unsafe | **歷史 baseline**；非本次文件變更引入 |
+| **本機** Ruff format | `uv run ruff format --check .` → **28** would be reformatted，**46** already formatted（實作當次；未執行 format） | 同上 |
+| 補正當次複核（文件修正、仍未 Commit） | `ruff check` 仍 **222**；`format --check` 報 28／**48** | 「already formatted」多 2：工作樹未追蹤 `scripts/*.py` 被掃到；**不**改寫上列 baseline，亦**不**視為 CI |
+| GitHub Actions（本分支） | `gh run list --branch docs/coding-standards-alignment` → **空** | `pytest.yml` 僅在 `push`／`pull_request` 目標 **`master`**（及 `workflow_dispatch`）觸發；純推功能分支**不會**跑此 workflow |
+| GitHub CI（本變更） | **無對應 run** | 因尚**無** `docs/coding-standards-alignment` → `master` 的 PR（見交付 §5）；不得以本機 pytest 冒充 CI |
+| `git diff --check` | 通過（無 whitespace error 報告） | 實作當次 |
+| 正式 DB／未追蹤保留 | 未寫入 `data/trading.db`；保留 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/` | 邊界遵守 |
+
+### F.1 新碼 vs 歷史 Ruff 違規（在 222 項下如何區分）
+
+全庫 **222** 為**已知歷史債務**，記錄於本檔 §D；**不**要求文件／Rules 變更一次清零，也**不得**用「全庫未全綠」否定新規範生效。
+
+| 判斷對象 | 通過標準 | 不作為阻擋的理由 |
+|---|---|---|
+| 純文件／Cursor Rules（本任務） | 無 Python 業務 diff；本機 pytest 未因本變更變紅 | 既有 222／28 format |
+| **新增** Python 檔 | 對該檔 `ruff check <path>` 應盡量乾淨；財務相關 FURB157 等先人工審 | 其他檔歷史違規 |
+| **修改**既有 Python 檔 | 以「本次 diff **是否新增**違規」為主（變更檔檢查或違規數是否上升）；能順手修者可修，非必須清整檔歷史債 | 同檔未改動行上的舊違規 |
+| 宣稱「Ruff 全綠」 | **禁止**，除非另任務清理並更新 baseline | — |
+
+權威敘述亦見 [`docs/CODING_STANDARDS.md`](../CODING_STANDARDS.md) §7.2。
 
 ---
 

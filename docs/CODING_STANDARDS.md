@@ -77,7 +77,7 @@ Agent 與開發者不得另建平行「風格指南」重複維護相同內容�
 詳細演算法與欄位以 PRD／SPEC 為準。本檔僅強調風格層硬性約束：
 
 - 金額／單價運算使用 `Decimal`；**禁止**用 `float` 或 SQLite `REAL`／`SUM(CAST…AS REAL)` 產生財務結果。
-- **Style／Ruff／formatter 不得改變財務結果**。對建議改寫（例如將 `Decimal("123.45")` 改為其他建構方式）必須人工審查；不確定時維持現狀並開待決策。
+- **Style／Ruff／formatter 不得改變財務結果**。對 Ruff 建議（含 [FURB157](https://docs.astral.sh/ruff/rules/verbose-decimal-constructor/)：不必要的整數字串如 `Decimal("1")`→`Decimal(1)`；**不**標記精度字串如 `Decimal("0.01")`）必須人工審查後才改；不確定時維持現狀並開待決策。禁止對財務相關碼盲目 `ruff check --fix`。
 - 不得為通過 linter 而放寬測試財務斷言或刪除守恆檢查。
 - 真實對帳單、正式 DB、正式報表不得進入自動化測試或 Commit。
 
@@ -111,10 +111,18 @@ Agent 與開發者不得另建平行「風格指南」重複維護相同內容�
 - GitHub CI（`pytest.yml`）目前**只跑 pytest**，不跑 Ruff。
 - Baseline 數字與分階段建議見 [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](audit/CODING_STANDARDS_ALIGNMENT.md)。
 
-### 7.2 策略
+### 7.2 策略（新碼 vs 歷史違規）
 
-- **新碼**應可通過本機 `uv run ruff check`（對現行預設）的合理檢查；不確定的財務相關建議先人工審。
-- **歷史碼**分階段改善；不在未授權任務執行 `ruff check --fix`／`ruff format` 大批改寫。
+全庫既有 Ruff 違規數以稽核報告 baseline 為準（撰寫時約 **222**）；屬**歷史債務**，不要求每次變更清零，也不得宣稱「未全綠＝新規範無效」。
+
+| 對象 | 期望 |
+|---|---|
+| **新增** Python 檔 | 對該檔執行 `ruff check <path>` 應盡量無新違規；財務相關建議先人工審 |
+| **修改**既有 Python | 以本次 diff **是否新增**違規為主（查變更檔或比較違規數是否上升）；未改動行上的舊違規不自動視為本變更失敗 |
+| **純文件／Rules** | 不要求清歷史 Ruff；本機 pytest 回歸即可佐證未破壞行為 |
+| 全庫 `ruff check .` 全綠 | 僅在另開清理任務並更新 baseline 後才可宣稱 |
+
+- 不在未授權任務執行 `ruff check --fix`／`ruff format` 大批改寫歷史碼。
 - 明確擴充或鎖定 `select`、啟用 format／D、以及是否納入 CI，屬**待決策**；實施時另開任務並遵守 DEVELOPMENT_WORKFLOW。
 
 ---

@@ -10,7 +10,7 @@ alwaysApply: true
 - **套件管理器**：**必須使用 uv**（不得使用 pip、poetry、conda 或其他工具）
 - **依賴與工具設定**：以專案**根目錄**的 `pyproject.toml`／`uv.lock` 為**唯一權威**（勿在本 Rule 複製完整套件清單）
 - **應用程式位置**：原始碼在 `backend/`；專案設定與 `uv` 操作在**儲存庫根目錄**
-- **風格規範**：遵循 [`docs/CODING_STANDARDS.md`](docs/CODING_STANDARDS.md)
+- **風格規範**：遵循 [`docs/CODING_STANDARDS.md`](../../docs/CODING_STANDARDS.md)（儲存庫根相對路徑；自本 Rule 檔之相對連結）
 
 ## 使用 uv 的正確方式
 
