@@ -11,7 +11,7 @@
 | `docs/spec/SPEC.md` | 技術規格、schema、FIFO／費用／報表契約、驗證矩陣 |
 | `docs/test/TDD.md` | TDD 方法（RED→GREEN→REFACTOR→REGRESSION） |
 | `docs/test/TDD_STATUS.md` | **實際**測試結果與 Commit／稽核證據（不得寫計畫中的通過） |
-| `.github/workflows/pytest.yml` | GitHub Actions pytest CI 的實際設定（目前僅 pytest；Ruff CI 為建議未實施） |
+| `.github/workflows/pytest.yml` | GitHub Actions CI 實際設定（並列 `lint`／`pytest` 兩 Job；以 YAML 為準） |
 | `.cursor/rules/dev-workflow-rule.mdc` | 強制 Agent 遵守本流程的精簡規則 |
 | `.cursor/rules/tdd-rule.mdc` | 強制 Agent 遵守 `TDD.md` |
 | `.cursor/rules/commit-rule.mdc` | Commit message 格式 |
@@ -41,6 +41,7 @@ PRD / SPEC
 
 - TDD 細節以 [`docs/test/TDD.md`](test/TDD.md) 為準；其中含 **REFACTOR** 階段。本流程圖保留 REFACTOR，與「RED→GREEN→REGRESSION」摘要並不衝突：REFACTOR 介於 GREEN 與 REGRESSION 之間，且不得改變既有業務行為。
 - **本機 pytest 通過 ≠ GitHub CI Success ≠ 人工 UAT 通過**。三者各自獨立，不可互相替代。
+- GitHub CI 內的 **Ruff lint** 與 **pytest** 是兩個不同品質門檻；任一失敗都須調查。Ruff 綠燈**不**代表可自動 Merge，也不取代 Code Review 或財務 UAT。
 
 ---
 
@@ -119,18 +120,21 @@ PRD / SPEC
 |---|---|
 | 觸發 | `push` → `master`；`pull_request` → `master`；`workflow_dispatch` |
 | 權限 | `permissions.contents: read`（最小讀取） |
+| Jobs | 並列 **`lint`（ruff）** 與 **`pytest`**（互不 `needs`；風格失敗不取消回歸測試） |
 | 環境 | `ubuntu-latest`；Python **3.11**；`astral-sh/setup-uv`（pin commit） |
-| 依賴 | `uv sync --locked --dev` |
+| 依賴 | 各 Job：`uv sync --locked --dev` |
+| Lint | `uv run --locked ruff check .`（規則唯讀 `pyproject.toml`；不 `--fix`） |
 | 測試 | `uv run --locked pytest -q` |
 | Checkout | `persist-credentials: false`（避免步驟內遠端寫入） |
 
 硬性規則：
 
-- **不**使用個人 PAT 或不必要的 Secrets 跑此 pytest workflow。
+- **不**使用個人 PAT 或不必要的 Secrets 跑此 workflow。
 - CI **不得**自動 Push、修改正式資料或 Merge。
 - CI Failure **必須先調查**，不得忽略後強行往下走。
-- **CI 通過不代表人工 UAT 通過**。
-- **本機 `uv run pytest` 通過不代表 GitHub CI Success**（環境、鎖定依賴、觸發條件可能不同）。
+- **CI 通過不代表人工 UAT 通過**；**Ruff 綠燈不代表可自動取得 Merge 授權**。
+- **本機 `uv run pytest`／`ruff check` 通過不代表 GitHub CI Success**（環境、鎖定依賴、觸發條件可能不同）。
+- GitHub CI、人工 Code Review、財務 UAT **不可互相替代**。
 
 ### 2.7 Code Review
 
@@ -234,7 +238,7 @@ UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audi
 | 名稱 | 意義 | 不代表 |
 |---|---|---|
 | **本機 pytest / REGRESSION** | 開發者機器上 `uv run pytest`（或指定子集）通過 | 不代表 GitHub CI；不代表財務 UAT |
-| **GitHub CI Success** | Actions 依 `pytest.yml` 在 PR／master 上通過 | 不代表人工 UAT；不代表可自動 Merge |
+| **GitHub CI Success** | Actions 依 `pytest.yml` 在 PR／master 上 **lint 與 pytest 皆通過** | 不代表人工 UAT；不代表可自動 Merge；單一 Job 綠燈不足 |
 | **人工 UAT 通過** | 使用者依業務清單驗收並留下可追溯證據 | 不因 pytest／CI 全綠而自動成立 |
 
 ---
@@ -275,7 +279,7 @@ UAT 必須使用可追溯的資料與證據（隔離 DB／時間戳輸出／audi
 | Python 版本敘述 | 基準為 `.python-version`＝`3.11`、`requires-python = ">=3.11"`、CI `python-version: "3.11"` | **已修正**：`py-env.mdc` 由誤寫 3.13 改為 3.11 |
 | `backend-rule.mdc` | 曾含 LLM／embedding 範本與 `cd backend` | **已修訂**（見 [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](audit/CODING_STANDARDS_ALIGNMENT.md)）：根目錄 uv；依賴以 `pyproject.toml` 為唯一權威；強制引用 `docs/CODING_STANDARDS.md` |
 | Python 風格權威 | 曾缺集中文件 | **已新增** `docs/CODING_STANDARDS.md`；稽核見 `docs/audit/CODING_STANDARDS_ALIGNMENT.md` |
-| Ruff／CI | `pyproject` 未明確設 `lint.select`；Ruff 0.16+ 預設已擴大；CI 僅 pytest | **待決策**：是否鎖定 select、是否納入 CI（建議見稽核報告；本流程 Review 結論仍為 `PASS`／`PASS WITH NOTES`／`FAIL`） |
+| Ruff／CI | Phase D：`pyproject` 已凍結 0.17.6 等效 `lint.select`；CI 並列 lint＋pytest | **已實施**（詳見 `CODING_STANDARDS` §7、`TDD_STATUS` Phase D）；Format／D 規則仍另案 |
 | TDD 階段命名 | 口語常說 RED→GREEN→REGRESSION；`TDD.md` 含 REFACTOR | 以 `TDD.md` 四階段為準；本流程已對齊 |
 
 其餘未決衝突**不阻斷**本流程文件生效；工具節奏決策見 Coding Standards 稽核報告。

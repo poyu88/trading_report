@@ -205,6 +205,25 @@
 > - 獨立 CR：**PASS WITH NOTES**；Finding 1（`Sequence[Protocol]`）／Finding 2（本後補）於後續 commit 補正；Finding 3／4 另案追蹤  
 > - CR Finding 1／2 補正後本機 REGRESSION：`uv run pytest -q --tb=line` → **120 passed**／68.91s（2026-11-22）；財務迴圈未改  
 
+### 1.16 Phase D Ruff 規則標準化與 CI 整合（本任務；品質基礎設施）
+
+| 項目 | 結果 |
+|---|---|
+| 基準 | `master`＠`f05a415`（PR #10 已合併）；分支 `chore/phase-d-ruff-ci` |
+| 變更範圍 | `pyproject.toml` 凍結 Ruff 0.17.6 等效 `lint.select`（407 codes）；Hooks BLE001 精確 noqa×2；CLI 契約測 `subprocess.run(..., check=False)`；`.github/workflows/pytest.yml` 新增獨立 `lint` Job；同步 CODING_STANDARDS／DEVELOPMENT_WORKFLOW／本檔；audit 僅後補 |
+| 財務公式／FIFO／Schema／Parser／報表 A～W／財務 assert | **未**改寫 |
+| 正式 DB／真實對帳單／正式 output | **未**讀寫 |
+| 依賴升級 | **無**（ruff 維持 0.17.6／`uv.lock` 未改） |
+| Ruff Baseline（修改前） | tracked 61 `.py`；診斷 **3**（BLE001×2、PLW1510×1）；format `--check`：**25** would reformat（僅記錄） |
+| Ruff（修改後本機） | `uv run --no-sync ruff check --no-cache .` → **All checks passed**（修復 PLW1510×1；刻意豁免 BLE001×2） |
+| 本機 REGRESSION | `uv run --no-sync pytest -q --tb=line` → **120 passed**／83.96s（2026-11-22） |
+| GitHub CI／PR／Merge／人工 UAT／獨立 CR | **尚未**執行／建立（不得寫成已成功） |
+| 判定 | **品質基礎設施**（非業務 RED→GREEN）；Format 全庫／Google D 另案 |
+
+> **後補（2026-11-22；本機驗證後）**
+> - 本機 REGRESSION：**120 passed**／83.96s；`ruff check .` All checks passed；`git diff --check` 通過
+> - Commit／Push／PR／GitHub CI／獨立 CR／UAT：待使用者授權後補
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？

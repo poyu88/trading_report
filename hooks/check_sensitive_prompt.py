@@ -147,7 +147,7 @@ def main() -> None:
         sys.stdout.buffer.write(output.encode("utf-8"))
         sys.stdout.buffer.flush()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — fail-open：未預期錯誤仍允許繼續，避免 Hook 誤擋使用者
         # 發生未預期的錯誤，輸出錯誤訊息但允許繼續（避免阻擋使用者）
         result = {
             "continue": True,

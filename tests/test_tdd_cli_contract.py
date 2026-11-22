@@ -100,6 +100,7 @@ def env(tmp_path: Path):
         result = subprocess.run(
             cmd, cwd=PROJECT_ROOT, capture_output=True,
             text=True, encoding="utf-8", errors="replace", timeout=60,
+            check=False,  # 契約測自行 assert returncode；勿用 check=True 改寫失敗語意
         )
         if ok:
             assert result.returncode == 0, (
