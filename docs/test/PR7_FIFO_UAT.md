@@ -1,5 +1,7 @@
 # PR #7 FIFO Code Review 修正 — 真實副本 UAT 摘要
 
+> **歷史 UAT 證據（Class C）**：本檔為 PR #7 當次副本驗收摘要；勿當現行操作手冊。UAT 路徑慣例以 `docs/DEVELOPMENT_WORKFLOW.md` §2.8 為準。
+
 日期：2026-11-22  
 分支：`feat/cash-prior-inventory-fifo`  
 基準碼：worktree `@77f3ed7`  

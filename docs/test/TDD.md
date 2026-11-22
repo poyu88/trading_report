@@ -109,26 +109,23 @@ uv run pytest -v --tb=line
 | 11 | 檔案名稱防覆寫 | 相同測資連續輸出兩次檔名不同且舊檔不變 |
 | 12 | SQLite 備份 | `integrity_check = ok` 且交易筆數一致 |
 
-現況：上述契約與其他單元／整合測試合計原 **34 項**特徵化／回歸安全網；自 `esun_xlsx_v1` 起另有 TDD 新增測試，全量見 `TDD_STATUS.md`（例如 43 passed）。原 34 項的存在**不構成**歷史 TDD 完成證明。
+現況：上述契約與其他單元／整合測試合計原 **34 項**特徵化／回歸安全網；其後另有多輪有證據 TDD（玉山、現沖、TRUNC、CASH 庫存優先、PR7 等）。**全量通過數與最新 REGRESSION 一律以 `docs/test/TDD_STATUS.md` 最新區塊為準**，本節不固定寫死數字。原 34 項的存在**不構成**歷史 TDD 完成證明。
 
 ---
 
-## 6. 建議的下一輪 RED 與細粒度單元測試
+## 6. 歷史建議（已納入回歸；新需求請另開 RED）
 
-### 6.1 建議首個新需求 RED 案例：防止跨帳戶 FIFO
+### 6.1 跨帳戶 FIFO（歷史建議；契約已綠）
+
+下列案例屬既有回歸契約，**不得**再當作「下一輪新需求 RED」：
 
 ```powershell
 uv run pytest tests/test_tdd_cli_contract.py::test_10_fifo_never_matches_buys_from_different_accounts -v -x
 ```
 
-若此測試紅燈，先判斷：
+新需求必須另寫會因缺口而失敗的測試（見 `TDD_STATUS.md` §5 缺口與 §6.2 生命週期）。
 
-- 測試合成 HTML 與 parser 不相容 → 修 fixture（非業務失敗）；或
-- 系統真的跨帳戶匹配／未阻擋報表 → 業務失敗，才進入 RED→GREEN。
-
-（註：該案例目前已綠燈且屬回歸基準；新需求應另寫會因缺口而失敗的測試。）
-
-### 6.2 建議細粒度 unit tests
+### 6.2 細粒度 unit tests（多數已存在）
 
 - `tests/test_fifo.py`：FIFO 1000+500→1200、日期順序與未售量；`Decimal` 與純函式。
 - `tests/test_fee_once.py`：一次性費用在段落中只出現一次；核對成本與收入。
@@ -136,7 +133,7 @@ uv run pytest tests/test_tdd_cli_contract.py::test_10_fifo_never_matches_buys_fr
 - `tests/test_report_schema.py`：股票代號文字、日期/金額數值、空值、文字公式注入、無統計列。
 - `tests/test_db_transactions.py`：原子性回滾、外鍵及中途錯誤不污染既有紀錄。
 
-（多數檔案已存在並納入 34 項回歸；新增 SPEC 缺口時必須先 RED，見 `TDD_STATUS.md` §5。）
+（多數檔案已存在並納入回歸；新增 SPEC 缺口時必須先 RED，見 `TDD_STATUS.md` §5。）
 
 ---
 
