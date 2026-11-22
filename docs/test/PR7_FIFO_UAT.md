@@ -50,7 +50,7 @@
 - `output/uat_pr7_fifo/FIFO配對及未配對明細_2026-11-22_16-27-47.xlsx`
 - `output/uat_pr7_fifo/價金費用守恆核對_2026-11-22_16-27-47.csv`
 
-> **DRAFT 已產出 ≠ 人工驗收完成。** 上列僅證明報表產線可跑且路徑合規；Excel 內容仍待人工開啟核對。
+> DRAFT 產線路徑合規。人工驗收終局結論見 §6／§12（1589 **PASS**；2236 **DEFERRED**；整體 **Conditional Approve**）。
 
 ## 4. 配對彙總對照
 
@@ -94,7 +94,9 @@
 | 2023-03-28＠80.3 | 2023-03-24＠76.3 | 1000 |
 | 2023-03-28＠79.3 | 2023-03-27＠81.7 | 1000 |
 
-結論：同日 SELL 未沖當日 BUY＠72.8；無 `ORDER_AMBIGUITY`；成本路徑與庫存優先政策一致。
+副本對照結論：同日 SELL 未沖當日 BUY＠72.8；無 `ORDER_AMBIGUITY`；成本路徑與庫存優先政策一致。
+
+**人工驗收（1589 永冠-KY）**：**PASS** — 使用者已人工確認 FIFO 配對正確。
 
 ## 7. 差異分類
 
@@ -102,7 +104,7 @@
 |---|---|
 | **A 政策** | 舊 run 的 `ORDER_AMBIGUITY`×13 → 新政策重跑改為合理 `INSUFFICIENT_PRIOR_BUYS`×1（2236 缺庫存 400）；1589 同日改沖舊庫存 |
 | **B 稽核修正** | CR-01 版本字串／政策寫入 run；CR-02 守恆含 opening（本庫 opening=0，conservation 仍 ok）；CR-03 fingerprint 欄位擴充導致雜湊變更 |
-| **C 資料品質** | 2236／2024-08-28 未配 400：缺更早期初或買進事實，需人工補 lot／資料，非演算法短路 |
+| **C 資料品質** | 2236／2024-08-28 未配 400：屬**資料導入問題**（非本 PR 演算法短路）；狀態 **DEFERRED**，留待後續獨立分支處理。**必須保留 blocking**，不得修改資料或解除警示 |
 | **D 異常阻擋** | **無**無法解釋之財務差異 |
 
 ## 8. 自動化回歸（本機）
@@ -121,10 +123,11 @@
 - **人工查閱報告**：`output/uat_pr7_fifo/`（DRAFT Excel、audit、exceptions、FIFO 配對明細、價金費用守恆表；gitignore）
 - 本摘要可提交 Git；真實明細／DB／xlsx **不上傳**
 
-## 10. 剩餘風險
+## 10. 剩餘風險與延後項
 
 - 同日多 SELL 缺可信序時，`source_order` 僅穩定鍵；逐筆成本路徑可能需人工判斷（標於 A／C，不重啟 ORDER_AMBIGUITY）
-- 2236 未配對 400 待補期初／事實後再 UAT
+- **2236**：**DEFERRED** — 尚有 **400 股未配對**；blocking（`INSUFFICIENT_PRIOR_BUYS`）**必須保留**，本 PR **不得**改資料或解除警示；資料導入問題留待後續獨立分支
+- **正式資料庫尚未重新執行 FIFO**（`data/trading.db` 仍為合併前狀態；UAT 僅在副本）
 - 本機 pytest ≠ GitHub CI ≠ 人工終局簽核
 
 ## 11. Code Review（自我／獨立角度）
@@ -133,11 +136,15 @@
 
 - NOTES：CLI 全域前置 `--db` 會被子命令 parents 預設覆寫為 `None`（既有問題）；UAT／文件已改為子命令後傳遞。建議後續修 argparse，但不阻斷本 PR。
 
-## 12. 結論（狀態區分）
+## 12. 結論（人工 UAT 終局紀錄）
 
-| 層級 | 狀態 | 說明 |
+| 項目 | 狀態 | 說明 |
 |---|---|---|
-| 程式與副本 UAT（match／audit／1589／守恆／事實表） | **APPROVE** | 見 §4～§8；無 D 類無法解釋差異 |
-| Excel 人工開啟與內容核對（DRAFT 明細／FIFO／損益／例外） | **待簽核** | DRAFT 已於 `output/uat_pr7_fifo/` 產出（§3）；**產出 ≠ 驗收完成**，須使用者開啟核對後才可標「人工 UAT 通過」 |
+| 1589 永冠-KY | **PASS** | 使用者已人工確認 FIFO 配對正確 |
+| 2236（未配 400／blocking） | **DEFERRED** | 資料導入問題；保留 blocking；後續獨立分支；本 PR 不改資料、不解除警示 |
+| 程式與副本 UAT（match／audit／守恆／事實表） | **APPROVE** | 見 §4～§8；無 D 類 |
+| 本次 CASH FIFO 規則修正（整體） | **Conditional Approve** | 規則修正可合併；以 1589 PASS 為主證據；2236 延後且 blocking 保留 |
+| 正式 DB FIFO 重跑 | **未執行** | 合併前／本 UAT **未**對 `data/trading.db` 執行 match／report |
+| Excel DRAFT 產出路徑 | 已產出 | `output/uat_pr7_fifo/`（§3）；人工核對結論見上表 |
 
-不 Merge、不 Force Push；待 GitHub CI、上表人工簽核與使用者明確授權後再合併。
+不自動 Merge、不 Force Push；GitHub CI 通過後，由**使用者自行**執行合併。
