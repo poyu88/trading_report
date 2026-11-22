@@ -190,3 +190,19 @@
 | Agent 強制摘要 | `.cursor/rules/*.mdc`（只連回上述來源） |
 
 衝突依職責裁決；**禁止**「新檔一律優先」。財務／Git／資料安全實質衝突 → 待決策，不自行覆蓋。
+
+---
+
+## H. 後補說明：Phase D 現況（2026-11-22；不覆寫上方史實數字）
+
+本節**不修改** §D／§F 既有 baseline（例如歷史 **222**、format **28** 等撰寫時數字）。
+
+| 項目 | Phase D 現況（相對 `master`＠`f05a415`） |
+|---|---|
+| 規則來源 | `pyproject.toml` `[tool.ruff.lint].select` 明確凍結 Ruff **0.17.6** 當時預設啟用規則（約 407 codes） |
+| CI | `.github/workflows/pytest.yml` 並列 `lint`（`ruff check .`）與 `pytest` |
+| tracked 診斷 | Phase C 後為 **3**；Phase D 處理後本機 `ruff check .` 預期全綠（BLE001 精確豁免×2；PLW1510 以 `check=False` 修復×1） |
+| Format／D | **仍未**強制全庫 format CI；**仍未**啟用 Google `D` |
+| 權威敘述 | 以 [`docs/CODING_STANDARDS.md`](../CODING_STANDARDS.md) §7 與 [`docs/test/TDD_STATUS.md`](../test/TDD_STATUS.md) §1.16 為準 |
+
+GitHub CI／PR／Merge 結果僅在實際執行後記入 `TDD_STATUS`；本稽核檔不預填成功。

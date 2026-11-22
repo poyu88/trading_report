@@ -1,7 +1,9 @@
-#!/usr/bin/env python3
 """
 檢查要讀取的檔案是否為敏感檔案的腳本
 用於 Cursor beforeReadFile hook
+
+由 `.cursor/hooks.json` 以 `uv run python hooks/check_sensitive_file.py` 呼叫，
+不依賴 shebang／executable bit（避免 Linux CI EXE001 與 Windows 檔案模式不一致）。
 """
 
 import json
@@ -135,7 +137,7 @@ def main() -> None:
         sys.stdout.buffer.write(output.encode("utf-8"))
         sys.stdout.buffer.flush()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — fail-open：未預期錯誤仍允許讀取，避免 Hook 誤擋使用者
         # 發生未預期的錯誤，輸出錯誤訊息但允許讀取（避免阻擋使用者）
         result = {
             "permission": "allow",

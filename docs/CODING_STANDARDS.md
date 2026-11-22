@@ -57,8 +57,10 @@ Agent 與開發者不得另建平行「風格指南」重複維護相同內容�
 
 ### 2.4 工具設定
 
-- 本政策**先寫入本檔**；**尚未**在 `pyproject.toml` 啟用 Ruff `D`（pydocstyle）規則。
-- 待專案決定啟用 D 規則時，再一併設定 `pydocstyle.convention = "google"`（或同等）與分階段清理；**不得**為宣告本政策而在未授權任務中改工具設定。
+- 本政策（Google Style docstring 寫作規範）**先寫入本檔**。
+- Ruff 凍結規則集**保留**既有預設啟用之 **`D419`**（`empty-docstring`）；**尚未**全面啟用 Google Style pydocstyle `D` 規則集合，亦**未**設定 `pydocstyle.convention = "google"`。
+- 不得因文件措辭而移除 `D419`，也不得在未授權任務一次啟用全部 `D` 規則或改寫歷史 baseline。
+- 待專案決定全面導入 Google `D` 時，另開任務設定 convention 與分階段清理。
 
 ---
 
@@ -103,27 +105,38 @@ Agent 與開發者不得另建平行「風格指南」重複維護相同內容�
 
 ## 7. Ruff 現況與漸進策略
 
-### 7.1 現況（以 `pyproject.toml` 與 Ruff 0.17.x 為準）
+### 7.1 規則政策（以 `pyproject.toml` 為唯一實際來源）
 
 - 已設定：`line-length = 100`、`target-version = "py311"`。
-- **尚未**在專案層明確設定 `lint.select`／`extend-select`（「尚未明確擴充／鎖定」專案規則集合）。
-- 未設 `select` 時，Ruff **0.16+** 仍會套用其**擴大後的預設規則集**（內含多類 E／F 及 I／UP／B／FURB 等；**不再**等同舊文件所寫的「僅 E4／E7／E9／F」）。敘述時禁止寫成「E／F 尚未啟用」。
-- GitHub CI（`pytest.yml`）目前**只跑 pytest**，不跑 Ruff。
-- Baseline 數字與分階段建議見 [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](audit/CODING_STANDARDS_ALIGNMENT.md)。
+- **`[tool.ruff.lint].select`**：明確凍結 **Ruff 0.17.6** 當時預設啟用規則代碼清單（約 407 條；含 I／UP／B／FURB／SIM／RUF／BLE／PLW 等）。**不再**依賴「未設 select＝跟隨當前 Ruff 預設」；也**不再**等同舊文件所寫的「僅 E4／E7／E9／F」。
+- 規則清單**只**維護於 `pyproject.toml`；本檔與 CI **不得**另列平行規則集。升級 Ruff 須另開任務重跑 baseline，並決定是否更新 `select`；不得 silently 接受預設變動。
+- 工具版本以 `uv.lock` 鎖定（目前 ruff **0.17.6**）。
+- GitHub CI（`.github/workflows/pytest.yml`）含獨立 **`lint`（ruff）** Job 與 **`pytest`** Job；兩者並列，不可互相替代。
+- Phase C 前歷史 baseline（約 **222**）與分階段建議見 [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](audit/CODING_STANDARDS_ALIGNMENT.md)（史實數字不覆寫）。
 
-### 7.2 策略（新碼 vs 歷史違規）
+### 7.2 本機與 CI 執行方式
 
-全庫既有 Ruff 違規數以稽核報告 baseline 為準（撰寫時約 **222**）；屬**歷史債務**，不要求每次變更清零，也不得宣稱「未全綠＝新規範無效」。**不**要求本變更清除全部歷史違規。
+| 場景 | 指令 |
+|---|---|
+| 本機 lint | 專案根目錄：`uv run ruff check .`（或指定 path） |
+| CI lint | `uv run --locked ruff check .`（讀取 `pyproject.toml`；**不**另傳 `--select`／`--fix`） |
+| 本機 pytest | `uv run pytest -q` |
+| CI pytest | `uv run --locked pytest -q` |
+
+- **不**在未授權任務執行 `ruff check --fix`／`ruff format` 大批改寫歷史碼；財務相關建議一律人工審查。
+- **尚未**強制全庫 `ruff format` CI（歷史格式債務另案）。
+- Docstring 工具狀態見 §2.4：保留凍結清單中的 **`D419`**；**尚未**全面導入 Google Style `D` 規則集合／`google` convention（須另開任務）。
+
+### 7.3 豁免與新碼最低要求
 
 | 對象 | 驗收條件 |
 |---|---|
-| **新增** Python 檔 | 原則上對該檔 `uv run ruff check <path>` **必須通過**。若有例外（例如暫時無法消除的規則），須在 PR／稽核紀錄寫明：**規則代碼**、原因、人工審查結論；財務相關建議一律先人工審，禁止盲目 `--fix` |
-| **修改**既有 Python | 以本次變更是否**引入新的診斷**判定：比對變更檔上**新增**的（檔案路徑、列號區間、規則代碼）。**禁止**僅因全庫或單檔「違規總數相同／未上升」就宣稱沒有新增違規（避免新增與修復舊項互相抵銷）。未改動行上的舊違規不自動視為本變更失敗 |
-| **純文件／Rules** | 不要求清歷史 Ruff；本機 pytest 回歸佐證未破壞行為；有 PR 時另以 GitHub CI（pytest）核對，三者不可互相替代 |
-| 全庫 `ruff check .` 全綠 | 僅在另開清理任務並更新 baseline 後才可宣稱 |
+| **新增** Python 檔 | 原則上 `uv run ruff check <path>` **必須通過**。例外僅允許**精確** `# noqa: CODE`（附原因）或同等最小範圍處理；須可追溯。禁止全域／無理由全檔忽略。財務相關建議一律先人工審，禁止盲目 `--fix` |
+| **修改**既有 Python | 不得引入新的診斷；未改動行上的舊問題不自動視為本變更失敗 |
+| **刻意豁免** | 豁免 ≠ 修復。須記錄規則代碼、位置、原因；不得用全域 `ignore` 或過寬 `per-file-ignores` 隱藏未來同類問題 |
+| **純文件／Rules** | 本機 pytest 回歸佐證未破壞行為；有 PR 時另以 GitHub CI（lint **與** pytest）核對；CI／CR／UAT 不可互相替代 |
 
-- 不在未授權任務執行 `ruff check --fix`／`ruff format` 大批改寫歷史碼；財務相關修復仍須人工審查。
-- 明確擴充或鎖定 `select`、啟用 format／D、以及是否納入 CI，屬**待決策**；實施時另開任務並遵守 DEVELOPMENT_WORKFLOW。
+Phase D 已知精確處理（詳見 `TDD_STATUS`）：Hooks 兩處 BLE001 為 fail-open 邊界政策之**刻意豁免**；CLI 契約測 PLW1510 以明確 `check=False` **修復**（行為不變）。
 
 ---
 
