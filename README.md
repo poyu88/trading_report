@@ -80,6 +80,7 @@ uv run python -m backend.cli match fifo --account "main" --db data/tmp_esun.db
 - 日期列繼承、成交列下一列為股票代號（來源可能為負數，正規化為正整數字串）。
 - `side`＝BUY／SELL；`trade_type`＝CASH（現股）／DAY_TRADE（現沖）。四種交易類型皆可入庫。
 - 現沖僅在同日、同帳戶、同股票的 DAY_TRADE pool 內 FIFO（同日無序含先賣後買）；**不**消耗普通現股持倉。
+- CASH 同日採開盤前庫存優先沖減（先賣後入庫當日買）；僅明確 `DAY_TRADE` 才做當日買賣互沖。
 - `YYYY/MM/DD 小計` 與頁尾說明排除；preview 會帶 `source_reconciliation`。
 - **來源核對**：只把四種已支援類型（現股／現沖）的筆數與價金／手續費／交易稅合計對照頁尾；融資等未支援列會成例外且**不計入**核對。參考檔僅有四種時應 `matched=true`；頁尾含未支援時預期 `matched=false`。
 

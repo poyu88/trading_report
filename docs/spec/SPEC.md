@@ -368,7 +368,7 @@ ON trades(account_id, symbol, currency, trade_date, trade_time);
 
 分組鍵：`account_id, symbol, currency, trade_type`；CASH 與 DAY_TRADE 為獨立 pool。
 
-- **CASH**：組內依可證實成交順序處理。日內時間或原始序號缺失、且影響買賣合法先後或 FIFO lot 選擇時，產生 `ORDER_AMBIGUITY`；不能僅憑輸入檔排序捏造交易先後。明確較早日期的 BUY 可配對較晚日期的 SELL；不得配對未來買進。
+- **CASH**：按交易日處理。每日先以**開盤前可用庫存**（含期初 lot 與先前日期買進剩餘）沖減當日全部 SELL，再將當日 BUY 入庫；**當日 BUY 不可供當日 SELL 使用**。即使來源有 `trade_time`／`trade_sequence`，亦不依真實成交時間穿插買賣（會計政策穩定排序僅作同側 tie-breaker，不得把 CSV 列號當真實時間）。同日缺序**不再**標 `ORDER_AMBIGUITY`；庫存不足則 `INSUFFICIENT_PRIOR_BUYS`（可部分配對），且不得自動改 DAY_TRADE。明確較早日期的 BUY 可配對較晚日期的 SELL；不得配對未來買進（含同日未來買）。
 - **DAY_TRADE**：僅同日配對。同日無序現沖**不得**標 `ORDER_AMBIGUITY` 而跳過；對每個交易日先將當日全部 DAY_TRADE BUY 建成 lot，再以 FIFO 將當日 DAY_TRADE SELL 配入（含檔內先賣後買）。lot **不跨日**、**不消耗 CASH**。未配平剩餘進 `reconciliation_issues`。
 - 買賣同股票但不同帳戶不得直接相互抵銷。
 - `opening_lots` 必須由核准的真實成本與數量建立，並僅參與 **CASH** FIFO。
@@ -392,25 +392,23 @@ class LotRemaining:
     available: int
     trade_date: date
 
-# 前置：輸入已按「已確認的」順序排序；否則先報 ORDER_AMBIGUITY
-fifo = deque()
-for trade in verified_trades:
-    if trade.side == 'BUY':
-        fifo.append(LotRemaining(trade.id, None, trade.quantity, trade.trade_date))
-        continue
-
-    sell_left = trade.quantity
-    while sell_left > 0 and fifo:
-        lot = fifo[0]
-        matched = min(lot.available, sell_left)
-        save_allocation(buy=lot, sell=trade, quantity=matched)
-        lot.available -= matched
-        sell_left -= matched
-        if lot.available == 0:
-            fifo.popleft()
-
-    if sell_left > 0:
-        record_issue('INSUFFICIENT_PRIOR_BUYS', trade.id, sell_left)
+# CASH：按日先沖開盤前庫存（全部當日 SELL），再入庫當日 BUY；不因缺序報 ORDER_AMBIGUITY
+fifo = deque(opening_lots)  # 依 (buy_date, lot_id)
+for day in sorted(by_day):
+    for sell in sorted(day_sells[day], key=cash_day_sort_key):
+        sell_left = sell.quantity
+        while sell_left > 0 and fifo and fifo[0].trade_date <= sell.trade_date:
+            lot = fifo[0]
+            matched = min(lot.available, sell_left)
+            save_allocation(buy=lot, sell=sell, quantity=matched)
+            lot.available -= matched
+            sell_left -= matched
+            if lot.available == 0:
+                fifo.popleft()
+        if sell_left > 0:
+            record_issue('INSUFFICIENT_PRIOR_BUYS', sell.id, sell_left)
+    for buy in sorted(day_buys[day], key=cash_day_sort_key):
+        fifo.append(LotRemaining(buy.id, None, buy.quantity, buy.trade_date))
 
 # fifo 尚存股數即未售；未配對賣出不可硬配到未來買進。
 ```
@@ -423,7 +421,7 @@ for trade in verified_trades:
 
 對每個賣出 `s`：`sum(allocation.qty where sell=s) <= sell.quantity`。
 
-每筆 allocation：`qty > 0`，同帳戶、同股票、同幣別；買進不晚於賣出（若同日依可信排序）。
+每筆 allocation：`qty > 0`，同帳戶、同股票、同幣別；買進日期不大於賣出日期（CASH 同日僅以開盤前庫存配對，不當日買解當日賣）。
 
 核對指標：`buy_qty = sold_allocated_qty + unsold_qty`；`sell_qty = allocated_sell_qty + unmatched_sell_qty`。
 
@@ -656,7 +654,7 @@ uv run python -m backend.cli db backup --output-dir data/backups
 | FIFO-02 | BUY 1000+500，SELL 1200 | 配對 1000+200、剩餘 300 |
 | FIFO-03 | 買進早於多次賣出 | 依順序配對、不超賣 |
 | FIFO-04 | SELL 在所有可用 BUY 前 | 未匹配例外，不配對未來 BUY |
-| FIFO-05 | 同日無可信先後且影響配對（**CASH**） | `ORDER_AMBIGUITY`，不得宣稱完成 |
+| FIFO-05 | 同日 CASH 買賣（含缺 time／seq） | 開盤前庫存優先沖減；當日 BUY 不可解套當日 SELL；不足 → `INSUFFICIENT_PRIOR_BUYS`；**不**標 `ORDER_AMBIGUITY`；不得自動 DAY_TRADE |
 | FIFO-06 | 不同帳戶、股票、幣別 | 絕不跨組配對 |
 | FIFO-07 | 同日無序 DAY_TRADE（含先賣後買） | 當日相互 FIFO 配平；股數守恆；不標 ORDER_AMBIGUITY |
 | FIFO-08 | DAY_TRADE 與跨日／同日 CASH 並存 | 現沖不消耗 CASH lot；CASH 不消耗 DAY_TRADE lot |

@@ -143,8 +143,20 @@
 | Pull Request | **已**建立 [PR #6](https://github.com/poyu88/trading_report/pull/6)（目標 `master`） |
 | GitHub CI | **Success**（Python CI／Actions run #4，約 38s；以 GitHub Actions 為準） |
 | Code Review | **PASS WITH NOTES**（獨立 Review；未授權改碼或 Merge） |
-| Merge | **尚未**執行（待使用者授權） |
-| 判定 | **文件／規範**；非業務 TDD；本機 pytest ≠ GitHub CI ≠ 財務 UAT；CI Success ≠ 可自動 Merge |
+| Merge | **已**合併至 `master`（Merge `15d7837`） |
+| 判定 | **文件／規範**；非業務 TDD；本機 pytest ≠ GitHub CI ≠ 財務 UAT |
+
+### 1.12 CASH 開盤前庫存優先 FIFO（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feat/cash-prior-inventory-fifo`（自同步 `master`＠`15d7837` 建立） |
+| 變更 | `fifo_matcher`：CASH 按日先賣後入庫買；`detect_order_ambiguity` 對現行輸入回傳空；改寫／新增 `test_fifo` Case1–10＋1589；SPEC／PRD／README／本檔 |
+| RED | `uv run pytest tests/test_fifo.py -q` → **12 failed / 5 passed**（主因 `ORDER_AMBIGUITY` 短路整組，或依 time 用當日 BUY 解套） |
+| GREEN | `_run_cash_group` 按日先 SELL 後 BUY；DAY_TRADE 不動；目標測全綠 |
+| REFACTOR | GREEN 已抽出 `_cash_day_sort_key`；無獨立 restruct commit |
+| 本機 REGRESSION | `uv run pytest -q` → **106 passed**／76.53s（2026-11-22）；`git diff --check` 通過；正式 DB **未**動 |
+| 判定 | **有證據 TDD**（見 §6.2 `cash_prior_inventory_fifo_v1`） |
 
 ---
 
@@ -220,7 +232,8 @@
 | `test_fifo.py` | `test_one_sell_two_buys` | 單元 | 回歸 | PASS | FIFO-02 |
 | `test_fifo.py` | `test_sell_before_buy_insufficient` | 單元 | 回歸 | PASS | FIFO-04 |
 | `test_fifo.py` | `test_no_cross_symbol` | 單元 | 回歸 | PASS | FIFO-06 |
-| `test_fifo.py` | `test_order_ambiguity_same_day` | 單元 | 回歸 | PASS | FIFO-05 |
+| `test_fifo.py` | `test_order_ambiguity_same_day`（改寫：庫存優先、不標 ORDER_AMBIGUITY） | 單元 | TDD（本輪） | PASS | FIFO-05 |
+| `test_fifo.py` | Case1–10／1589／忽略 trade_time 解套 | 單元 | TDD（本輪） | PASS | FIFO-05/06/07/08 |
 | `test_fee_once.py` | `test_fee_once_on_split_fragments` | 單元 | 回歸 | PASS | FEE-01/02 |
 | `test_normalizer.py` | `test_preview_excludes_totals_and_counts` | 整合 | 回歸 | PASS | ING-02 |
 | `test_normalizer.py` | `test_symbol_kept_as_text` | 單元 | 回歸 | PASS | NORM-01 |
@@ -241,7 +254,7 @@
 
 | 統計 | 數量 |
 |---|---|
-| 有完整 RED→GREEN→REGRESSION Git 證據 | **4 功能** — `esun_xlsx_v1`、`day_trade_v1`、`esun_unsupported_rows_v1`、`esun_fifo_finance_v1`（見 §6.2） |
+| 有完整 RED→GREEN→REGRESSION Git 證據 | **5 功能** — `esun_xlsx_v1`、`day_trade_v1`、`esun_unsupported_rows_v1`、`esun_fifo_finance_v1`、`cash_prior_inventory_fifo_v1`（見 §6.2） |
 | 有 RED→GREEN→REGRESSION 執行證據、**未**入庫 Commit | **1 功能** — `fragment_gross_trunc_v1`（見 §6.2） |
 | 本機整合後補充覆蓋（非 Cloud 原始 RED） | **2** — 融資／配股＋`raw_rows`／來源核對區分 |
 | 僅回歸／特徵化 | **34** |
@@ -310,6 +323,7 @@
 | `esun_fifo_finance_v1` | 部分配對賣出價金含未配對殘量；收入扣利息；配套 FIFO／未配對明細；exceptions／audit 價金守恆欄；W 殘量註記 | 2026-11-21；`uv run pytest tests/test_uat_finance_conservation.py -v`；**10 failed / 12 passed**；業務失敗含收入 93585≠46585、未扣利息 14970≠14962.50、缺 `project_fifo_trace_rows`／`report_finance`、缺 W 註記；commit `65f4459`（規格 `03a2918`） | 2026-11-21；`detail_projector` 賣出 `_split_gross` 納殘量、`income` 扣息、W 註記；`report_finance`／`fifo_trace_writer`／`conservation_writer`；`report_service` 強化 audit；commit `71e21a7`；UAT 22 passed | GREEN 已抽出 `report_finance`（split／income／enrich）；無獨立 restruct commit | **77 passed** | RCA `docs/test/RCA_esun_fifo_finance.md`；隔離 E2E 見產出目錄，不覆寫舊 DRAFT |
 | `fragment_gross_trunc_v1` | 片段價金改 `TRUNC(qty×unit_price)`；`|diff|≤1` 調最後片段；超限發 `AMOUNT_CONSERVATION_OUT_OF_TOLERANCE`；廢止比例／餘額法；維持 A～W | 2026-11-21；`uv run pytest tests/test_fragment_gross_trunc.py …uat22 -q`；**8 failed / 6 passed**；投影仍呼叫已廢止 `split_gross`（比例／餘額）→ `RuntimeError`；UAT-22 期望改為 TRUNC 13332／13947 | 2026-11-21；`allocate_trade_fragment_amounts`；`detail_projector`／`conservation_writer`／`report_service` 改用 TRUNC＋audit 超限；commit `fix: apply TRUNC fragment pricing with bounded residual reconciliation` | 無獨立 restruct | **90 passed** | 規格 SPEC §7.3／PRD FR-05；隔離 E2E `output/uat_esun_trunc/`；人工 UAT 已通過；守恆 65/65／超限 0 |
 | `capital_html_finance_regression_v1` | 群益 `statement_html_v1` 合成路徑：防 HIST-01 部分配對吃全額、費用一次、利息扣減、早賣 DRAFT／exceptions 守恆欄、A～W | **非 RED**：RCA 確認現況已正確後補測；首次執行即 **4 passed**；不得冒充業務 RED；測試 commit `d8d9578` | 無新業務碼（沿用 `report_finance`／projector） | 無 | **94 passed** | RCA／STATUS doc `453e0e0`；測試 `tests/test_capital_html_finance_regression.py` |
+| `cash_prior_inventory_fifo_v1` | CASH 同日改採開盤前庫存優先沖減；移除缺序 `ORDER_AMBIGUITY`；DAY_TRADE 不變；1589 合成回歸 | 2026-11-22；`uv run pytest tests/test_fifo.py -q`；**12 failed / 5 passed**；`ORDER_AMBIGUITY` 短路／time 解套；見本輪 test／fix commits | 2026-11-22；`detect_order_ambiguity` 回空；`_run_cash_group` 按日先賣後買；見 fix commit | GREEN 已抽出 `_cash_day_sort_key`；無獨立 restruct | **106 passed** | 規格 PRD FR-04／SPEC §6.1／FIFO-05；正式 DB 未動 |
 
 **記錄欄位最低要求**
 
@@ -377,3 +391,4 @@ uv run pytest -v --tb=line
 | 2026-11-21 | **品質開發流程文件**：分支 `docs/quality-development-workflow`；新增 `docs/DEVELOPMENT_WORKFLOW.md` 與 `.cursor/rules/dev-workflow-rule.mdc`；PRD §14／SPEC §13＋§16／TDD／README／本檔／`commit-rule.mdc` 增量引用；`py-env.mdc` 對齊 Python **3.11**；本機 REGRESSION **94 passed**／60.03s；**未**改業務碼／Workflow YAML；Commit `461fd37` → **已** Push → **PR #6**（目標 `master`）→ GitHub CI **Success** → Code Review **PASS WITH NOTES**；**Merge 尚未**執行。 |
 | 2026-11-21 | **PR #6 Review NOTES 文件修正**：Commit `2176c42` — `doc：修正 PR #6 品質流程審查意見`（已完成）；① `DEVELOPMENT_WORKFLOW` §2.4／§3 統一 Agent **禁止 Force Push（無例外）**；② PRD／SPEC 頁首 metadata 改以 blockquote 空行分段（GFM 分行且避免 `git diff --check` 行尾空白警告）；③ 本檔 §1.11／§7／§9 對齊 Push／PR／CI／Review 實況且不預先寫 Merge；④ §7「三階段」改為 **RED→GREEN→REFACTOR→REGRESSION** 四階段；未改業務碼／測試／CI YAML；未 amend／rebase `461fd37`；**已** Push → PR #6 → CI Success → Code Review **PASS WITH NOTES**；**Merge 尚未**執行。 |
 | 2026-11-21 | **PR #6 殘餘 N1／N2 文件對齊**（工作區；不預寫尚未產生之 Commit SHA）：① 本檔 §1.11／§9 對齊真實狀態（`461fd37`＋`2176c42`、已 Push、PR #6、CI Success、Code Review PASS WITH NOTES、Merge 尚未）；② `.cursor/rules/dev-workflow-rule.mdc` Force Push 改為無例外措辭，與 `DEVELOPMENT_WORKFLOW.md` 一致；未改業務碼／測試／CI YAML；未 amend／rebase 既有 Commit。 |
+| 2026-11-22 | **`cash_prior_inventory_fifo_v1` TDD**：分支 `feat/cash-prior-inventory-fifo`；RED 12 failed（`ORDER_AMBIGUITY`／time 解套）→ GREEN 按日先賣後買；全量 **106 passed**／76.53s；SPEC／PRD／README／FIFO-05 對齊；正式 DB **未** apply／migrate；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。 |
