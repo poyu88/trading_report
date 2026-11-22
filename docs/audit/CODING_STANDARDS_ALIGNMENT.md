@@ -132,30 +132,45 @@
 
 ## F. 驗證指令紀錄（實際執行；禁止捏造）
 
+時點分兩段：**不得**用後段結果回填或竄改前段歷史列。本機 pytest ≠ GitHub CI ≠ 人工 UAT。
+
+### F.0 PR 建立前（歷史；凍結）
+
+檢查時點：PR／GitHub CI 尚未存在之時。驗證 Commit 基準為 `79cd5d4`（開支 `a770a82`）。`f56cae3` 為後續文件補正，**未**重跑並改寫本段 pytest 基準。
+
 | 維度 | 結果 | 說明 |
 |---|---|---|
 | 驗證 Commit | `79cd5d4`（`doc：對齊 Coding Standards 與修正 backend-rule`） | 開支基準 `a770a82` |
 | **本機** pytest | `uv run pytest -q` → **120 passed** in **56.35s**（exit 0；約 2026-11-22 實作當次） | **僅本機 REGRESSION**；**≠** GitHub CI Success |
 | **本機** Ruff check | `uv run ruff check .`（未 `--fix`）→ **Found 222 errors**；201 fixable／15 unsafe | **歷史 baseline**；非本次文件變更引入 |
 | **本機** Ruff format | `uv run ruff format --check .` → **28** would be reformatted，**46** already formatted（實作當次；未執行 format） | 同上 |
-| 補正當次複核（文件修正、仍未 Commit） | `ruff check` 仍 **222**；`format --check` 報 28／**48** | 「already formatted」多 2：工作樹未追蹤 `scripts/*.py` 被掃到；**不**改寫上列 baseline，亦**不**視為 CI |
-| GitHub Actions（本分支） | `gh run list --branch docs/coding-standards-alignment` → **空** | `pytest.yml` 僅在 `push`／`pull_request` 目標 **`master`**（及 `workflow_dispatch`）觸發；純推功能分支**不會**跑此 workflow |
-| GitHub CI（本變更） | **無對應 run** | 因尚**無** `docs/coding-standards-alignment` → `master` 的 PR（見交付 §5）；不得以本機 pytest 冒充 CI |
+| 補正當次複核（文件修正、當時仍未 Commit） | `ruff check` 仍 **222**；`format --check` 報 28／**48** | 「already formatted」多 2：工作樹未追蹤 `scripts/*.py` 被掃到；**不**改寫上列 baseline，亦**不**視為 CI |
+| GitHub Actions（本分支，當時） | `gh run list --branch docs/coding-standards-alignment` → **空** | 當時尚無對 `master` 的 PR；純推功能分支不觸發 `pytest.yml` |
+| GitHub CI（當時） | **無對應 run** | **PR 建立前**真實狀態；不得以本機 pytest 冒充 CI |
 | `git diff --check` | 通過（無 whitespace error 報告） | 實作當次 |
 | 正式 DB／未追蹤保留 | 未寫入 `data/trading.db`；保留 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/` | 邊界遵守 |
 
+### F.0b PR／CI 後續驗證（新增；不覆寫 F.0）
+
+| 維度 | 結果 | 說明 |
+|---|---|---|
+| PR | [#8](https://github.com/poyu88/trading_report/pull/8) — `doc：對齊 Coding Standards 與修正 backend-rule` | `docs/coding-standards-alignment` → `master` |
+| Reviewed／公開 HEAD | `f56cae3`（`doc：補正 Standards 稽核紀錄與 Rule 連結`） | 含 backend-rule 連結、FURB157、§F 初版補正 |
+| GitHub Actions Run | [`45028205176`](https://github.com/poyu88/trading_report/actions/runs/45028205176) | 由 PR 觸發 |
+| **GitHub CI** | Python CI／**pytest：SUCCESS**（job 約 2026-11-22T13:35:11Z 完成） | **≠** 本機 pytest；**≠** 人工 UAT |
+| 獨立 Code Review | **PASS WITH NOTES**（PR 註解；P2：§F 時點區分、§7.2 驗收具體化） | 本段與 Standards §7.2 補正即回應該 Notes |
+| Ruff 全庫 | 仍為歷史債務（baseline **222**） | **禁止**宣稱 Ruff 全綠 |
+
 ### F.1 新碼 vs 歷史 Ruff 違規（在 222 項下如何區分）
 
-全庫 **222** 為**已知歷史債務**，記錄於本檔 §D；**不**要求文件／Rules 變更一次清零，也**不得**用「全庫未全綠」否定新規範生效。
+全庫 **222** 為**已知歷史債務**，記錄於本檔 §D；**不**要求文件／Rules 變更一次清零，也**不得**用「全庫未全綠」否定新規範生效。細節以 [`docs/CODING_STANDARDS.md`](../CODING_STANDARDS.md) §7.2 為準。
 
 | 判斷對象 | 通過標準 | 不作為阻擋的理由 |
 |---|---|---|
-| 純文件／Cursor Rules（本任務） | 無 Python 業務 diff；本機 pytest 未因本變更變紅 | 既有 222／28 format |
-| **新增** Python 檔 | 對該檔 `ruff check <path>` 應盡量乾淨；財務相關 FURB157 等先人工審 | 其他檔歷史違規 |
-| **修改**既有 Python 檔 | 以「本次 diff **是否新增**違規」為主（變更檔檢查或違規數是否上升）；能順手修者可修，非必須清整檔歷史債 | 同檔未改動行上的舊違規 |
+| 純文件／Cursor Rules（本任務） | 無 Python 業務 diff；本機 pytest 未因本變更變紅；有 PR 後另以 GitHub CI 核對 | 既有 222／28 format |
+| **新增** Python 檔 | 原則上 `ruff check <path>` **通過**；例外須記錄規則碼、原因、人工審查 | 其他檔歷史違規 |
+| **修改**既有 Python 檔 | 以**新增診斷的檔案位置＋規則代碼**判定；**禁止**只憑違規總數不變宣稱無新增 | 同檔未改動行上的舊違規 |
 | 宣稱「Ruff 全綠」 | **禁止**，除非另任務清理並更新 baseline | — |
-
-權威敘述亦見 [`docs/CODING_STANDARDS.md`](../CODING_STANDARDS.md) §7.2。
 
 ---
 
