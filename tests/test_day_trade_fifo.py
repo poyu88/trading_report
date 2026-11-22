@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from backend.domain.models import LotRemaining
 from backend.reports.detail_projector import AllocationView, TradeView, project_detail_rows
 from backend.services.fifo_matcher import MatchInputTrade, run_fifo
 
@@ -118,16 +117,16 @@ def test_day_trade_fee_once_on_split() -> None:
     result = run_fifo("run-fee", trades)
     trade_views = [
         TradeView(
-            "db1", "3162", "精確", date(2025, 3, 1), "BUY", 600, Decimal("10"), Decimal("6000"),
-            Decimal("20"), Decimal("0"), Decimal("0"), "玉山",
+            "db1", "3162", "精確", date(2025, 3, 1), "BUY", 600, Decimal(10), Decimal(6000),
+            Decimal(20), Decimal(0), Decimal(0), "玉山",
         ),
         TradeView(
-            "db2", "3162", "精確", date(2025, 3, 1), "BUY", 400, Decimal("11"), Decimal("4400"),
-            Decimal("10"), Decimal("0"), Decimal("0"), "玉山",
+            "db2", "3162", "精確", date(2025, 3, 1), "BUY", 400, Decimal(11), Decimal(4400),
+            Decimal(10), Decimal(0), Decimal(0), "玉山",
         ),
         TradeView(
-            "ds1", "3162", "精確", date(2025, 3, 1), "SELL", 700, Decimal("12"), Decimal("8400"),
-            Decimal("18"), Decimal("36"), Decimal("0"), "玉山",
+            "ds1", "3162", "精確", date(2025, 3, 1), "SELL", 700, Decimal(12), Decimal(8400),
+            Decimal(18), Decimal(36), Decimal(0), "玉山",
         ),
     ]
     alloc_views = [
@@ -139,7 +138,7 @@ def test_day_trade_fee_once_on_split() -> None:
     rows = project_detail_rows(trade_views, alloc_views, result.unsold)
     sell_fees = [(r.sell_commission, r.sell_tax) for r in rows if r.sell_trade_id == "ds1"]
     assert len(sell_fees) >= 2
-    assert sum(c for c, _ in sell_fees) == Decimal("18")
-    assert sum(t for _, t in sell_fees) == Decimal("36")
+    assert sum(c for c, _ in sell_fees) == Decimal(18)
+    assert sum(t for _, t in sell_fees) == Decimal(36)
     # 費用只落在一個片段
     assert sum(1 for c, t in sell_fees if c != 0 or t != 0) == 1

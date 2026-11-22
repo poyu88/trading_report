@@ -276,7 +276,7 @@ def test_cr02_conservation_ok_opening_only_covers_sell() -> None:
             currency="TWD",
             buy_date=date(2023, 2, 3),
             quantity=1000,
-            unit_cost=Decimal("60"),
+            unit_cost=Decimal(60),
             approval_note="ok",
         )
     ]
@@ -367,7 +367,7 @@ def test_cr02_over_allocate_opening_fails() -> None:
             currency="TWD",
             buy_date=date(2023, 2, 3),
             quantity=1000,
-            unit_cost=Decimal("60"),
+            unit_cost=Decimal(60),
             approval_note="ok",
         )
     ]
@@ -413,7 +413,7 @@ def test_cr03_fingerprint_includes_source_order_and_account() -> None:
             currency="TWD",
             buy_date=date(2024, 1, 1),
             quantity=100,
-            unit_cost=Decimal("60"),
+            unit_cost=Decimal(60),
             approval_note="ok",
         )
     ]
@@ -432,7 +432,7 @@ def test_cr03_fingerprint_includes_source_order_and_account() -> None:
             currency="USD",
             buy_date=date(2024, 1, 1),
             quantity=100,
-            unit_cost=Decimal("60"),
+            unit_cost=Decimal(60),
             approval_note="ok",
         )
     ]
@@ -449,7 +449,7 @@ def test_cr03_same_day_multi_sell_order_is_deterministic() -> None:
             currency="TWD",
             buy_date=date(2024, 1, 1),
             quantity=1500,
-            unit_cost=Decimal("50"),
+            unit_cost=Decimal(50),
             approval_note="ok",
         )
     ]

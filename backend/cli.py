@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from alembic.config import Config
+from sqlalchemy.orm import Session
 
 from alembic import command
 from backend.config import DEFAULT_OUTPUT_DIR, PROJECT_ROOT, resolve_db_path
@@ -65,6 +66,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 進入點：db／import／match／report／audit。
+
+    Args:
+        argv: 參數清單；``None`` 時使用 ``sys.argv``。
+
+    Returns:
+        Process exit code（0 成功；業務錯誤 1；用法錯誤 2）。
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
     db_path = resolve_db_path(args.db)
@@ -90,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _session(db_path: Path):
+def _session(db_path: Path) -> Session:
     engine = create_db_engine(db_path)
     return make_session_factory(engine)()
 
@@ -157,7 +166,7 @@ def _cmd_import(args: argparse.Namespace, db_path: Path) -> int:
     return 2
 
 
-def _resolve_account_id(session, label: str) -> str:
+def _resolve_account_id(session: Session, label: str) -> str:
     account = find_account_by_label(session, label)
     if not account:
         raise TradingReportError(f"找不到帳戶標籤：{label}")

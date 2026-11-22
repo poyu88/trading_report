@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any, Protocol
 
 TWOPLACES = Decimal("0.01")
-AMOUNT_TOLERANCE = Decimal("1")
+AMOUNT_TOLERANCE = Decimal(1)
 AMOUNT_CONSERVATION_OUT_OF_TOLERANCE = "AMOUNT_CONSERVATION_OUT_OF_TOLERANCE"
 
 PARTIAL_MATCH_NOTE = "費用全額落點；尚有未配對殘量；本列損益非完整原始交易損益"
@@ -27,6 +28,32 @@ class _HasAllocQty(Protocol):
     quantity: int
     sell_trade_id: str
     buy_trade_id: str | None
+
+
+class _ConservationTrade(Protocol):
+    """價金守恆檢查所需之交易欄位。"""
+
+    side: str
+    trade_id: str
+    quantity: int
+    gross_amount: Decimal
+    unit_price: Decimal
+
+
+class _ConservationAlloc(Protocol):
+    """價金守恆檢查所需之配對片段欄位。"""
+
+    quantity: int
+    sell_trade_id: str
+    buy_trade_id: str | None
+    sequence_no: int
+
+
+class _ConservationUnsold(Protocol):
+    """價金守恆檢查所需之未售庫存欄位。"""
+
+    buy_trade_id: str | None
+    available: int
 
 
 @dataclass(frozen=True)
@@ -64,11 +91,26 @@ class FragmentAmountAllocation:
 
 
 def q2(value: Decimal) -> Decimal:
+    """四捨五入至小數兩位（金額欄位）。
+
+    Args:
+        value: 任意精度金額。
+
+    Returns:
+        以 ROUND_HALF_UP 量化至 ``0.01`` 的 Decimal。
+    """
     return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
 
 def trunc_toward_zero(value: Decimal) -> Decimal:
-    """朝零截斷為整數 Decimal。"""
+    """朝零截斷為整數 Decimal（TRUNC 價金片段）。
+
+    Args:
+        value: ``qty × unit_price`` 等乘積。
+
+    Returns:
+        朝零取整後的整數 Decimal（非四捨五入）。
+    """
     if value >= 0:
         return value.to_integral_value(rounding=ROUND_DOWN)
     return value.to_integral_value(rounding=ROUND_UP)
@@ -82,7 +124,21 @@ def allocate_trade_fragment_amounts(
     tolerance: Decimal = AMOUNT_TOLERANCE,
     trade_id: str | None = None,
 ) -> FragmentAmountAllocation:
-    """依 TRUNC(qty×unit_price) 分配片段價金；|diff|≤tolerance 才調最後片段。"""
+    """依 TRUNC(qty×unit_price) 分配片段價金；|diff|≤tolerance 才調最後片段。
+
+    不變量：禁止比例／餘額法；僅在容許差內調整**最後**片段；
+    ``|difference| > tolerance`` 時標記超限且不補差。
+
+    Args:
+        unit_price: 單價（與來源交易一致）。
+        gross: 原始成交價金總額（須與各片段最終金額之和在容許差內守恆）。
+        qtys: 各片段股數（非負整數；順序即報表片段順序）。
+        tolerance: 容許絕對差，預設 ``AMOUNT_TOLERANCE``（1 元）。
+        trade_id: 可選，寫入例外明細。
+
+    Returns:
+        ``FragmentAmountAllocation``（含截斷值、調整、守恆旗標）。
+    """
     if not qtys:
         return FragmentAmountAllocation(
             amounts=[],
@@ -156,7 +212,21 @@ def split_sell_gross_with_residual(
     unit_price: Decimal,
     trade_id: str | None = None,
 ) -> tuple[list[Decimal], Decimal | None, int, FragmentAmountAllocation]:
-    """回傳 (已配對片段價金, 未配對殘量價金或 None, 未配對股數, 完整分配結果)。"""
+    """將賣出價金拆成已配對片段與未配對殘量。
+
+    Args:
+        sell_qty: 賣出總股數。
+        sell_gross: 賣出原始價金。
+        matched_qtys: 已配對各片段股數。
+        unit_price: 賣出單價。
+        trade_id: 可選，寫入例外明細。
+
+    Returns:
+        ``(已配對片段價金, 未配對殘量價金或 None, 未配對股數, 完整分配結果)``。
+
+    Raises:
+        ValueError: 配對股數超過賣出股數。
+    """
     matched_total = sum(matched_qtys)
     unmatched_qty = sell_qty - matched_total
     if unmatched_qty < 0:
@@ -227,14 +297,27 @@ def enrich_sell_issue_finance(
 
 
 def collect_amount_conservation_issues(
-    trades: list[Any],
-    allocations: list[Any],
-    unsold: list[Any],
+    trades: Sequence[_ConservationTrade],
+    allocations: Sequence[_ConservationAlloc],
+    unsold: Sequence[_ConservationUnsold],
 ) -> list[dict[str, Any]]:
-    """逐筆檢查買／賣價金守恆；超限回傳 AMOUNT_CONSERVATION_OUT_OF_TOLERANCE。"""
+    """逐筆檢查買／賣價金守恆；超限回傳 AMOUNT_CONSERVATION_OUT_OF_TOLERANCE。
+
+    Args:
+        trades: 具 side／trade_id／quantity／gross_amount／unit_price 的交易列（唯讀序列）。
+        allocations: 具 sell／buy trade id、quantity、sequence_no 的配對列。
+        unsold: 具 buy_trade_id／available 的未售庫存。
+
+    Returns:
+        超容許差之 issue 字典清單（含 ``detail`` 守恆欄）；通過則空清單。
+
+    Note:
+        參數使用 ``Sequence``（非 ``list``）以避免 Protocol 與具體 ``list[TradeView]``
+        等型別在靜態檢查時因 list invariant 不相容；執行期僅迭代、不改寫輸入。
+    """
     from collections import defaultdict
 
-    sell_allocs: dict[str, list[Any]] = defaultdict(list)
+    sell_allocs: dict[str, list[_ConservationAlloc]] = defaultdict(list)
     buy_matched: dict[str, list[int]] = defaultdict(list)
     for a in allocations:
         sell_allocs[a.sell_trade_id].append(a)

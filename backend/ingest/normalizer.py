@@ -88,6 +88,17 @@ def normalize_mapped_row(
     profile: MappingProfile,
     original_cells: dict[str, str],
 ) -> NormalizedCandidate:
+    """將 profile 對應後的列轉成標準化候選（含排除／錯誤碼）。
+
+    Args:
+        mapped: profile ``column_map`` 目標欄 → 字串值。
+        profile: 對帳單 mapping profile。
+        original_cells: 來源表頭 → 原始儲存格（供排除列判斷與 raw 保留）。
+
+    Returns:
+        ``NormalizedCandidate``；可能 ``excluded`` 或帶 ``error_code``，
+        金額欄位為 Decimal，股數為 int。
+    """
     first_value = next(iter(original_cells.values()), "")
     exclude_reason = should_exclude(first_value, profile)
     if exclude_reason:

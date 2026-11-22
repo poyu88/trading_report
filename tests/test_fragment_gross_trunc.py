@@ -79,19 +79,19 @@ def test_case_a_sell_trunc_no_adjust_fees_on_first() -> None:
     matched = sorted([r for r in rows if r.sell_trade_id == "s1"], key=lambda r: r.allocation_id or "")
     assert len(matched) == 2
     # income0 = 17625 - 120 = 17505；income1 = 9720
-    assert matched[0].income == Decimal("17505")
-    assert matched[1].income == Decimal("9720")
-    assert matched[0].income + matched[1].income == Decimal("27225")
-    assert matched[0].sell_commission == Decimal("80")
-    assert matched[0].sell_tax == Decimal("40")
-    assert matched[1].sell_commission == Decimal("0")
-    assert matched[1].sell_tax == Decimal("0")
+    assert matched[0].income == Decimal(17505)
+    assert matched[1].income == Decimal(9720)
+    assert matched[0].income + matched[1].income == Decimal(27225)
+    assert matched[0].sell_commission == Decimal(80)
+    assert matched[0].sell_tax == Decimal(40)
+    assert matched[1].sell_commission == Decimal(0)
+    assert matched[1].sell_tax == Decimal(0)
 
     result = allocate_trade_fragment_amounts(
-        Decimal("64.8"), Decimal("27345"), [272, 150]
+        Decimal("64.8"), Decimal(27345), [272, 150]
     )
-    assert result.amounts == [Decimal("17625"), Decimal("9720")]
-    assert result.difference == Decimal("0")
+    assert result.amounts == [Decimal(17625), Decimal(9720)]
+    assert result.difference == Decimal(0)
     assert not result.out_of_tolerance
     assert result.conservation_ok
 
@@ -121,17 +121,17 @@ def test_case_b_buy_trunc_adjust_last_plus_one() -> None:
     rows = project_detail_rows(trades, allocs, [])
     matched = sorted([r for r in rows if r.buy_trade_id == "b1"], key=lambda r: r.allocation_id or "")
     assert len(matched) == 2
-    assert matched[0].cost == Decimal("7425")  # 7378 + 47
-    assert matched[1].cost == Decimal("25732")
-    assert matched[0].cost + matched[1].cost == Decimal("33157")
+    assert matched[0].cost == Decimal(7425)  # 7378 + 47
+    assert matched[1].cost == Decimal(25732)
+    assert matched[0].cost + matched[1].cost == Decimal(33157)
 
     result = allocate_trade_fragment_amounts(
-        Decimal("94.6"), Decimal("33110"), [78, 272]
+        Decimal("94.6"), Decimal(33110), [78, 272]
     )
-    assert result.truncated == [Decimal("7378"), Decimal("25731")]
-    assert result.difference == Decimal("1")
-    assert result.amounts == [Decimal("7378"), Decimal("25732")]
-    assert result.adjustments == [Decimal("0"), Decimal("1")]
+    assert result.truncated == [Decimal(7378), Decimal(25731)]
+    assert result.difference == Decimal(1)
+    assert result.amounts == [Decimal(7378), Decimal(25732)]
+    assert result.adjustments == [Decimal(0), Decimal(1)]
     assert result.conservation_ok
     assert not result.out_of_tolerance
 
@@ -141,20 +141,20 @@ def test_case_b_buy_trunc_adjust_last_plus_one() -> None:
 
 def test_diff_plus_one_adjusts_last_fragment() -> None:
     result = allocate_trade_fragment_amounts(
-        Decimal("94.6"), Decimal("33110"), [78, 272]
+        Decimal("94.6"), Decimal(33110), [78, 272]
     )
-    assert result.difference == Decimal("1")
-    assert sum(result.amounts, Decimal(0)) == Decimal("33110")
+    assert result.difference == Decimal(1)
+    assert sum(result.amounts, Decimal(0)) == Decimal(33110)
 
 
 def test_diff_minus_one_adjusts_last_fragment() -> None:
     # TRUNC(10*1.1)=11, TRUNC(10*1.1)=11 → 22；gross 21 → diff=-1
     result = allocate_trade_fragment_amounts(
-        Decimal("1.1"), Decimal("21"), [10, 10]
+        Decimal("1.1"), Decimal(21), [10, 10]
     )
-    assert result.difference == Decimal("-1")
-    assert result.amounts == [Decimal("11"), Decimal("10")]
-    assert sum(result.amounts, Decimal(0)) == Decimal("21")
+    assert result.difference == Decimal(-1)
+    assert result.amounts == [Decimal(11), Decimal(10)]
+    assert sum(result.amounts, Decimal(0)) == Decimal(21)
     assert result.conservation_ok
 
 
@@ -164,28 +164,28 @@ def test_diff_minus_one_adjusts_last_fragment() -> None:
 def test_diff_plus_two_no_auto_adjust_emits_out_of_tolerance() -> None:
     # TRUNC(2*10.75)=21 ×2 = 42；gross 44 → diff=2
     result = allocate_trade_fragment_amounts(
-        Decimal("10.75"), Decimal("44"), [2, 2]
+        Decimal("10.75"), Decimal(44), [2, 2]
     )
-    assert result.difference == Decimal("2")
+    assert result.difference == Decimal(2)
     assert result.out_of_tolerance
-    assert result.amounts == [Decimal("21"), Decimal("21")]
+    assert result.amounts == [Decimal(21), Decimal(21)]
     assert not result.conservation_ok
     assert result.exception_code == AMOUNT_CONSERVATION_OUT_OF_TOLERANCE
     detail = result.exception_detail()
     assert detail["trade_id"] is None or "difference" in detail
-    assert Decimal(str(detail["original_gross"])) == Decimal("44")
-    assert Decimal(str(detail["calculated_total"])) == Decimal("42")
-    assert Decimal(str(detail["difference"])) == Decimal("2")
+    assert Decimal(str(detail["original_gross"])) == Decimal(44)
+    assert Decimal(str(detail["calculated_total"])) == Decimal(42)
+    assert Decimal(str(detail["difference"])) == Decimal(2)
 
 
 def test_diff_minus_two_no_auto_adjust() -> None:
     # TRUNC(2*10.75)=21 ×2 = 42；gross 40 → diff=-2
     result = allocate_trade_fragment_amounts(
-        Decimal("10.75"), Decimal("40"), [2, 2]
+        Decimal("10.75"), Decimal(40), [2, 2]
     )
-    assert result.difference == Decimal("-2")
+    assert result.difference == Decimal(-2)
     assert result.out_of_tolerance
-    assert result.amounts == result.truncated == [Decimal("21"), Decimal("21")]
+    assert result.amounts == result.truncated == [Decimal(21), Decimal(21)]
     assert not result.conservation_ok
 
 
@@ -205,7 +205,7 @@ def test_out_of_tolerance_projection_keeps_truncated_and_flags_issue() -> None:
     costs = sorted(
         [r.cost for r in rows if r.buy_trade_id == "b1"],
     )
-    assert costs == [Decimal("21"), Decimal("21")]
+    assert costs == [Decimal(21), Decimal(21)]
     issues = collect_amount_conservation_issues(trades, allocs, [])
     assert any(i["code"] == AMOUNT_CONSERVATION_OUT_OF_TOLERANCE for i in issues)
     assert all(
@@ -220,23 +220,20 @@ def test_out_of_tolerance_projection_keeps_truncated_and_flags_issue() -> None:
 
 def test_last_fragment_must_trunc_before_any_adjust() -> None:
     """最後片段須先 qty×price 再 TRUNC，禁止直接用 total−allocated。"""
-    result = allocate_trade_fragment_amounts(
-        Decimal("64.8"), Decimal("27345"), [272, 150]
-    )
     # 若餘額法：last = 27345 - TRUNC(272*64.8) = 27345-17625 = 9720（碰巧相同）
     # 用會暴露餘額法的案例：比例／餘額與雙截斷不同
     # 100＠1.5 → 150；片段 33+67
     # TRUNC(33*1.5)=49；TRUNC(67*1.5)=100；sum=149；diff=1 → last=101
     # 餘額法若先 TRUNC 第一再 last=150-49=101（相同）
     # 比例：33/100*150=49.5→49.50；last=100.50 — 與 TRUNC 路徑不同
-    r2 = allocate_trade_fragment_amounts(Decimal("1.5"), Decimal("150"), [33, 67])
-    assert r2.truncated[0] == Decimal("49")
-    assert r2.truncated[1] == Decimal("100")  # 必須是 TRUNC(67*1.5)，不是預先餘額
-    assert r2.amounts[1] == Decimal("101")  # 再 +1
+    r2 = allocate_trade_fragment_amounts(Decimal("1.5"), Decimal(150), [33, 67])
+    assert r2.truncated[0] == Decimal(49)
+    assert r2.truncated[1] == Decimal(100)  # 必須是 TRUNC(67*1.5)，不是預先餘額
+    assert r2.amounts[1] == Decimal(101)  # 再 +1
 
 
 def test_forbids_proportional_allocation() -> None:
-    total = Decimal("27345")
+    total = Decimal(27345)
     qtys = [272, 150]
     total_qty = sum(qtys)
     proportional = [
@@ -246,7 +243,7 @@ def test_forbids_proportional_allocation() -> None:
     proportional.append(total - proportional[0])
     result = allocate_trade_fragment_amounts(Decimal("64.8"), total, qtys)
     assert result.amounts != proportional
-    assert result.amounts == [Decimal("17625"), Decimal("9720")]
+    assert result.amounts == [Decimal(17625), Decimal(9720)]
 
 
 # --- 未配對／未售納入守恆；原始欄位不變；A～W ---
@@ -267,17 +264,17 @@ def test_unmatched_and_unsold_included_in_trade_fragments() -> None:
         ),
     ]
     allocs = [AllocationView("a1", "b1", None, "s1", 400, 1)]
-    unsold = [LotRemaining("b1", None, 600, date(2025, 1, 1), Decimal("10"), 0)]
+    unsold = [LotRemaining("b1", None, 600, date(2025, 1, 1), Decimal(10), 0)]
     trace = project_fifo_trace_rows(trades, allocs, unsold)
     buy_frags = [r for r in trace if r.buy_trade_id == "b1"]
     assert sum(r.quantity for r in buy_frags) == 1000
     # 買進價金守恆：已配對 400＋未售 600（配套 MATCHED 列 gross 為賣出價金，故另算）
-    buy_alloc = allocate_trade_fragment_amounts(Decimal("10"), Decimal("10000"), [400, 600])
+    buy_alloc = allocate_trade_fragment_amounts(Decimal(10), Decimal(10000), [400, 600])
     assert buy_alloc.conservation_ok
-    assert sum(buy_alloc.amounts, Decimal(0)) == Decimal("10000")
+    assert sum(buy_alloc.amounts, Decimal(0)) == Decimal(10000)
     sell_frags = [r for r in trace if r.sell_trade_id == "s1"]
     assert sum(r.quantity for r in sell_frags) == 1000
-    assert sum((r.gross_amount or Decimal(0) for r in sell_frags), Decimal(0)) == Decimal("12000")
+    assert sum((r.gross_amount or Decimal(0) for r in sell_frags), Decimal(0)) == Decimal(12000)
 
 
 def test_original_trade_fields_unchanged_after_projection() -> None:
@@ -323,8 +320,8 @@ def test_aw_contract_headers_and_fragment_qty_semantics() -> None:
     rows = project_detail_rows(trades, allocs, [])
     for r in rows:
         assert r.buy_price == trades[0].unit_price or r.buy_price in (
-            Decimal("60"),
-            Decimal("61"),
+            Decimal(60),
+            Decimal(61),
         )
         assert isinstance(r.buy_qty, int)
         if r.sell_qty is not None:
@@ -358,8 +355,8 @@ def test_fifo_order_not_rewritten_by_display_sort_for_fees_and_tail() -> None:
     ]
     rows = project_detail_rows(trades, allocs, [])
     by_alloc = {r.allocation_id: r for r in rows if r.allocation_id}
-    assert by_alloc["a_first"].cost == Decimal("7425")  # 7378+47 費用在第一 FIFO
-    assert by_alloc["a_last"].cost == Decimal("25732")  # 補差 +1 在最後 FIFO
+    assert by_alloc["a_first"].cost == Decimal(7425)  # 7378+47 費用在第一 FIFO
+    assert by_alloc["a_last"].cost == Decimal(25732)  # 補差 +1 在最後 FIFO
     # 顯示順序：s_early 在前
     ordered = [r for r in rows if r.allocation_id]
     assert ordered[0].allocation_id == "a_last"

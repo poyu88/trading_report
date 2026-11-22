@@ -23,7 +23,7 @@ def test_preview_excludes_totals_and_counts(fixtures_dir: Path, tmp_path: Path) 
 
 def test_symbol_kept_as_text() -> None:
     profile = load_profile("statement_html_v1")
-    assert "商品" in profile.column_map or True
+    assert "商品" in profile.column_map
     from backend.ingest.normalizer import split_symbol_and_name
 
     symbol, name = split_symbol_and_name("00685L 群益正2")

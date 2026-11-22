@@ -98,6 +98,20 @@ def project_detail_rows(
     unsold: Iterable[LotRemaining],
     opening_lots: Iterable[OpeningLotView] | None = None,
 ) -> list[DetailRow]:
+    """投影主明細 A～W 列（已配對片段＋未售買進殘量）。
+
+    價金採 TRUNC 片段分配；賣出費用落於該賣出第一個已配對片段；
+    未配對賣出不進入主明細（見配套 trace）。
+
+    Args:
+        trades: 買／賣交易視圖。
+        allocations: FIFO 配對片段。
+        unsold: 未售買進／期初殘量。
+        opening_lots: 可選期初庫存視圖（配對到 lot 時需要）。
+
+    Returns:
+        ``DetailRow`` 清單（無公式列、無加總列）。
+    """
     trade_map = {t.trade_id: t for t in trades}
     lot_map = {o.lot_id: o for o in (opening_lots or [])}
     alloc_list = sorted(allocations, key=lambda a: a.sequence_no)

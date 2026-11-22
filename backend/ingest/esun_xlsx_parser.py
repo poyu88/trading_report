@@ -62,9 +62,7 @@ def _cell_str(value: Any) -> str:
 def _is_blank(value: Any) -> bool:
     if value is None:
         return True
-    if isinstance(value, str) and value.strip() == "":
-        return True
-    return False
+    return isinstance(value, str) and value.strip() == ""
 
 
 def _parse_date_cell(value: Any, formats: list[str]) -> date | None:
@@ -176,7 +174,7 @@ def _pad_row(row: list[Any], width: int) -> list[Any]:
 
 def _is_skip_note_row(row: list[Any]) -> bool:
     first = _cell_str(row[0]) if row else ""
-    return first.startswith("說明") or first.startswith("本功能")
+    return first.startswith(("說明", "本功能"))
 
 
 def _amount_at(row: list[Any], idx: int | None) -> Decimal:

@@ -126,7 +126,7 @@ def test_uat02_one_sell_two_buys_plus_residual_gross_conserved() -> None:
     assert income0 is not None and income1 is not None
     # 第一片段費用：133+282+5=420；假設均分 23500+23500
     # income0 = 23500 - 420 = 23080；income1 = 23500
-    sell_gross_total = (income0 + Decimal("133") + Decimal("282") + Decimal("5")) + income1
+    sell_gross_total = (income0 + Decimal(133) + Decimal(282) + Decimal(5)) + income1
     assert sell_gross_total == Decimal("47000.00")
 
 
@@ -148,12 +148,12 @@ def test_uat04_fees_once_on_partial_match_first_fragment_only() -> None:
         [r for r in rows if r.sell_trade_id == "s1"],
         key=lambda r: r.allocation_id or "",
     )
-    assert matched[0].sell_commission == Decimal("133")
-    assert matched[0].sell_tax == Decimal("282")
-    assert matched[0].interest == Decimal("5")
-    assert matched[1].sell_commission == Decimal("0")
-    assert matched[1].sell_tax == Decimal("0")
-    assert matched[1].interest in (None, Decimal("0"))
+    assert matched[0].sell_commission == Decimal(133)
+    assert matched[0].sell_tax == Decimal(282)
+    assert matched[0].interest == Decimal(5)
+    assert matched[1].sell_commission == Decimal(0)
+    assert matched[1].sell_tax == Decimal(0)
+    assert matched[1].interest in (None, Decimal(0))
 
 
 # --- UAT-05～10：成本／收入／利息／Decimal ---
@@ -162,7 +162,7 @@ def test_uat04_fees_once_on_partial_match_first_fragment_only() -> None:
 def test_uat05_cost_is_buy_gross_plus_buy_commission() -> None:
     trades, allocs, unsold = _partial_one_buy_one_sell()
     rows = project_detail_rows(trades, allocs, unsold)
-    matched = [r for r in rows if r.sell_trade_id == "s1"][0]
+    matched = next(r for r in rows if r.sell_trade_id == "s1")
     # buy 1000 全配：buy_gross=50000 + commission 20
     assert matched.cost == Decimal("50020.00")
 
@@ -184,7 +184,7 @@ def test_uat06_income_deducts_commission_and_tax() -> None:
     ]
     allocs = [AllocationView("a1", "b1", None, "s1", 1000, 1)]
     rows = project_detail_rows(trades, allocs, [])
-    m = [r for r in rows if r.sell_trade_id == "s1"][0]
+    m = next(r for r in rows if r.sell_trade_id == "s1")
     assert m.income == Decimal("14946.00")  # 15000-18-36-0
 
 
@@ -205,7 +205,7 @@ def test_uat07_income_deducts_nonzero_interest() -> None:
     ]
     allocs = [AllocationView("a1", "b1", None, "s1", 1000, 1)]
     rows = project_detail_rows(trades, allocs, [])
-    m = [r for r in rows if r.sell_trade_id == "s1"][0]
+    m = next(r for r in rows if r.sell_trade_id == "s1")
     assert m.income == Decimal("14962.50")  # 15000-10-20-7.5
     assert m.interest == Decimal("7.5")
 
@@ -213,21 +213,21 @@ def test_uat07_income_deducts_nonzero_interest() -> None:
 def test_uat08_explicit_zero_interest_is_accepted() -> None:
     trades, allocs, unsold = _partial_one_buy_one_sell()
     rows = project_detail_rows(trades, allocs, unsold)
-    m = [r for r in rows if r.sell_trade_id == "s1"][0]
-    assert m.interest == Decimal("0")
+    m = next(r for r in rows if r.sell_trade_id == "s1")
+    assert m.interest == Decimal(0)
 
 
 def test_uat09_profit_equals_income_minus_cost() -> None:
     trades, allocs, unsold = _partial_one_buy_one_sell()
     rows = project_detail_rows(trades, allocs, unsold)
-    m = [r for r in rows if r.sell_trade_id == "s1"][0]
+    m = next(r for r in rows if r.sell_trade_id == "s1")
     assert m.profit == m.income - m.cost  # type: ignore[operator]
 
 
 def test_uat10_amounts_are_decimal_not_float() -> None:
     trades, allocs, unsold = _partial_one_buy_one_sell()
     rows = project_detail_rows(trades, allocs, unsold)
-    m = [r for r in rows if r.sell_trade_id == "s1"][0]
+    m = next(r for r in rows if r.sell_trade_id == "s1")
     assert isinstance(m.cost, Decimal)
     assert isinstance(m.income, Decimal)
     assert isinstance(m.profit, Decimal)
@@ -257,7 +257,7 @@ def test_uat12_full_gross_not_double_counted_across_matched_and_unmatched() -> N
     trades, allocs, unsold = _partial_two_buys_residual()
     trace = project_fifo_trace_rows(trades, allocs, unsold)
     sell_frags = [r for r in trace if r.sell_trade_id == "s1" and r.gross_amount is not None]
-    assert sum((r.gross_amount for r in sell_frags), Decimal(0)) == Decimal("94000")
+    assert sum((r.gross_amount for r in sell_frags), Decimal(0)) == Decimal(94000)
     matched_gross = sum(
         (r.gross_amount for r in sell_frags if r.row_kind == "MATCHED"),
         Decimal(0),
@@ -276,13 +276,13 @@ def test_uat12_full_gross_not_double_counted_across_matched_and_unmatched() -> N
 def test_uat13_cash_and_day_trade_pools_do_not_cross_for_finance() -> None:
     trades = [
         MatchInputTrade(
-            "cb", "acc", "1111", date(2025, 1, 1), None, None, "BUY", "CASH", "TWD", 1000, Decimal("10")
+            "cb", "acc", "1111", date(2025, 1, 1), None, None, "BUY", "CASH", "TWD", 1000, Decimal(10)
         ),
         MatchInputTrade(
-            "ds", "acc", "1111", date(2025, 1, 1), None, None, "SELL", "DAY_TRADE", "TWD", 1000, Decimal("12")
+            "ds", "acc", "1111", date(2025, 1, 1), None, None, "SELL", "DAY_TRADE", "TWD", 1000, Decimal(12)
         ),
         MatchInputTrade(
-            "db", "acc", "1111", date(2025, 1, 1), None, None, "BUY", "DAY_TRADE", "TWD", 1000, Decimal("11")
+            "db", "acc", "1111", date(2025, 1, 1), None, None, "BUY", "DAY_TRADE", "TWD", 1000, Decimal(11)
         ),
     ]
     result = run_fifo("run", trades)
@@ -294,10 +294,10 @@ def test_uat13_cash_and_day_trade_pools_do_not_cross_for_finance() -> None:
 def test_uat14_day_trade_sell_before_buy_same_day_matches() -> None:
     trades = [
         MatchInputTrade(
-            "ds", "acc", "2222", date(2025, 5, 1), None, None, "SELL", "DAY_TRADE", "TWD", 500, Decimal("20")
+            "ds", "acc", "2222", date(2025, 5, 1), None, None, "SELL", "DAY_TRADE", "TWD", 500, Decimal(20)
         ),
         MatchInputTrade(
-            "db", "acc", "2222", date(2025, 5, 1), None, None, "BUY", "DAY_TRADE", "TWD", 500, Decimal("19")
+            "db", "acc", "2222", date(2025, 5, 1), None, None, "BUY", "DAY_TRADE", "TWD", 500, Decimal(19)
         ),
     ]
     result = run_fifo("run", trades)
@@ -309,10 +309,10 @@ def test_uat14_day_trade_sell_before_buy_same_day_matches() -> None:
 def test_uat15_fifo_rerun_does_not_duplicate_allocations() -> None:
     trades = [
         MatchInputTrade(
-            "b1", "acc", "3333", date(2025, 1, 1), None, None, "BUY", "CASH", "TWD", 100, Decimal("10")
+            "b1", "acc", "3333", date(2025, 1, 1), None, None, "BUY", "CASH", "TWD", 100, Decimal(10)
         ),
         MatchInputTrade(
-            "s1", "acc", "3333", date(2025, 1, 2), None, None, "SELL", "CASH", "TWD", 100, Decimal("11")
+            "s1", "acc", "3333", date(2025, 1, 2), None, None, "SELL", "CASH", "TWD", 100, Decimal(11)
         ),
     ]
     r1 = run_fifo("run1", trades)
@@ -355,7 +355,7 @@ def test_uat18_unsold_buy_profit_unknown() -> None:
     ]
     allocs = [AllocationView("a1", "b1", None, "s1", 400, 1)]
     unsold = [
-        LotRemaining("b1", None, 600, date(2025, 1, 1), Decimal("10"), 0),
+        LotRemaining("b1", None, 600, date(2025, 1, 1), Decimal(10), 0),
     ]
     rows = project_detail_rows(trades, allocs, unsold)
     unsold_rows = [r for r in rows if r.sell_date is None]
@@ -435,15 +435,15 @@ def test_uat22_sell_residual_plus_matched_equals_source_gross() -> None:
     ]
     allocs = [AllocationView("a1", "b1", None, "s1", 491, 1)]
     rows = project_detail_rows(trades, allocs, [])
-    matched = [r for r in rows if r.sell_trade_id == "s1"][0]
+    matched = next(r for r in rows if r.sell_trade_id == "s1")
     # TRUNC(491×27.4)=13453；殘量 TRUNC(509×27.4)=13946；diff=+1 → 殘量 13947
     # income = 13453 - 39 - 82 - 0 = 13332（禁止比例 13453.40 路徑）
-    assert matched.income == Decimal("13332")
+    assert matched.income == Decimal(13332)
     from backend.reports.detail_projector import project_fifo_trace_rows
 
     trace = project_fifo_trace_rows(trades, allocs, [])
     frags = [r for r in trace if r.sell_trade_id == "s1"]
-    assert sum((r.gross_amount or Decimal(0) for r in frags), Decimal(0)) == Decimal("27400")
-    unmatched = [r for r in frags if r.row_kind == "UNMATCHED_SELL"][0]
+    assert sum((r.gross_amount or Decimal(0) for r in frags), Decimal(0)) == Decimal(27400)
+    unmatched = next(r for r in frags if r.row_kind == "UNMATCHED_SELL")
     assert unmatched.quantity == 509
-    assert unmatched.gross_amount == Decimal("13947")
+    assert unmatched.gross_amount == Decimal(13947)

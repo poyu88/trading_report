@@ -28,9 +28,9 @@ def test_preview_source_totals_reconcile(tmp_path: Path) -> None:
     assert recon is not None
     assert recon["declared_count"] == 5
     assert recon["recognized_count"] == 5
-    assert Decimal(str(recon["gross_amount"])) == Decimal("266900")
-    assert Decimal(str(recon["commission"])) == Decimal("377")
-    assert Decimal(str(recon["tax"])) == Decimal("180")
+    assert Decimal(str(recon["gross_amount"])) == Decimal(266900)
+    assert Decimal(str(recon["commission"])) == Decimal(377)
+    assert Decimal(str(recon["tax"])) == Decimal(180)
     assert recon["matched"] is True
 
 

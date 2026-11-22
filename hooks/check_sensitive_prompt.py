@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 檢查提示內容中是否包含敏感資訊的腳本
 用於 Cursor beforeSubmitPrompt hook
@@ -8,7 +7,7 @@
 import json
 import re
 import sys
-from typing import Any, Dict, Tuple
+from typing import Any
 
 
 def detect_api_key(text: str) -> bool:
@@ -74,12 +73,10 @@ def detect_email_password(text: str) -> bool:
         r'[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\s*[:=]\s*["\']?([^\s"\']{6,})["\']?'
     )
 
-    if re.search(email_pattern, text) and re.search(password_pattern, text):
-        return True
-    return False
+    return bool(re.search(email_pattern, text) and re.search(password_pattern, text))
 
 
-def check_sensitive_info(prompt: str) -> Tuple[bool, str]:
+def check_sensitive_info(prompt: str) -> tuple[bool, str]:
     """
     檢查提示內容中是否包含敏感資訊
 
@@ -109,12 +106,12 @@ def main() -> None:
 
         # 解析 JSON
         try:
-            data: Dict[str, Any] = json.loads(input_data)
+            data: dict[str, Any] = json.loads(input_data)
         except json.JSONDecodeError as e:
             # JSON 解析失敗，輸出錯誤並允許繼續
             result = {
                 "continue": True,
-                "user_message": f"JSON 解析錯誤: {str(e)}",
+                "user_message": f"JSON 解析錯誤: {e!s}",
             }
             output = json.dumps(result, ensure_ascii=False)
             sys.stdout.buffer.write(output.encode("utf-8"))
@@ -154,7 +151,7 @@ def main() -> None:
         # 發生未預期的錯誤，輸出錯誤訊息但允許繼續（避免阻擋使用者）
         result = {
             "continue": True,
-            "user_message": f"檢查過程中發生錯誤: {str(e)}",
+            "user_message": f"檢查過程中發生錯誤: {e!s}",
         }
         output = json.dumps(result, ensure_ascii=False)
         sys.stdout.buffer.write(output.encode("utf-8"))

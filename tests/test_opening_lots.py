@@ -18,13 +18,13 @@ def test_opening_lot_covers_early_sell() -> None:
             currency="TWD",
             buy_date=date(2025, 1, 1),
             quantity=250,
-            unit_cost=Decimal("100"),
+            unit_cost=Decimal(100),
             approval_note="人工核准",
         )
     ]
     trades = [
         MatchInputTrade(
-            "s1", "acc", "3260", date(2025, 10, 3), None, None, "SELL", "CASH", "TWD", 250, Decimal("172")
+            "s1", "acc", "3260", date(2025, 10, 3), None, None, "SELL", "CASH", "TWD", 250, Decimal(172)
         )
     ]
     result = run_fifo("run", trades, lots)

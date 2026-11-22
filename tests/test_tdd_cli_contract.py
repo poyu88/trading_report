@@ -15,7 +15,6 @@ Every test uses pytest's temporary directory, never data/trading.db or real inpu
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import sqlite3
 import subprocess
@@ -27,7 +26,6 @@ from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "statement_html_v1"
@@ -227,13 +225,13 @@ def test_06_fifo_one_sell_consumes_two_buys_and_preserves_fees(env):
         ).fetchall()
     assert allocations == [(1000, 1000), (500, 200)]
 
-    sheet, rows = detail_rows(report(env))
+    _sheet, rows = detail_rows(report(env))
     assert len(rows) == 3  # 2 sold segments + 1 open remainder
     assert sorted(int(r[6].value) for r in rows) == [200, 300, 1000]
-    assert sum(cell_decimal(r[7]) for r in rows) == Decimal("30")        # H buy fees
-    assert sum(cell_decimal(r[10]) for r in rows if r[10].value is not None) == Decimal("18")
-    assert sum(cell_decimal(r[11]) for r in rows if r[11].value is not None) == Decimal("36")
-    assert sorted(cell_decimal(r[7]) for r in rows) == [Decimal("0"), Decimal("10"), Decimal("20")]
+    assert sum(cell_decimal(r[7]) for r in rows) == Decimal(30)        # H buy fees
+    assert sum(cell_decimal(r[10]) for r in rows if r[10].value is not None) == Decimal(18)
+    assert sum(cell_decimal(r[11]) for r in rows if r[11].value is not None) == Decimal(36)
+    assert sorted(cell_decimal(r[7]) for r in rows) == [Decimal(0), Decimal(10), Decimal(20)]
 
     # Sold quantities balance; unsold is an actual numeric remainder, not text.
     assert sum(int(r[9].value) for r in rows if r[9].value is not None) == 1200
@@ -252,7 +250,7 @@ def test_07_one_buy_split_by_two_sells_fee_occurs_once(env):
     match(env)
     _, rows = detail_rows(report(env))
     assert sorted(int(r[6].value) for r in rows) == [300, 300, 400]
-    assert sorted(cell_decimal(r[7]) for r in rows) == [Decimal("0"), Decimal("0"), Decimal("20")]
+    assert sorted(cell_decimal(r[7]) for r in rows) == [Decimal(0), Decimal(0), Decimal(20)]
     assert sum(cell_decimal(r[10]) for r in rows if r[10].value is not None) == 17
     assert sum(cell_decimal(r[11]) for r in rows if r[11].value is not None) == 29
 
