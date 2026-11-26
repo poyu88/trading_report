@@ -345,6 +345,18 @@
 | 本機 REGRESSION | `test_golden_cr_fixes` → **29 passed**；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**寫入 |
 | 判定 | Phase 0／1 基礎開發收尾；待 Owner 確認 Phase 2；Merge／Migration **未**授權 |
 
+### 1.26 Phase 2 獨立 C 層（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | `backend/golden/expected_c.py`；`scripts/_golden_phase2_expected_c.py`；HTML／玉山 `invalid_row_count=UNKNOWN`；Phase02／PENDING／STATUS 文件 |
+| RED | `tests/test_golden_expected_c.py` 收集期 `ModuleNotFoundError: backend.golden` |
+| GREEN | 獨立彙總／CASH Two-Pass／§7 損益；本機 `data/golden/expected_c/`（gitignore） |
+| REFACTOR | ruff FURB157（`Decimal(0)`）；無業務行為變更 |
+| 本機 REGRESSION | `test_golden_expected_c` → **8 passed**；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**寫入 |
+| 判定 | Phase 2 C 層本機完成；待獨立 Reviewer；CR-10A／Merge／Migration **未**授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -524,6 +536,7 @@
 | `golden_cr_batch2_v1` | 第二批：非法 Decimal 鍵可 JSON 序列化；GOLD-CR-03 WAL／SHM 指紋前後比；GOLD-CR-04 實際 git ls-files 稽核 | 2026-11-26；3 新測 **failed**（object 不可序列化；缺比較／稽核函式） | 2026-11-26；`_norm_num_key`／`compare_fingerprint_bundles`／`git_security_audit` | 無 | **248 passed／1 skipped**／63.67s | 01／06核心／07／08／09 不重開；PENDING 維持；Phase 2 未授權 |
 | `golden_cr_batch3_v1` | CR-04 returncode；CR-10 列合法性；CR-11 批次歧義；CR-05 可立即核對欄 | 2026-11-26；4 新測 **failed** | 2026-11-26；audit／classify／resolve／cross_check 擴充 | 無 | **252 passed／1 skipped**／64.92s | 03／06 結案不重開；PENDING 外部鍵／多帳戶真實樣本 |
 | `golden_cr10_close_v1` | CR-10：invalid／excluded 分計；非法列阻擋完整驗收；Phase 0／1 收斂文件 | 2026-11-26；分計／gate 測 **failed** | 2026-11-26；`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate` | 無 | **253 passed／1 skipped**／63.96s | 04 結案；HTML／玉山 invalid 擴充仍 PENDING |
+| `golden_phase2_expected_c_v1` | Phase 2：獨立 C（A＋SPEC）；GOLD-001～004 本機答案；HTML／玉山 invalid→UNKNOWN | 2026-11-26；`test_golden_expected_c` 收集 **ERROR**（缺 `backend.golden`） | 2026-11-26；`expected_c` 模組＋phase2 腳本＋inventory UNKNOWN | ruff Decimal(0) | **261 passed／1 skipped**／74.78s | 真實答案 gitignored；CR-10A／Merge／Migration 未授權；待獨立 Reviewer |
 
 **記錄欄位最低要求**
 
@@ -604,3 +617,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`golden_cr_batch2_v1` TDD**：非法鍵 JSON 序列化＋CR-03 WAL／SHM 指紋比＋CR-04 git ls-files；RED 3 failed → GREEN；全量 **248 passed／1 skipped**／63.67s；ruff 通過；正式 DB **未**動；PENDING 維持；Phase 2／Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_cr_batch3_v1` TDD**：CR-04 returncode、CR-10 列合法性、CR-11 歧義、CR-05 可核對欄；RED 4 failed → GREEN；全量 **252 passed／1 skipped**／64.92s；ruff 通過；正式 DB **未**動；PENDING 外部鍵／多帳戶維持。 |
 | 2026-11-26 | **`golden_cr10_close_v1`**：invalid／excluded 分計＋阻擋完整 PASS；Phase 0／1 收斂摘要；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**動；待 Owner 確認 Phase 2。 |
+| 2026-11-26 | **`golden_phase2_expected_c_v1`**：Owner 授權 Phase 2；獨立 C 模組＋合成測；本機 expected_c GOLD-001～004；HTML／玉山 invalid→UNKNOWN；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**動；真實答案未入 Git；待獨立 Reviewer／CR-10A；Merge／Migration **未**授權。 |

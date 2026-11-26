@@ -385,6 +385,13 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
     )
 
 
+def unresolved_invalid_row_count(source_format: str) -> str:
+    """HTML／玉山尚未做與 CSV 同等 invalid 分計 → 明確 UNKNOWN（不得預設 0）。"""
+    if source_format in {"html_table_xls", "esun_xlsx"}:
+        return "UNKNOWN"
+    raise ValueError(f"resolved_format_has_no_unresolved_invalid:{source_format}")
+
+
 def analyze_html_xls(path: Path) -> dict[str, Any]:
     """群益 .xls 實際為 HTML table。"""
     from backend.ingest.html_parser import parse_html_table
@@ -457,6 +464,8 @@ def analyze_html_xls(path: Path) -> dict[str, Any]:
         "valid_trade_count": len(valid),
         "excluded_row_count": len(excluded),
         "excluded_rows": excluded,
+        # GOLD-CR-10 擴充未驗證：不得用 0 冒充已分計
+        "invalid_row_count": unresolved_invalid_row_count("html_table_xls"),
         "duplicate_row_count": duplicate_row_count,
         "symbol_count": len(per_symbol),
         "per_symbol": dict(sorted(per_symbol.items())),
@@ -547,6 +556,8 @@ def analyze_esun_xlsx(path: Path) -> dict[str, Any]:
         "valid_trade_count": len(valid),
         "excluded_row_count": len(excluded),
         "excluded_rows": excluded,
+        # GOLD-CR-10 擴充未驗證：不得用 0 冒充已分計
+        "invalid_row_count": unresolved_invalid_row_count("esun_xlsx"),
         "duplicate_row_count": duplicate_row_count,
         "symbol_count": len(per_symbol),
         "per_symbol": dict(sorted(per_symbol.items())),
@@ -558,6 +569,7 @@ def analyze_esun_xlsx(path: Path) -> dict[str, Any]:
         "known_limitations": [
             "header_row_count 對玉山 parser 未對外暴露 → UNKNOWN",
             "2236 若缺買進不得與群益混配、不得自造期初（Owner 決策）",
+            "invalid_row_count 尚未與 CSV 同等分計 → UNKNOWN",
         ],
     }
 
@@ -1513,7 +1525,7 @@ def main() -> None:
         known_limitations=[
             "CSV 為 A 層來源；不得以 DB 正規化列取代 A",
             "raw_row_id／trade_id／batch 僅存在於 DB（標 NOT_IN_SOURCE）",
-            "獨立 C 財務預期尚未建立（Phase 2 未授權）",
+            "獨立 C 見 data/golden/expected_c/GOLD-001.json（本機；Phase 2）",
             "非法列（invalid）與排除列（excluded）分開統計；有非法列不得完整 PASS",
         ],
         db_batch_id=cc_2024.get("batch_id"),
@@ -1541,7 +1553,9 @@ def main() -> None:
         physical_row_count_note=capital_xls["physical_row_count_note"],
         valid_trade_count=capital_xls["valid_trade_count"],
         excluded_row_count=capital_xls["excluded_row_count"],
-        invalid_row_count=capital_xls.get("invalid_row_count", 0),
+        invalid_row_count=capital_xls.get(
+            "invalid_row_count", unresolved_invalid_row_count("html_table_xls")
+        ),
         duplicate_row_count=capital_xls["duplicate_row_count"],
         symbol_count=capital_xls["symbol_count"],
         contains_2236=capital_xls["contains_2236"],
@@ -1551,8 +1565,8 @@ def main() -> None:
         known_limitations=[
             "預期 65／7 舊約數作廢；以本 Manifest 精確計數為準",
             "physical_row_count 採 HTML <tr> 數，非純文字列",
-            "獨立 C 未建立",
-            "GOLD-CR-10 列級非法分類目前以 capital CSV 路徑為主；HTML-xls 沿用 parser 排除",
+            "獨立 C 見 data/golden/expected_c/（本機）",
+            "GOLD-CR-10 列級非法分類目前以 capital CSV 路徑為主；HTML-xls invalid_row_count=UNKNOWN",
         ],
     )
     write_json(MANIFEST_DIR / "GOLD-002.json", m002)
@@ -1580,7 +1594,9 @@ def main() -> None:
         header_row_count=esun["header_row_count"],
         valid_trade_count=esun["valid_trade_count"],
         excluded_row_count=esun["excluded_row_count"],
-        invalid_row_count=esun.get("invalid_row_count", 0),
+        invalid_row_count=esun.get(
+            "invalid_row_count", unresolved_invalid_row_count("esun_xlsx")
+        ),
         duplicate_row_count=esun["duplicate_row_count"],
         symbol_count=esun["symbol_count"],
         contains_2236=esun["contains_2236"],
@@ -1591,7 +1607,8 @@ def main() -> None:
         + [
             "預期 65／8 舊約數作廢；以本 Manifest 精確計數為準（valid=65／symbol=8 已重核）",
             "2236 僅現股賣出 2 筆、缺買進；不與群益混配；不自造期初",
-            "獨立 C 未建立",
+            "獨立 C 見 data/golden/expected_c/（本機）",
+            "invalid_row_count=UNKNOWN（未與 CSV 同等分計）",
         ],
         symbol_2236_side_note="SELL_ONLY_2_ROWS_NO_BUY",
     )
@@ -1711,7 +1728,9 @@ def main() -> None:
                 "physical_row_count": capital_xls["physical_row_count"],
                 "valid_trade_count": capital_xls["valid_trade_count"],
                 "excluded_row_count": capital_xls["excluded_row_count"],
-                "invalid_row_count": capital_xls.get("invalid_row_count", 0),
+                "invalid_row_count": capital_xls.get(
+                    "invalid_row_count", unresolved_invalid_row_count("html_table_xls")
+                ),
                 "duplicate_row_count": capital_xls["duplicate_row_count"],
                 "symbol_count": capital_xls["symbol_count"],
                 "contains_2236": capital_xls["contains_2236"],
@@ -1720,7 +1739,9 @@ def main() -> None:
                 "physical_row_count": esun["physical_row_count"],
                 "valid_trade_count": esun["valid_trade_count"],
                 "excluded_row_count": esun["excluded_row_count"],
-                "invalid_row_count": esun.get("invalid_row_count", 0),
+                "invalid_row_count": esun.get(
+                    "invalid_row_count", unresolved_invalid_row_count("esun_xlsx")
+                ),
                 "duplicate_row_count": esun["duplicate_row_count"],
                 "symbol_count": esun["symbol_count"],
                 "contains_2236": esun["contains_2236"],

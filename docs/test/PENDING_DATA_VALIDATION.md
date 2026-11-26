@@ -24,15 +24,15 @@
 |---|---|
 | CR ID | GOLD-CR-10（擴充） |
 | 問題名稱 | capital CSV 已 invalid／excluded 分計並阻擋 PASS；HTML-xls／玉山尚未同等分類 |
-| 程式位置 | `classify_capital_csv_row`／`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate`；`analyze_html_xls`／玉山分析仍沿用 parser 排除 |
-| 目前行為 | CSV 路徑：非法列保留 source_path／physical_line／reason；交叉與 summary 有非法列 → FAIL |
-| 已驗證範圍 | 純函式＋合成列／合成 SQLite（非法列阻擋完整 PASS） |
+| 程式位置 | `classify_capital_csv_row`／`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate`；`analyze_html_xls`／`analyze_esun_xlsx`／`unresolved_invalid_row_count` |
+| 目前行為 | CSV 路徑：非法列分開統計並可阻擋 PASS；HTML／玉山 **`invalid_row_count=UNKNOWN`**（不得預設 0） |
+| 已驗證範圍 | 純函式＋合成列／合成 SQLite（CSV 非法列阻擋）；UNKNOWN 語意單元測 |
 | 未驗證範圍 | HTML-xls／玉山真實來源之同等 invalid 分計與阻擋 |
 | 缺少資料 | 無需新交易測資；待對齊既有 parser 排除語意後擴充 |
-| 資料齊全後 | 三來源統一 invalid≠excluded；有非法列不得 PASS |
+| 資料齊全後 | 三來源統一 invalid≠excluded；有非法列不得 PASS；Manifest 改回整數計數 |
 | 未來驗收條件 | 任一來源 invalid_row_count>0 → 盤點／交叉非完整成功 |
-| 重新啟動條件 | Owner 授權擴充非 CSV 路徑分類 |
-| 目前狀態 | PENDING_DATA（CSV 核心已結；其他格式擴充待辦） |
+| 重新啟動條件 | Owner 授權擴充非 CSV 路徑分類（不重開 Phase 0／1 基礎建設） |
+| 目前狀態 | PENDING_DATA（CSV 核心已結；其他格式擴充待辦；已標 UNKNOWN） |
 
 ## GOLD-CR-05：尚缺來源欄位的完整性驗證
 
@@ -105,14 +105,14 @@
 | CR ID | GOLD-FIN-EDGE |
 | 問題名稱 | 零股、尾差、部分配對、跨年等真實逐筆財務邊界 |
 | 程式位置 | `scripts/uat_fifo_same_day_2236.py`::`verify_detail_xlsx_finance`；報表投影（CR-10A 仍開） |
-| 目前行為 | 合成／骨架驗證；**不得**當獨立 C |
-| 已驗證範圍 | 匿名／合成故障注入 |
-| 未驗證範圍 | 真實帳戶逐筆邊界全覆蓋 |
-| 缺少資料 | 對應邊界之真實對帳單與獨立 C |
-| 資料齊全後 | Phase 2＋獨立 C 後再綁定真實驗收 |
+| 目前行為 | Phase 2 已有本機獨立 C 彙總／FIFO／損益；Excel 逐欄與 CR-10A 尚未綁定 |
+| 已驗證範圍 | 匿名／合成故障注入；合成 C 層契約測 |
+| 未驗證範圍 | 真實帳戶逐筆邊界全覆蓋；C↔Excel 逐欄 |
+| 缺少資料 | 對應邊界之真實對帳單片段（不得為滿足 CR 而自造） |
+| 資料齊全後 | 以本機 C 綁定 CR-10A／UAT 真實驗收 |
 | 未來驗收條件 | 獨立 C 與 Excel 逐欄一致；缺資料不預設 PASS |
-| 重新啟動條件 | Phase 2 授權且來源鎖定 |
-| 目前狀態 | PENDING_DATA |
+| 重新啟動條件 | 獨立 Reviewer 通過後接 CR-10A；來源鎖定 |
+| 目前狀態 | PENDING_DATA（Phase 2 C 已建；邊界／CR-10A 仍待） |
 
 ## 延期（DEFERRED；本輪非阻擋）
 

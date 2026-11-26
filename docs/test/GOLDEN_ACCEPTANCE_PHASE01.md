@@ -1,6 +1,6 @@
 # 真實交易黃金驗收 — Phase 0／1（R1.0）
 
-> **狀態**：Phase 0／1 **基礎開發收尾**（待 Owner 確認進入 Phase 2）；**CR-10A 仍未結案**；Phase 2＋未授權。
+> **狀態**：Phase 0／1 **已收尾**；Owner 已授權 **Phase 2**（見 `GOLDEN_ACCEPTANCE_PHASE02.md`）。**CR-10A 仍未結案**。
 > **本文件**：非敏感技術規範與公開摘要。**禁止**貼入真實交易明細、帳戶號碼、完整交叉核對列。
 
 ## 0. Phase 0／1 收斂摘要
@@ -36,9 +36,10 @@ CR-10A／10B／10C；Manifest Pydantic／mypy／Hypothesis／Mutation／完整�
 
 ### 剩餘風險
 
-- 獨立 C（Phase 2）未建；不得以 B／受測 D 反推答案。
-- HTML-xls／玉山路徑尚未套用與 capital CSV 同等之 invalid 分計（已標記 limitation）。
-- 正式 DB／真實 Manifest 僅本機；公開 Git 無真實明細。
+- 獨立 C 已本機產出（Phase 2）；仍不得以 B／受測 D 反推或覆寫 C。
+- HTML-xls／玉山 `invalid_row_count` 已標 **UNKNOWN**（未與 CSV 同等分計）。
+- 正式 DB／真實 Manifest／expected_c 僅本機；公開 Git 無真實明細。
+- CR-10A 財務驗證器尚未接回。
 
 ## 1. 授權與停止條件
 
@@ -46,7 +47,7 @@ CR-10A／10B／10C；Manifest Pydantic／mypy／Hypothesis／Mutation／完整�
 |---|---|
 | Phase 0 INV-01～05 | 已完成（本機 evidence） |
 | Phase 1 Manifest／索引／布局 | 已完成（本機 `data/golden/`，gitignored） |
-| Phase 2 獨立 C | **未授權**（待 Owner 確認） |
+| Phase 2 獨立 C | **已授權並本機產出**（見 Phase 02 文件） |
 | Commit／Push（非敏感碼與文件） | 依 Owner 授權執行；≠ 獨立審查通過 |
 | Merge／正式 Migration／寫入正式 DB | **禁止** |
 
@@ -56,7 +57,7 @@ CR-10A／10B／10C；Manifest Pydantic／mypy／Hypothesis／Mutation／完整�
 |---|---|---|
 | **A** | 原始來源（CSV／HTML-xls／XLSX） | 指紋＋Manifest 鎖定 |
 | **B** | 舊版報表／已知偏差索引 | `baseline_b`（非答案） |
-| **C** | 獨立標準答案（A＋SPEC／Decimal） | **目錄保留未驗收** |
+| **C** | 獨立標準答案（A＋SPEC／Decimal） | **Phase 2 本機 `expected_c/`** |
 | **D** | 新版執行輸出 | 後續 |
 
 停止以平均拆分總額、人工虛假多列、舊版錯誤 DRAFT 作為財務正向依據。
