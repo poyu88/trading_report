@@ -63,6 +63,7 @@ class AllocationView:
     sell_trade_id: str
     quantity: int
     sequence_no: int
+    match_type: str = "STANDARD_FIFO"
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class FifoTraceRow:
     profit: Decimal | None
     broker: str
     note: str | None = None
+    match_type: str | None = None
 
 
 def project_detail_rows(
@@ -359,9 +361,16 @@ def project_fifo_trace_rows(
         for a, part in zip(alist, matched_parts, strict=True):
             sell_gross_by_alloc[a.allocation_id] = part
 
+    alloc_match_type = {a.allocation_id: a.match_type for a in alloc_list}
+
     trace: list[FifoTraceRow] = []
     for r in detail_rows:
         if r.allocation_id:
+            mt = alloc_match_type.get(r.allocation_id)
+            note = r.note
+            if mt and mt != "STANDARD_FIFO":
+                stage_note = f"match_type={mt}"
+                note = f"{note}; {stage_note}" if note else stage_note
             trace.append(
                 FifoTraceRow(
                     row_kind="MATCHED",
@@ -384,7 +393,8 @@ def project_fifo_trace_rows(
                     income=r.income,
                     profit=r.profit,
                     broker=r.broker,
-                    note=r.note,
+                    note=note,
+                    match_type=mt,
                 )
             )
         else:

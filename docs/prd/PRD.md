@@ -114,10 +114,11 @@
 - 以「**帳戶＋股票代號＋幣別＋相容交易類別（CASH／DAY_TRADE）**」分組，買進依確定的成交先後形成持倉批次（lot）。
 - 賣出先配對時間最早、尚有剩餘數量的買進；完全結清則向下一買進續配。
 - 支援一買對多賣、一賣對多買、部分賣出、未結清買進；買賣量必須守恆（含核准 `opening_lots` 供給）。
-- **CASH**：不得把賣出配對到未來買進（含同日當日買）。同日採「開盤前庫存優先沖減 → 賣完再入庫當日買」；即使有成交時間亦不依真實時間穿插買賣。同日缺序**不再**列 `ORDER_AMBIGUITY`；庫存不足列 `INSUFFICIENT_PRIOR_BUYS`，且不得自動改為 DAY_TRADE。
+- **CASH（Two-Pass）**：不得把賣出配對到**跨日**未來買進。同日採「Pass 1：開盤前庫存優先沖減 → 賣完再入庫當日買；Pass 2：以該日尚未消耗之 BUY lot 補沖仍未配對之 SELL（`SAME_DAY_RECONCILED`）」。即使有成交時間亦不依真實時間穿插買賣（Pass 1 序不變）。同日缺序**不再**列 `ORDER_AMBIGUITY`；Pass 2 後仍不足列 `INSUFFICIENT_PRIOR_BUYS`，且不得自動改為 DAY_TRADE、不得跨日補沖。
 - **DAY_TRADE**：僅同日配對；同日無序時以「當日 BUY 建 lot → 當日 SELL FIFO」處理（含先賣後買）；lot 不跨日、不跨 CASH。
+- **Independent Day-Trade Annotation**：僅供稽核註記（與 match_type 分欄）；不得改寫配對或財務結果；稅減半為輔助證據。
 - 期初已有持股、但缺少原始買進時：先產生缺少歷史庫存例外；日後可透過明確匯入／核准的 `opening_lots` 補正，不得虛構買價。
-- FIFO 配對儲存在獨立的版本化結果資料表，重算不改寫原始交易；現行演算法版本字串為 `fifo_v2_cash_prior_inventory`（`config_json.cash_same_day_policy=prior_inventory_first`）。
+- FIFO 配對儲存在獨立的版本化結果資料表，重算不改寫原始交易；現行演算法版本字串為 `fifo_v3_two_pass_same_day_reconcile`（`config_json.cash_same_day_policy=prior_inventory_then_same_day_reconcile`）。
 
 ### FR-05：費用與計算（P0）
 - 原始交易的手續費、交易稅、利息等保留原金額，**不按股數比例分攤費用**。
@@ -217,7 +218,7 @@
 3. 一買多賣、一賣多買、部分賣出、未售尾數、完整結清結果及總股數守恆。
 4. 來源手續費與交易稅在每筆交易各只出現一次，總額守恆；費用不是按數量分攤。
 5. 賣出早於所有已知買進時報缺少期初庫存，不配對未來買進。
-6. 同日 CASH：以開盤前庫存沖減賣出後再入庫當日買；庫存不足時 `INSUFFICIENT_PRIOR_BUYS`（不因缺時間／序號改標 `ORDER_AMBIGUITY`）。僅明確標示 DAY_TRADE 才做當日買賣互沖。
+6. 同日 CASH：Pass 1 開盤前庫存優先沖減後再入庫當日買；Pass 2 允許同日未用 BUY 補沖未配 SELL；仍不足時 `INSUFFICIENT_PRIOR_BUYS`（不因缺時間／序號改標 `ORDER_AMBIGUITY`）。僅明確標示 DAY_TRADE 才走現沖池；不得因補沖而改寫來源為 DAY_TRADE。
 7. 無相容帳戶或無同股票代號時，不跨帳戶或不同股票配對。
 8. 每次輸出明細 `.xlsx`：**僅一列表頭＋全部明細列，沒有末列小計／總計**；A～W 型別檢查通過。
 9. 空值是真正空白，買賣價格／股數／金額為數值，日期為 Excel 日期；股票代號為文字。
@@ -235,7 +236,7 @@
 
 ## 11. 未確認的業務決策（Agent 不得自行假定）
 
-1. 只有成交日期而缺時間時，同日 CASH 買賣如何判定成交順序？**已定案：採開盤前庫存優先沖減（先賣後入庫當日買）；不足則 `INSUFFICIENT_PRIOR_BUYS`，不再因缺序標 `ORDER_AMBIGUITY`。**
+1. 只有成交日期而缺時間時，同日 CASH 買賣如何判定成交順序？**已定案：Pass 1 採開盤前庫存優先沖減（先賣後入庫當日買）；Pass 2 以同日未用 BUY 補沖未配 SELL；仍不足則 `INSUFFICIENT_PRIOR_BUYS`，不再因缺序標 `ORDER_AMBIGUITY`。**
 2. 期初持倉的來源、成本基礎如何確認？**預設不得從舊彙總表猜測買價或來源成交。**
 3. 帳戶與跨券商移轉規則？**預設不得跨帳戶 FIFO。**
 4. `實際報酬率`、`大盤連動性` 原先的明確算法？**預設留空，不臆測。**

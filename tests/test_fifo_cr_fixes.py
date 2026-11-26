@@ -145,7 +145,7 @@ def _mit(
 
 
 def test_cr01_algorithm_version_is_cash_prior_inventory_v2() -> None:
-    assert ALGORITHM_VERSION == "fifo_v2_cash_prior_inventory"
+    assert ALGORITHM_VERSION == "fifo_v3_two_pass_same_day_reconcile"
 
 
 def test_cr01_new_run_writes_version_and_policy(db_session) -> None:
@@ -169,9 +169,9 @@ def test_cr01_new_run_writes_version_and_policy(db_session) -> None:
     run, result = match_fifo_for_account(db_session, account.id)
     db_session.commit()
     assert not result.blocking
-    assert run.algorithm_version == "fifo_v2_cash_prior_inventory"
+    assert run.algorithm_version == "fifo_v3_two_pass_same_day_reconcile"
     cfg = json.loads(run.config_json)
-    assert cfg.get("cash_same_day_policy") == "prior_inventory_first"
+    assert cfg.get("cash_same_day_policy") == "prior_inventory_then_same_day_reconcile"
 
 
 def test_cr01_rerun_keeps_old_run_immutable(db_session) -> None:
@@ -230,7 +230,7 @@ def test_cr01_rerun_keeps_old_run_immutable(db_session) -> None:
             select(AllocationRun).where(AllocationRun.account_id == account.id)
         )
     }
-    assert "fifo_v2_cash_prior_inventory" in versions
+    assert "fifo_v3_two_pass_same_day_reconcile" in versions
 
 
 # --- CR-02：期初庫存數量守恆 ---

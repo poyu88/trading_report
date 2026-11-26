@@ -20,7 +20,7 @@ from backend.db.models import (
     TradeRow,
 )
 from backend.domain.exceptions import BlockingExceptionError
-from backend.domain.models import LotRemaining, txt_to_decimal
+from backend.domain.models import Allocation, LotRemaining, Trade, txt_to_decimal
 from backend.reports.audit_writer import write_audit_files
 from backend.reports.conservation_writer import write_conservation_csv
 from backend.reports.detail_projector import (
@@ -32,6 +32,7 @@ from backend.reports.detail_projector import (
 )
 from backend.reports.detail_writer import write_detail_xlsx
 from backend.reports.fifo_trace_writer import write_fifo_trace_xlsx
+from backend.services.day_trade_annotation import annotate_day_trades, annotation_to_audit_dict
 from backend.services.reconciliation import build_audit
 from backend.services.report_finance import (
     collect_amount_conservation_issues,
@@ -54,7 +55,27 @@ def generate_detail_report(
     *,
     allow_partial: bool = False,
     run_id: str | None = None,
+    include_day_trade_annotation: bool = True,
 ) -> tuple[Path, Path, Path]:
+    """產生明細 Excel、audit.json 與 exceptions.csv。
+
+    Args:
+        session: DB session。
+        account_id: 帳戶 ID。
+        output_dir: 報表輸出目錄。
+        allow_partial: True 時 blocking 改產 DRAFT。
+        run_id: 指定 allocation run；預設取最新。
+        include_day_trade_annotation: 是否附掛 Layer 3 annotation（預設 True）。
+
+    Returns:
+        ``(xlsx_path, audit_path, exceptions_path)``。
+
+    Side Effects:
+        寫入 ``output_dir`` 檔案並新增 ``ReportRun`` 列。
+
+    Financial invariants:
+        Annotation 失敗僅寫入 audit warnings，不中斷已產出之 detail／trace／conservation。
+    """
     account = session.scalar(
         select(Account)
         .options(joinedload(Account.broker))
@@ -122,6 +143,7 @@ def generate_detail_report(
             sell_trade_id=a.sell_trade_id,
             quantity=a.allocated_quantity,
             sequence_no=a.sequence_no,
+            match_type=getattr(a, "match_type", None) or "STANDARD_FIFO",
         )
         for a in allocations
     ]
@@ -170,6 +192,65 @@ def generate_detail_report(
         # 超容許差不得讓 conservation_ok 維持 true
         audit.conservation_ok = False
 
+    annotation_extra: dict = {}
+    if include_day_trade_annotation:
+        # CR-04：專用資料準備／分析／serialization 全包於例外邊界；OFF 時不執行
+        try:
+            domain_trades = [
+                Trade(
+                    trade_id=t.id,
+                    account_id=t.account_id,
+                    source_row_id=t.raw_row_id,
+                    symbol=t.symbol,
+                    name=t.name,
+                    trade_date=date.fromisoformat(t.trade_date),
+                    trade_time=None,
+                    trade_sequence=t.trade_sequence,
+                    side=t.side,  # type: ignore[arg-type]
+                    trade_type=t.trade_type,  # type: ignore[arg-type]
+                    currency=t.currency,
+                    quantity=t.quantity,
+                    unit_price=txt_to_decimal(t.unit_price_txt),
+                    gross_amount=txt_to_decimal(t.gross_amount_txt),
+                    commission=txt_to_decimal(t.commission_txt),
+                    tax=txt_to_decimal(t.tax_txt),
+                    interest=txt_to_decimal(t.interest_txt),
+                    net_settlement=(
+                        txt_to_decimal(t.net_settlement_txt)
+                        if t.net_settlement_txt
+                        else None
+                    ),
+                )
+                for t in trades
+            ]
+            domain_allocs = [
+                Allocation(
+                    run_id=run.id,
+                    allocation_id=a.id,
+                    buy_trade_id=a.buy_trade_id,
+                    opening_lot_id=a.opening_lot_id,
+                    sell_trade_id=a.sell_trade_id,
+                    quantity=a.allocated_quantity,
+                    sequence_no=a.sequence_no,
+                    match_type=getattr(a, "match_type", None) or "STANDARD_FIFO",
+                )
+                for a in allocations
+            ]
+            annotation_extra = annotation_to_audit_dict(
+                annotate_day_trades(domain_trades, domain_allocs)
+            )
+        except Exception as exc:  # noqa: BLE001 — 報表不得因註記失敗中斷
+            annotation_extra = {
+                "day_trade_annotation": {
+                    "rules_version": "unknown",
+                    "status": "FAILED",
+                    "suspected_day_trade_qty": 0,
+                    "same_day_reconciled_qty": 0,
+                    "candidates": [],
+                    "warnings": [f"ANNOTATION_FAILED:{type(exc).__name__}"],
+                }
+            }
+
     audit_path, exc_path = write_audit_files(
         xlsx_path,
         audit,
@@ -180,6 +261,7 @@ def generate_detail_report(
             "fifo_trace_file": str(trace_path),
             "conservation_file": str(conservation_path),
             "amount_conservation_issue_count": len(amount_issues),
+            **annotation_extra,
         },
     )
 

@@ -12,7 +12,8 @@ SOURCE_ARCHIVE_DIR = PROJECT_ROOT / "data" / "source_archive"
 BACKUP_DIR = PROJECT_ROOT / "data" / "backups"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output"
 
-ALGORITHM_VERSION = "fifo_v2_cash_prior_inventory"
+ALGORITHM_VERSION = "fifo_v3_two_pass_same_day_reconcile"
+CASH_SAME_DAY_POLICY = "prior_inventory_then_same_day_reconcile"
 REPORT_SCHEMA_VERSION = "detail_aw_v1"
 
 

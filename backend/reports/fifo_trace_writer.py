@@ -31,6 +31,7 @@ HEADERS = [
     "buy_trade_id",
     "sell_trade_id",
     "allocation_id",
+    "match_type",
     "券商",
     "備註",
 ]
@@ -76,6 +77,7 @@ def write_fifo_trace_xlsx(
             row.buy_trade_id,
             row.sell_trade_id,
             row.allocation_id,
+            row.match_type,
             row.broker,
             row.note,
         ]
@@ -86,10 +88,13 @@ def write_fifo_trace_xlsx(
             if c_idx == 2:
                 cell.number_format = "@"
 
-    for i, w in enumerate([14, 10, 12, 8, 12, 12, 10, 10, 12, 10, 10, 8, 12, 12, 10, 36, 36, 36, 10, 40], start=1):
+    for i, w in enumerate(
+        [14, 10, 12, 8, 12, 12, 10, 10, 12, 10, 10, 8, 12, 12, 10, 36, 36, 36, 22, 10, 40],
+        start=1,
+    ):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:T{max(1, len(rows) + 1)}"
+    ws.auto_filter.ref = f"A1:U{max(1, len(rows) + 1)}"
 
     wb.save(tmp_path)
     tmp_path.replace(final_path)
