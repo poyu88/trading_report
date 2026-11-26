@@ -18,25 +18,34 @@ from backend.services.fifo_matcher import MATCH_TYPE_SAME_DAY
 TAX_RULES_VERSION = "tw_sec_tax_v3"
 
 # 台股證交稅規則表（版本化；禁止呼叫端硬編碼）
-# 來源：證交稅條例一般股票稅率；現股當沖半稅自 2017-04-28 起適用於一般股票。
-# 取整：ROUND_HALF_UP；容差：1 元（券商列印／取整差異）。
-# 本層為最小可驗證適用範圍，非完整稅務引擎；
-# ETF／未知商品／生效日前／規則有效窗外 → INSUFFICIENT。
+# 官方來源（核實日 2026-11-26；輔助分析用，非完整稅務引擎）：
+# - 證券交易稅條例一般股票稅率 0.3%
+# - 現股當沖減半（0.15%）自 2017-04-28 起適用於一般股票（非 ETF／特殊商品）
+# 取整／容差：ROUND_HALF_UP＋1 元為**輔助分析假設**（券商列印／取整差異），
+#   非法定取整條文之完整引用；不得視為已確認官方計算規範。
+# `_TAX_RULES_VALID_THROUGH`＝本版規則表**程式保守核實期限**（非法令日落日）；
+#   次日／未來未知規則 → INSUFFICIENT_EVIDENCE。
 # 四碼啟發式僅推論 INFERRED_TW_COMMON_STOCK，不得宣稱已確認普通股。
 _TAX_RULES: dict[str, Decimal] = {
     "STANDARD_RATE": Decimal("0.003"),
     "DAY_TRADE_HALF_RATE": Decimal("0.0015"),
 }
-_TAX_TOLERANCE = Decimal(1)  # 元；容許取整差異（tax_tolerance_twd=1）
+_TAX_TOLERANCE = Decimal(1)  # 元；輔助分析假設
 _TAX_ROUNDING = "ROUND_HALF_UP"
+_TAX_ROUNDING_BASIS = "auxiliary_analysis_assumption"
+_TAX_TOLERANCE_BASIS = "auxiliary_broker_print_rounding_assumption"
 _HALF_RATE_EFFECTIVE_FROM = date(2017, 4, 28)
-# tw_sec_tax_v3 規則表有效窗末日（含當日）；次日視為未來未知規則
+# 程式保守核實期限（含當日）；≠ 法定期限／政策日落日
 _TAX_RULES_VALID_THROUGH = date(2026, 12, 31)
+_TAX_RULES_SOURCE_VERIFIED_ON = date(2026, 11, 26)
 _ELIGIBLE_INSTRUMENT_CLASSES = frozenset({"INFERRED_TW_COMMON_STOCK"})
 _TAX_RULE_SOURCE = (
-    "TWSE/TPEx securities transaction tax; day-trade half-rate for common stock "
-    f"effective {_HALF_RATE_EFFECTIVE_FROM.isoformat()} "
-    f"through {_TAX_RULES_VALID_THROUGH.isoformat()} (inferred instrument class only)"
+    "TW Securities Transaction Tax Act (common-stock 0.3%); "
+    "day-trade half-rate 0.15% for eligible common stock "
+    f"from {_HALF_RATE_EFFECTIVE_FROM.isoformat()}; "
+    f"rule-table program verified through {_TAX_RULES_VALID_THROUGH.isoformat()} "
+    f"(verified_on={_TAX_RULES_SOURCE_VERIFIED_ON.isoformat()}; "
+    "inferred instrument class only; not a statutory sunset)"
 )
 
 
@@ -142,16 +151,18 @@ def _sell_tax_evidence(sell: Trade) -> str:
         ``HALF_RATE``｜``STANDARD_RATE``｜``AMBIGUOUS_TAX_EVIDENCE``｜
         ``INSUFFICIENT_EVIDENCE``。
 
-    Tax applicability（全部滿足才比對規則表）:
+    Tax applicability（期間須分開理解）:
         - ``currency=TWD``、``trade_type=CASH``、``gross_amount > 0``
         - 商品分類 ∈ ``INFERRED_TW_COMMON_STOCK``（啟發式；非主檔驗證）
-        - 交易日 ∈ ``[_HALF_RATE_EFFECTIVE_FROM, _TAX_RULES_VALID_THROUGH]``
-          才可比對 HALF_RATE；有效窗外 → ``INSUFFICIENT_EVIDENCE``
-        - 生效日前僅能比對 STANDARD_RATE（仍須落在有效窗內）
+        - ``trade_date > _TAX_RULES_VALID_THROUGH``（程式核實期限次日／未來）
+          → 一律 ``INSUFFICIENT_EVIDENCE``（未知未來規則）
+        - **一般稅（STANDARD_RATE）**：核實期限內、且分類適用時可比對
+        - **減半稅（HALF_RATE）**：另須 ``trade_date >= _HALF_RATE_EFFECTIVE_FROM``
+        - 減半生效日前：僅可比對 STANDARD_RATE，不得推論 HALF_RATE
 
     Uncertainty:
         若同時落入半稅與全稅容差 → ``AMBIGUOUS_TAX_EVIDENCE``（優先於 HALF_RATE）。
-        取整 ``ROUND_HALF_UP``、容差 1 元。
+        取整／容差為輔助分析假設（見 ``_TAX_ROUNDING_BASIS``）。
     """
     if sell.side != "SELL":
         return "INSUFFICIENT_EVIDENCE"
@@ -159,7 +170,7 @@ def _sell_tax_evidence(sell: Trade) -> str:
         return "INSUFFICIENT_EVIDENCE"
     if sell.gross_amount <= 0:
         return "INSUFFICIENT_EVIDENCE"
-    # 規則有效窗外（含未來未知規則）不得套用本版稅表
+    # 程式核實期限外（含未來未知規則）不得套用本版稅表
     if sell.trade_date > _TAX_RULES_VALID_THROUGH:
         return "INSUFFICIENT_EVIDENCE"
 
@@ -182,7 +193,7 @@ def _sell_tax_evidence(sell: Trade) -> str:
             return "STANDARD_RATE"
         return "INSUFFICIENT_EVIDENCE"
 
-    # 生效日前：不得推論 HALF_RATE
+    # 減半生效日前：僅一般稅可比對；不得推論 HALF_RATE
     if near_full:
         return "STANDARD_RATE"
     return "INSUFFICIENT_EVIDENCE"
@@ -268,11 +279,14 @@ def _annotate_day_trades_impl(
         if min(buy_qty, sell_qty) <= 0:
             continue
 
-        # 組級分類：以第一筆賣出名稱／代號啟發式（組內同 symbol）
-        sample = sells[0]
-        instrument_class, classification_basis = _classify_instrument(
-            sample.symbol, sample.name
-        )
+        # 組級分類：彙總全部賣出證據；衝突時標 MIXED，不得任取 sells[0]
+        class_pairs = [_classify_instrument(s.symbol, s.name) for s in sells]
+        distinct_classes = {c for c, _ in class_pairs}
+        if len(distinct_classes) > 1:
+            instrument_class = "MIXED_INSTRUMENT_EVIDENCE"
+            classification_basis = "conflicting_sell_evidence"
+        else:
+            instrument_class, classification_basis = class_pairs[0]
 
         sell_evidence = [(s, _sell_tax_evidence(s)) for s in sells]
         evidence_flags = {ev for _, ev in sell_evidence}
@@ -288,7 +302,12 @@ def _annotate_day_trades_impl(
         match_label = MATCH_TYPE_SAME_DAY if day_recon > 0 else "NONE"
 
         uncertainty = ""
-        if "AMBIGUOUS_TAX_EVIDENCE" in evidence_flags:
+        if instrument_class == "MIXED_INSTRUMENT_EVIDENCE":
+            tax_evidence = "INSUFFICIENT_EVIDENCE"
+            status = "INSUFFICIENT_EVIDENCE"
+            support = 0
+            uncertainty = "instrument_classification_conflict"
+        elif "AMBIGUOUS_TAX_EVIDENCE" in evidence_flags:
             tax_evidence = "AMBIGUOUS_TAX_EVIDENCE"
             status = "AMBIGUOUS_TAX_EVIDENCE"
             support = 0
@@ -388,8 +407,12 @@ def annotation_to_audit_dict(result: DayTradeAnnotationResult) -> dict:
             "tax_rule_source": _TAX_RULE_SOURCE,
             "half_rate_effective_from": _HALF_RATE_EFFECTIVE_FROM.isoformat(),
             "tax_rules_valid_through": _TAX_RULES_VALID_THROUGH.isoformat(),
+            "tax_rules_valid_through_meaning": "program_verified_through_not_statutory_sunset",
+            "tax_rules_source_verified_on": _TAX_RULES_SOURCE_VERIFIED_ON.isoformat(),
             "tax_rounding": _TAX_ROUNDING,
+            "tax_rounding_basis": _TAX_ROUNDING_BASIS,
             "tax_tolerance_twd": int(_TAX_TOLERANCE),
+            "tax_tolerance_basis": _TAX_TOLERANCE_BASIS,
             "eligible_instrument_classes": sorted(_ELIGIBLE_INSTRUMENT_CLASSES),
             "suspected_day_trade_qty": result.suspected_day_trade_qty,
             "same_day_reconciled_qty": result.same_day_reconciled_qty,

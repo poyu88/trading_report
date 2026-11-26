@@ -231,6 +231,16 @@ def test_cr02_before_half_rate_effective_date_insufficient() -> None:
     assert result.suspected_day_trade_qty == 0
 
 
+def test_cr02_before_half_rate_standard_rate_still_allowed() -> None:
+    """CR-02A：減半生效日前仍可比對一般稅 STANDARD_RATE（期間須分開）。"""
+    buy = _trade("b1", "2017-04-27", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2017-04-27", "SELL", 1000, "100", tax="300", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "STANDARD_RATE"
+    assert result.candidates[0].annotation_status == "SAME_DAY_OVERLAP_ONLY"
+    assert result.suspected_day_trade_qty == 0
+
+
 def test_cr02_on_half_rate_effective_date_allows_half() -> None:
     """CR-02：減半稅生效日當日可判 HALF_RATE。"""
     buy = _trade("b1", "2017-04-28", "BUY", 1000, "100", tax="0", symbol="2330")
@@ -267,8 +277,14 @@ def test_cr02_audit_records_classification_and_rounding() -> None:
     payload = annotation_to_audit_dict(result)["day_trade_annotation"]
     assert payload["rules_version"] == "tw_sec_tax_v3"
     assert payload["tax_rounding"] == "ROUND_HALF_UP"
+    assert payload["tax_rounding_basis"] == "auxiliary_analysis_assumption"
     assert payload["tax_tolerance_twd"] == 1
+    assert payload["tax_tolerance_basis"] == "auxiliary_broker_print_rounding_assumption"
     assert payload["tax_rules_valid_through"] == "2026-12-31"
+    assert payload["tax_rules_valid_through_meaning"] == (
+        "program_verified_through_not_statutory_sunset"
+    )
+    assert payload["tax_rules_source_verified_on"] == "2026-11-26"
     assert "INFERRED_TW_COMMON_STOCK" in payload["eligible_instrument_classes"]
     assert "TW_COMMON_STOCK" not in payload["eligible_instrument_classes"]
     cand = payload["candidates"][0]
@@ -277,6 +293,45 @@ def test_cr02_audit_records_classification_and_rounding() -> None:
     ev = cand["sell_tax_evidences"][0]
     assert ev["instrument_class"] == "INFERRED_TW_COMMON_STOCK"
     assert ev["classification_basis"] == "symbol_heuristic_4digit"
+
+
+def test_cr02c_mixed_instrument_names_not_take_first_sell() -> None:
+    """CR-02C：同 symbol 不同名稱（一筆 ETF）→ MIXED；不得任取 sells[0]。"""
+    buy = _trade("b1", "2025-05-01", "BUY", 2000, "100", tax="0", symbol="2236", name="合成2236")
+    sell_stock = _trade(
+        "s1", "2025-05-01", "SELL", 1000, "100", tax="150", symbol="2236", name="合成2236"
+    )
+    sell_etf = _trade(
+        "s2", "2025-05-01", "SELL", 1000, "100", tax="150", symbol="2236", name="某某ETF"
+    )
+    # 順序 A：先普通名再 ETF
+    r1 = annotate_day_trades([buy, sell_stock, sell_etf], allocations=[])
+    # 順序 B：先 ETF 再普通名
+    r2 = annotate_day_trades([buy, sell_etf, sell_stock], allocations=[])
+    for result in (r1, r2):
+        cand = result.candidates[0]
+        assert cand.instrument_class == "MIXED_INSTRUMENT_EVIDENCE"
+        assert cand.classification_basis == "conflicting_sell_evidence"
+        assert cand.tax_evidence == "INSUFFICIENT_EVIDENCE"
+        assert cand.annotation_status == "INSUFFICIENT_EVIDENCE"
+        assert cand.suspected_support_qty == 0
+        assert result.suspected_day_trade_qty == 0
+        classes = {e["instrument_class"] for e in cand.sell_tax_evidences}
+        assert "TW_ETF" in classes
+        assert "INFERRED_TW_COMMON_STOCK" in classes
+
+
+def test_cr02c_mixed_order_swap_stable() -> None:
+    """CR-02C：列序交換不得改變 MIXED 判定。"""
+    buy = _trade("b1", "2025-05-02", "BUY", 1000, "100", tax="0", symbol="0050", name="元大台灣50")
+    # 0050 → TW_ETF by symbol; 另造同日衝突困難，改用同四碼但名稱衝突已覆蓋。
+    # 此測：兩筆皆 ETF 名稱 → 非 MIXED，組級一致。
+    sell_a = _trade("s1", "2025-05-02", "SELL", 500, "100", tax="150", symbol="0050", name="ETF-A")
+    sell_b = _trade("s2", "2025-05-02", "SELL", 500, "100", tax="150", symbol="0050", name="ETF-B")
+    r1 = annotate_day_trades([buy, sell_a, sell_b], allocations=[])
+    r2 = annotate_day_trades([buy, sell_b, sell_a], allocations=[])
+    assert r1.candidates[0].instrument_class == r2.candidates[0].instrument_class == "TW_ETF"
+    assert r1.candidates[0].tax_evidence == r2.candidates[0].tax_evidence
 
 
 def test_cr03_ambiguous_when_both_rates_within_tolerance() -> None:

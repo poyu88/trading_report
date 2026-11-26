@@ -27,7 +27,9 @@
 - UAT **期間禁止**其他程序寫入正式 `data/trading.db`（含 `-wal`／`-shm`）。
 - 指紋比對僅適用「**無並發寫入**」前提；指紋變 → `uat_verdict=FAIL`。
 - **不**宣稱涵蓋所有並發、OS 快取、防毒／備份工具等情境。
-- Verdict 以 `build_uat_checks`（`scripts/uat_fifo_same_day_2236.py`）組裝之 **全部** `checks` 為準；反向失敗見 `tests/test_uat_fifo_same_day_verdict.py`。
+- Verdict 以 `build_uat_checks`（`scripts/uat_fifo_same_day_2236.py`）組裝之 **全部** `checks` 為準；反向失敗見 `tests/test_uat_fifo_same_day_verdict.py`／檔案層故障注入見 `tests/test_uat_fifo_same_day_file_fault.py`。
+- `detail_xlsx_finance_ok` 必須來自 `verify_detail_xlsx_finance`（讀 Excel A–W），**不得**以檔案存在／檔名非 DRAFT 預設 True。
+- 必要產出以 audit 內 `fifo_trace_file`／`conservation_file` 實際路徑驗證（`resolve_required_outputs`），不用 glob 關鍵字。
 
 ## 2. 產出清單（人工可查）
 
@@ -54,6 +56,8 @@
 | H 非干涉（財務鍵 snapshot） | true |
 | 正式 DB 指紋未變（含 WAL／SHM；無並發寫入前提） | true |
 | run／out 目錄落在對應 UAT 根 | true |
+| `detail_xlsx_finance_ok` | `verify_detail_xlsx_finance` 與 Decimal golden 全等（fail-closed） |
+| `annotation_has_warnings_key` | 序列化 annotation **必須**含 `warnings` 鍵 |
 
 必要條件失敗 → `uat_verdict=FAIL`。不得以記憶體 annotation 物件單獨作為最終判定。
 
@@ -66,7 +70,7 @@
 | `same_day_sell_trade_ids`／`half_rate_sell_trade_ids` | 區分全部同日賣 vs 半稅候選 |
 | `sell_tax_evidences` | 逐筆稅證據＋`source_row_id`＋`instrument_class`／`classification_basis` |
 | `AMBIGUOUS_TAX_EVIDENCE` | 同時近半稅／全稅 → 不標 SUSPECTED |
-| 稅規則適用 | TWD＋CASH＋有效 gross＋`INFERRED_TW_COMMON_STOCK`（啟發式≠主檔驗證）＋有效窗 2017-04-28～2026-12-31（`tw_sec_tax_v3`） |
+| 稅規則適用 | TWD＋CASH＋有效 gross＋`INFERRED_TW_COMMON_STOCK`（啟發式≠主檔驗證）；減半 ≥2017-04-28；程式核實期限至 2026-12-31（非法令日落）；組級衝突 → `MIXED_INSTRUMENT_EVIDENCE` |
 | H 非干涉 | 註記前後 allocations 業務鍵全等 |
 
 ## 5. 財務合計（合成價；非正式 Owner 真實數字）

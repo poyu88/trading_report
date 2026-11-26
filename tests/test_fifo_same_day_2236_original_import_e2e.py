@@ -3,10 +3,10 @@
 匿名群益 HTML fixture；保留原始日期／價／量／價金／費／稅／淨收付。
 不得以價×量覆蓋券商原始成交金額。正式 DB 不讀寫。
 
-Canonical 列序來源：Owner 提供之原始檔陳述序（非 RCA 合成軌跡）。
-- ``2024-08-28``：BUY → SELL(tax=145 半稅) → SELL(tax=290 全稅)
-- ``2024-09-02``：SELL(21@112) → SELL(579@111.5, gross=64558≠111.5×579)
-參數化 permutation 僅交換同日列，不要求逐筆 allocation 全等。
+Canonical 列序來源：Owner 提供之原始檔陳述序（非 RCA／合成軌跡）。
+- ``2024-08-28``：SELL(tax=145 半稅) → SELL(tax=290 全稅) → BUY
+- ``2024-09-02``：SELL(579@111.5, gross=64558≠111.5×579) → SELL(21@112)
+其他同日排列僅作 permutation；不得將非原始序宣稱為 Owner 原始序。
 """
 
 from __future__ import annotations
@@ -80,18 +80,7 @@ ORIGINAL_ROWS: list[dict[str, str | int]] = [
         "tax": "324",
         "net": "107576",
     },
-    {
-        "symbol": "2236",
-        "name": "合成2236",
-        "date": "2024/08/28",
-        "side": "BUY",
-        "price": "98",
-        "qty": 1000,
-        "gross": "98000",
-        "commission": "91",
-        "tax": "0",
-        "net": "-98091",
-    },
+    # Owner canonical 2024-08-28：半稅 SELL → 全稅 SELL → BUY
     {
         "symbol": "2236",
         "name": "合成2236",
@@ -119,15 +108,16 @@ ORIGINAL_ROWS: list[dict[str, str | int]] = [
     {
         "symbol": "2236",
         "name": "合成2236",
-        "date": "2024/09/02",
-        "side": "SELL",
-        "price": "112",
-        "qty": 21,
-        "gross": "2352",
-        "commission": "2",
-        "tax": "7",
-        "net": "2343",
+        "date": "2024/08/28",
+        "side": "BUY",
+        "price": "98",
+        "qty": 1000,
+        "gross": "98000",
+        "commission": "91",
+        "tax": "0",
+        "net": "-98091",
     },
+    # Owner canonical 2024-09-02：579@111.5 → 21@112
     {
         "symbol": "2236",
         "name": "合成2236",
@@ -139,6 +129,18 @@ ORIGINAL_ROWS: list[dict[str, str | int]] = [
         "commission": "60",
         "tax": "193",
         "net": "64305",
+    },
+    {
+        "symbol": "2236",
+        "name": "合成2236",
+        "date": "2024/09/02",
+        "side": "SELL",
+        "price": "112",
+        "qty": 21,
+        "gross": "2352",
+        "commission": "2",
+        "tax": "7",
+        "net": "2343",
     },
 ]
 
@@ -341,58 +343,10 @@ def _assert_core_invariants(ctx: dict, *, expect_suspected: bool = True) -> None
         assert cand["classification_basis"] == "symbol_heuristic_4digit"
 
 
-def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: Path) -> None:
-    """Parser→Import→FIFO→Report；Pass1=3600／Pass2=400／suspected=1000。"""
-    ctx = _run_pipeline(db_session, tmp_path, ORIGINAL_ROWS, label="orig2236")
-    trades = ctx["trades"]
+def _assert_excel_finance(ctx: dict) -> None:
+    """CR-06B：實際 Excel A–W 財務加總 vs Decimal golden（canonical／permutation 共用）。"""
     golden = ctx["golden"]
-
-    raw_ids = {t.raw_row_id for t in trades}
-    assert len(raw_ids) == 9
-    raw_ok = list(db_session.scalars(select(RawRow).where(RawRow.id.in_(raw_ids))))
-    assert len(raw_ok) == 9
-
-    # 逐筆原始欄位全等（含淨收付）
-    by_key = {
-        (
-            t.trade_date,
-            t.side,
-            t.quantity,
-            t.unit_price_txt,
-            t.tax_txt,
-        ): t
-        for t in trades
-    }
-    for r in ORIGINAL_ROWS:
-        day = str(r["date"]).replace("/", "-")
-        key = (day, str(r["side"]), int(r["qty"]), str(r["price"]), str(r["tax"]))
-        t = by_key[key]
-        assert t.gross_amount_txt == str(r["gross"])
-        assert t.commission_txt == str(r["commission"])
-        assert t.tax_txt == str(r["tax"])
-        assert t.net_settlement_txt == str(r["net"])
-
-    # 同價同量不同稅兩筆皆在庫（145／290 不去重）
-    same_day_sells = [
-        t
-        for t in trades
-        if t.side == "SELL" and t.trade_date == "2024-08-28" and t.quantity == 1000
-    ]
-    assert len(same_day_sells) == 2
-    taxes = {t.tax_txt for t in same_day_sells}
-    assert taxes == {"145", "290"}
-
-    # 不得以價×量覆寫原始成交金額
-    odd = next(t for t in trades if t.quantity == 579)
-    assert odd.gross_amount_txt == "64558"
-    assert Decimal(odd.unit_price_txt) * odd.quantity != Decimal(64558)  # 111.5*579=64558.5
-
-    _assert_core_invariants(ctx)
-
-    assert ctx["xlsx"].exists() and ctx["audit_path"].exists() and ctx["exc_path"].exists()
-    assert "DRAFT" not in ctx["xlsx"].name
-
-    # Excel A–W：以 Decimal 自九筆獨立重算 golden 比對
+    assert ctx["xlsx"].exists() and "DRAFT" not in ctx["xlsx"].name
     wb = load_workbook(ctx["xlsx"], data_only=True)
     ws = wb.active
     assert [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))] == HEADERS
@@ -415,15 +369,92 @@ def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: 
     assert buy_comm_xlsx == golden["buy_commission"]
     assert sell_comm_xlsx == golden["sell_commission"]
     assert tax_xlsx == golden["tax"]
-    # SPEC §7 費用一次落點／全配平：報表損益 = 原始淨收付合計（可追溯；不得改契約消差）
     assert profit_xlsx == golden["expected_report_profit"]
     assert profit_xlsx == golden["net_settlement_sum"]
     assert income_xlsx - cost_xlsx == profit_xlsx
 
-    # Pass1／Pass2 費用守恆（SPEC §7.2）：各來源交易費用只計一次（第一片段）；
-    # 依 allocation.match_type 歸屬後跨類型加總 = 交易合計。
-    allocs = sorted(ctx["alloc_rows"], key=lambda a: a.sequence_no)
+
+def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
+    """CR-06C：以實際 FIFO Trace（含 trade_id）核對逐筆費用落點。
+
+    第一片段才認列手續費／稅；後續片段不得重複；跨 Pass1／Pass2 加總＝交易合計。
+    """
+    trades = ctx["trades"]
+    golden = ctx["golden"]
     trade_by_id = {t.id: t for t in trades}
+    allocs = sorted(ctx["alloc_rows"], key=lambda a: a.sequence_no)
+
+    # 各來源交易已配對／未配對股數
+    matched_sell: dict[str, int] = {}
+    matched_buy: dict[str, int] = {}
+    for a in allocs:
+        if a.sell_trade_id:
+            matched_sell[a.sell_trade_id] = matched_sell.get(a.sell_trade_id, 0) + a.allocated_quantity
+        if a.buy_trade_id:
+            matched_buy[a.buy_trade_id] = matched_buy.get(a.buy_trade_id, 0) + a.allocated_quantity
+    for t in trades:
+        if t.side == "SELL":
+            assert matched_sell.get(t.id, 0) == t.quantity
+        else:
+            assert matched_buy.get(t.id, 0) == t.quantity
+
+    trace = Path(json.loads(ctx["audit_path"].read_text(encoding="utf-8"))["fifo_trace_file"])
+    assert trace.is_file()
+    twb = load_workbook(trace, data_only=True)
+    tws = twb.active
+    theaders = [c.value for c in next(tws.iter_rows(min_row=1, max_row=1))]
+    tidx = {h: i for i, h in enumerate(theaders)}
+    assert "buy_trade_id" in tidx and "sell_trade_id" in tidx
+
+    # 逐筆 SELL：Trace 上該 sell_trade_id 的手續費／稅加總＝原始交易（僅第一片段有值）
+    sell_fee_from_trace: dict[str, Decimal] = {}
+    sell_tax_from_trace: dict[str, Decimal] = {}
+    buy_fee_from_trace: dict[str, Decimal] = {}
+    fee_rows_by_sell: dict[str, int] = {}
+    for row in tws.iter_rows(min_row=2, max_col=len(theaders), values_only=True):
+        sid = row[tidx["sell_trade_id"]]
+        bid = row[tidx["buy_trade_id"]]
+        if sid:
+            if row[tidx["手續費"]] is not None:
+                fee = Decimal(str(row[tidx["手續費"]]))
+                sell_fee_from_trace[sid] = sell_fee_from_trace.get(sid, Decimal(0)) + fee
+                # 後續片段可能寫入 0（非 None）；僅非零列計為費用落點
+                if fee != 0:
+                    fee_rows_by_sell[sid] = fee_rows_by_sell.get(sid, 0) + 1
+            if row[tidx["交易稅"]] is not None:
+                sell_tax_from_trace[sid] = sell_tax_from_trace.get(sid, Decimal(0)) + Decimal(
+                    str(row[tidx["交易稅"]])
+                )
+        if bid and row[tidx["手續費"]] is not None and not sid:
+            # UNSOLD／BUY-only 列；本案例全配平，通常不走此路徑
+            buy_fee_from_trace[bid] = buy_fee_from_trace.get(bid, Decimal(0)) + Decimal(
+                str(row[tidx["手續費"]])
+            )
+
+    for t in trades:
+        if t.side != "SELL":
+            continue
+        assert sell_fee_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.commission_txt)
+        assert sell_tax_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.tax_txt)
+        # 第一片段才有費用：該 sell 有費用的列恰為 1（若佣金>0）
+        if txt_to_decimal(t.commission_txt) != 0:
+            assert fee_rows_by_sell.get(t.id, 0) == 1
+
+    assert sum(sell_fee_from_trace.values(), Decimal(0)) == golden["sell_commission"]
+    assert sum(sell_tax_from_trace.values(), Decimal(0)) == golden["tax"]
+
+    # BUY 手續費：由 detail Excel 第一買片段加總（Trace 賣列不帶買方手續費）
+    wb = load_workbook(ctx["xlsx"], data_only=True)
+    ws = wb.active
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    buy_comm_xlsx = Decimal(0)
+    for row in ws.iter_rows(min_row=2, max_col=len(headers), values_only=True):
+        if row[idx["手續費（買）"]] is not None:
+            buy_comm_xlsx += Decimal(str(row[idx["手續費（買）"]]))
+    assert buy_comm_xlsx == golden["buy_commission"]
+
+    # Pass1／Pass2：依 first allocation match_type 歸屬後加總＝交易合計
     first_sell_alloc: dict[str, FifoAllocation] = {}
     first_buy_alloc: dict[str, FifoAllocation] = {}
     for a in allocs:
@@ -431,7 +462,6 @@ def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: 
             first_sell_alloc[a.sell_trade_id] = a
         if a.buy_trade_id and a.buy_trade_id not in first_buy_alloc:
             first_buy_alloc[a.buy_trade_id] = a
-
     fee_comm_by_type: dict[str, Decimal] = {}
     fee_tax_by_type: dict[str, Decimal] = {}
     for sid, a in first_sell_alloc.items():
@@ -451,32 +481,67 @@ def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: 
     assert sum(fee_tax_by_type.values(), Decimal(0)) == golden["tax"]
     assert set(fee_comm_by_type) <= {"STANDARD_FIFO", "SAME_DAY_RECONCILED"}
 
-    # Trace 賣方手續費／稅跨 match_type 加總 = 賣方交易合計（各來源一次）
-    trace = next(ctx["out"].glob("*FIFO*"))
-    twb = load_workbook(trace, data_only=True)
-    tws = twb.active
-    theaders = [c.value for c in next(tws.iter_rows(min_row=1, max_row=1))]
-    tidx = {h: i for i, h in enumerate(theaders)}
-    sell_comm_trace = sell_tax_trace = Decimal(0)
-    for row in tws.iter_rows(min_row=2, max_col=len(theaders), values_only=True):
-        if row[tidx["手續費"]] is not None:
-            sell_comm_trace += Decimal(str(row[tidx["手續費"]]))
-        if row[tidx["交易稅"]] is not None:
-            sell_tax_trace += Decimal(str(row[tidx["交易稅"]]))
-    assert sell_comm_trace == golden["sell_commission"]
-    assert sell_tax_trace == golden["tax"]
+
+def test_cr06_canonical_owner_row_order() -> None:
+    """CR-06A：ORIGINAL_ROWS 必須為 Owner 原始列序（非合成軌跡）。"""
+    d0828 = [r for r in ORIGINAL_ROWS if r["date"] == "2024/08/28"]
+    assert [r["side"] for r in d0828] == ["SELL", "SELL", "BUY"]
+    assert [str(r["tax"]) for r in d0828] == ["145", "290", "0"]
+    d0902 = [r for r in ORIGINAL_ROWS if r["date"] == "2024/09/02"]
+    assert [int(r["qty"]) for r in d0902] == [579, 21]
+
+
+def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: Path) -> None:
+    """Parser→Import→FIFO→Report；Pass1=3600／Pass2=400／suspected=1000。"""
+    ctx = _run_pipeline(db_session, tmp_path, ORIGINAL_ROWS, label="orig2236")
+    trades = ctx["trades"]
+
+    raw_ids = {t.raw_row_id for t in trades}
+    assert len(raw_ids) == 9
+    raw_ok = list(db_session.scalars(select(RawRow).where(RawRow.id.in_(raw_ids))))
+    assert len(raw_ok) == 9
+
+    by_key = {
+        (t.trade_date, t.side, t.quantity, t.unit_price_txt, t.tax_txt): t for t in trades
+    }
+    for r in ORIGINAL_ROWS:
+        day = str(r["date"]).replace("/", "-")
+        key = (day, str(r["side"]), int(r["qty"]), str(r["price"]), str(r["tax"]))
+        t = by_key[key]
+        assert t.gross_amount_txt == str(r["gross"])
+        assert t.commission_txt == str(r["commission"])
+        assert t.tax_txt == str(r["tax"])
+        assert t.net_settlement_txt == str(r["net"])
+
+    same_day_sells = [
+        t
+        for t in trades
+        if t.side == "SELL" and t.trade_date == "2024-08-28" and t.quantity == 1000
+    ]
+    assert len(same_day_sells) == 2
+    assert {t.tax_txt for t in same_day_sells} == {"145", "290"}
+
+    odd = next(t for t in trades if t.quantity == 579)
+    assert odd.gross_amount_txt == "64558"
+    assert Decimal(odd.unit_price_txt) * odd.quantity != Decimal(64558)
+
+    _assert_core_invariants(ctx)
+    assert ctx["xlsx"].exists() and ctx["audit_path"].exists() and ctx["exc_path"].exists()
+    _assert_excel_finance(ctx)
+    _assert_per_trade_fees_from_trace(ctx)
 
     audit = json.loads(ctx["audit_path"].read_text(encoding="utf-8"))
-    cand = next(c for c in audit["day_trade_annotation"]["candidates"] if c["trade_date"] == "2024-08-28")
+    cand = next(
+        c for c in audit["day_trade_annotation"]["candidates"] if c["trade_date"] == "2024-08-28"
+    )
     half_ids = set(cand["half_rate_sell_trade_ids"])
     assert len(half_ids) == 1
-    half_tax = next(t.tax_txt for t in trades if t.id in half_ids)
-    assert half_tax == "145"
+    assert next(t.tax_txt for t in trades if t.id in half_ids) == "145"
     assert len(cand["same_day_sell_trade_ids"]) == 2
 
-    # 兩次重跑可重現
     ctx2 = _run_pipeline(db_session, tmp_path, ORIGINAL_ROWS, label="orig2236b")
     _assert_core_invariants(ctx2)
+    _assert_excel_finance(ctx2)
     by_type2: dict[str, int] = {}
     for a in ctx2["match"].allocations:
         by_type2[a.match_type] = by_type2.get(a.match_type, 0) + a.quantity
@@ -488,28 +553,36 @@ def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: 
     "label,rows",
     [
         (
-            "perm0828_sells_first",
-            # RCA／UAT 陳述序：先半稅／全稅 SELL 再 BUY
-            _permute_same_day(ORIGINAL_ROWS, "2024/08/28", [1, 2, 0]),
+            "perm0828_buy_first",
+            _permute_same_day(ORIGINAL_ROWS, "2024/08/28", [2, 0, 1]),
         ),
         (
-            "perm0828_full_then_half",
-            _permute_same_day(ORIGINAL_ROWS, "2024/08/28", [2, 1, 0]),
+            "perm0828_full_then_half_then_buy",
+            _permute_same_day(ORIGINAL_ROWS, "2024/08/28", [1, 0, 2]),
         ),
         (
             "perm0902_swap",
             _permute_same_day(ORIGINAL_ROWS, "2024/09/02", [1, 0]),
+        ),
+        (
+            "perm_both_days_owner_inverse",
+            _permute_same_day(
+                _permute_same_day(ORIGINAL_ROWS, "2024/08/28", [2, 0, 1]),
+                "2024/09/02",
+                [1, 0],
+            ),
         ),
     ],
 )
 def test_cr06_same_day_row_order_permutations(
     db_session, tmp_path: Path, label: str, rows: list[dict[str, str | int]]
 ) -> None:
-    """同日列交換仍須：9 筆、買賣 4000、Pass1=3600、Pass2=400、未售／未配 0、費用守恆。"""
+    """同日列交換仍須核心不變量＋Excel 財務＋逐筆費用（CR-06B／C）。"""
     ctx = _run_pipeline(db_session, tmp_path, rows, label=label)
     _assert_core_invariants(ctx)
+    _assert_excel_finance(ctx)
+    _assert_per_trade_fees_from_trace(ctx)
 
-    # 111.5*579 != 64558 且庫存仍為 64558
     odd = next(t for t in ctx["trades"] if t.quantity == 579)
     assert odd.gross_amount_txt == "64558"
     assert Decimal(odd.unit_price_txt) * odd.quantity != Decimal(64558)

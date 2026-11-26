@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from alembic.config import Config
+from openpyxl import load_workbook
 from sqlalchemy import create_engine, func, inspect, select, text
 
 from alembic import command
@@ -33,6 +34,7 @@ from backend.db.models import (
 )
 from backend.db.session import init_db, integrity_check, make_session_factory
 from backend.domain.models import Allocation, Trade, txt_to_decimal
+from backend.reports.field_schema import HEADERS
 from backend.services.allocation_service import match_fifo_for_account, quantity_conservation
 from backend.services.day_trade_annotation import annotate_day_trades, annotation_to_audit_dict
 from backend.services.reconciliation import build_audit
@@ -281,6 +283,212 @@ def _alloc_business_keys(session, run_id: str) -> list[tuple]:
     )
 
 
+def compute_finance_golden_from_uat_trades(
+    trades: list[tuple[str, str, int, str, str, str, str]] | None = None,
+) -> dict[str, Decimal]:
+    """由 UAT ``TRADES`` 規格以 Decimal 獨立核算財務黃金值。
+
+    Args:
+        trades: ``(day, side, qty, price, commission, tax, key)``；預設 ``TRADES``。
+
+    Returns:
+        含買賣股數／價金／手續費／稅／``expected_report_profit`` 之 dict。
+
+    Side Effects:
+        無。
+
+    Financial invariants:
+        ``expected_report_profit = sell_gross - buy_gross - commission - tax``
+        （全配平且費用一次落點契約；不得以檔案存在替代）。
+    """
+    rows = trades if trades is not None else TRADES
+    buy_qty = sell_qty = 0
+    buy_gross = sell_gross = commission = tax = Decimal(0)
+    buy_commission = sell_commission = Decimal(0)
+    for _day, side, qty, price, comm, tx, _key in rows:
+        g = Decimal(price) * qty
+        c = Decimal(comm)
+        t = Decimal(tx)
+        commission += c
+        tax += t
+        if side == "BUY":
+            buy_qty += qty
+            buy_gross += g
+            buy_commission += c
+        else:
+            sell_qty += qty
+            sell_gross += g
+            sell_commission += c
+    return {
+        "buy_qty": Decimal(buy_qty),
+        "sell_qty": Decimal(sell_qty),
+        "buy_gross": buy_gross,
+        "sell_gross": sell_gross,
+        "commission": commission,
+        "buy_commission": buy_commission,
+        "sell_commission": sell_commission,
+        "tax": tax,
+        "expected_report_profit": sell_gross - buy_gross - commission - tax,
+    }
+
+
+def verify_detail_xlsx_finance(
+    xlsx_path: Path,
+    golden: dict[str, Decimal],
+) -> dict[str, Any]:
+    """讀取明細 Excel A–W 財務儲存格並與 golden 比對（fail-closed）。
+
+    Args:
+        xlsx_path: 明細報表路徑。
+        golden: ``compute_finance_golden_from_uat_trades`` 產出。
+
+    Returns:
+        ``{"ok": bool, "actual": dict, "diffs": dict, "errors": list}``。
+        檔案缺失、損毀、表頭錯誤、空白或數值不符 → ``ok=False``。
+
+    Side Effects:
+        僅讀取 ``xlsx_path``；不寫入。
+
+    Note:
+        不得以檔案存在或檔名非 DRAFT 當作財務驗證成功。
+    """
+    errors: list[str] = []
+    actual: dict[str, Decimal] = {}
+    diffs: dict[str, dict[str, str]] = {}
+    if not xlsx_path.is_file():
+        return {
+            "ok": False,
+            "actual": actual,
+            "diffs": diffs,
+            "errors": ["missing_file"],
+        }
+    try:
+        wb = load_workbook(xlsx_path, data_only=True)
+        ws = wb.active
+        if ws is None:
+            return {"ok": False, "actual": actual, "diffs": diffs, "errors": ["no_active_sheet"]}
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        if headers != HEADERS:
+            return {
+                "ok": False,
+                "actual": actual,
+                "diffs": diffs,
+                "errors": ["header_mismatch"],
+            }
+        idx = {h: i for i, h in enumerate(HEADERS)}
+        buy_comm = sell_comm = tax_sum = cost = income = profit = Decimal(0)
+        data_rows = 0
+        for row in ws.iter_rows(min_row=2, max_col=len(HEADERS), values_only=True):
+            if all(v is None for v in row):
+                continue
+            data_rows += 1
+            if row[idx["手續費（買）"]] is not None:
+                buy_comm += Decimal(str(row[idx["手續費（買）"]]))
+            if row[idx["手續費（賣）"]] is not None:
+                sell_comm += Decimal(str(row[idx["手續費（賣）"]]))
+            if row[idx["交易稅"]] is not None:
+                tax_sum += Decimal(str(row[idx["交易稅"]]))
+            if row[idx["成本"]] is not None:
+                cost += Decimal(str(row[idx["成本"]]))
+            if row[idx["收入"]] is not None:
+                income += Decimal(str(row[idx["收入"]]))
+            if row[idx["損益"]] is not None:
+                profit += Decimal(str(row[idx["損益"]]))
+        if data_rows == 0:
+            return {
+                "ok": False,
+                "actual": actual,
+                "diffs": diffs,
+                "errors": ["empty_data_rows"],
+            }
+        actual = {
+            "buy_commission": buy_comm,
+            "sell_commission": sell_comm,
+            "tax": tax_sum,
+            "cost": cost,
+            "income": income,
+            "profit": profit,
+            "income_minus_cost": income - cost,
+        }
+        checks = {
+            "buy_commission": golden["buy_commission"],
+            "sell_commission": golden["sell_commission"],
+            "tax": golden["tax"],
+            "profit": golden["expected_report_profit"],
+        }
+        for key, expected in checks.items():
+            got = actual[key]
+            if got != expected:
+                diffs[key] = {"expected": str(expected), "actual": str(got)}
+        if actual["income_minus_cost"] != actual["profit"]:
+            diffs["income_minus_cost_vs_profit"] = {
+                "expected": str(actual["profit"]),
+                "actual": str(actual["income_minus_cost"]),
+            }
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        return {
+            "ok": False,
+            "actual": actual,
+            "diffs": diffs,
+            "errors": [f"unreadable:{type(exc).__name__}"],
+        }
+    return {
+        "ok": not diffs and not errors,
+        "actual": {k: str(v) for k, v in actual.items()},
+        "diffs": diffs,
+        "errors": errors,
+    }
+
+
+def resolve_required_outputs(
+    *,
+    audit_json: dict[str, Any],
+    out_dir: Path,
+    detail_xlsx: Path,
+    audit_path: Path,
+    exceptions_path: Path,
+) -> dict[str, bool]:
+    """以 Report Service 實際產出路徑驗證必要檔案（非 glob 關鍵字）。
+
+    Args:
+        audit_json: 序列化 audit（須含 ``fifo_trace_file``／``conservation_file``）。
+        out_dir: 本次 UAT 報表目錄。
+        detail_xlsx: 明細 xlsx 路徑。
+        audit_path: audit.json 路徑。
+        exceptions_path: exceptions.csv 路徑。
+
+    Returns:
+        各必要產出是否為「落在 out_dir 下的一般檔案」。
+
+    Side Effects:
+        無（僅 ``Path.is_file``／resolve）。
+
+    Note:
+        同名目錄、路徑逸出 out_dir、路徑缺失 → False（fail-closed）。
+    """
+    out_r = out_dir.resolve()
+
+    def _in_out_and_file(raw: object) -> bool:
+        if not raw:
+            return False
+        p = Path(str(raw))
+        try:
+            resolved = p.resolve()
+        except OSError:
+            return False
+        if out_r not in resolved.parents and resolved != out_r:
+            return False
+        return resolved.is_file()
+
+    return {
+        "detail_xlsx": detail_xlsx.is_file() and "DRAFT" not in detail_xlsx.name,
+        "audit_json": audit_path.is_file(),
+        "exceptions_csv": exceptions_path.is_file(),
+        "fifo_trace": _in_out_and_file(audit_json.get("fifo_trace_file")),
+        "conservation": _in_out_and_file(audit_json.get("conservation_file")),
+    }
+
+
 def build_uat_checks(
     *,
     required_outputs: dict[str, bool],
@@ -299,7 +507,7 @@ def build_uat_checks(
     formal_db_untouched: bool,
     run_dir_under_data_uat: bool,
     out_dir_under_output_uat: bool,
-    detail_xlsx_finance_ok: bool = True,
+    detail_xlsx_finance_ok: bool,
 ) -> dict[str, bool]:
     """組裝 UAT ``checks``（純函式；全部步驟後呼叫）。
 
@@ -321,7 +529,8 @@ def build_uat_checks(
         formal_db_untouched: 正式 DB 指紋未變。
         run_dir_under_data_uat: run 目錄落在 data/uat 根。
         out_dir_under_output_uat: out 目錄落在 output/uat 根。
-        detail_xlsx_finance_ok: 可選明細財務加總核對。
+        detail_xlsx_finance_ok: **必填**；須為 ``verify_detail_xlsx_finance`` 結果，
+            不得預設 True，不得以檔案存在替代。
 
     Returns:
         ``dict[str, bool]``；``all(values)`` 為 True 才可判 PASS。
@@ -332,8 +541,11 @@ def build_uat_checks(
     Note:
         Annotation 數量／狀態以 ``audit_json["day_trade_annotation"]`` 為準，
         不得僅用記憶體 annotation 物件當最終判定。
+        ``warnings`` 鍵缺失不得當成空清單通過。
     """
     ann = audit_json.get("day_trade_annotation") or {}
+    has_warnings_key = isinstance(ann, dict) and "warnings" in ann
+    warnings_val = ann.get("warnings") if has_warnings_key else None
     return {
         "fresh_schema_has_match_type": bool(fresh_schema_has_match_type),
         "actual_migration_day_trade_backfill": bool(
@@ -361,7 +573,10 @@ def build_uat_checks(
         "annotation_status_ok": ann.get("status") == "OK",
         "annotation_suspected_exact_1000": ann.get("suspected_day_trade_qty") == 1000,
         "annotation_reconciled_exact_400": ann.get("same_day_reconciled_qty") == 400,
-        "annotation_warnings_empty": list(ann.get("warnings") or []) == [],
+        "annotation_has_warnings_key": has_warnings_key,
+        "annotation_warnings_empty": has_warnings_key
+        and isinstance(warnings_val, list)
+        and list(warnings_val) == [],
         "idempotent_old_preserved": bool(idempotent.get("old_run_preserved")),
         "idempotent_old_keys_unchanged": bool(idempotent.get("old_run_keys_unchanged")),
         "idempotent_new_keys_equal": bool(idempotent.get("new_run_keys_equal_old")),
@@ -612,15 +827,15 @@ def main() -> int:
             ),
         }
 
-        required_outputs = {
-            "detail_xlsx": xlsx_path.exists() and "DRAFT" not in xlsx_path.name,
-            "audit_json": audit_path.exists(),
-            "exceptions_csv": exc_path.exists(),
-            "fifo_trace": any(out_dir.glob("*FIFO*"))
-            or any(out_dir.glob("*fifo*trace*.xlsx")),
-            "conservation": any(out_dir.glob("*守恆*"))
-            or any(out_dir.glob("*conservation*")),
-        }
+        required_outputs = resolve_required_outputs(
+            audit_json=audit_payload,
+            out_dir=out_dir,
+            detail_xlsx=xlsx_path,
+            audit_path=audit_path,
+            exceptions_path=exc_path,
+        )
+        finance_golden = compute_finance_golden_from_uat_trades(TRADES)
+        finance_verify = verify_detail_xlsx_finance(xlsx_path, finance_golden)
 
         summary.update(
             {
@@ -653,11 +868,15 @@ def main() -> int:
                     "detail_xlsx": str(xlsx_path),
                     "audit_json": str(audit_path),
                     "exceptions_csv": str(exc_path),
+                    "fifo_trace_file": audit_payload.get("fifo_trace_file"),
+                    "conservation_file": audit_payload.get("conservation_file"),
                     "detail_is_draft": "DRAFT" in xlsx_path.name,
                     "detail_exists": xlsx_path.exists(),
                     "audit_exists": audit_path.exists(),
                 },
                 "required_outputs": required_outputs,
+                "detail_xlsx_finance": finance_verify,
+                "finance_golden": {k: str(v) for k, v in finance_golden.items()},
                 "output_files": sorted(p.name for p in out_dir.glob("*") if p.is_file()),
                 "idempotent_rerun": idempotent,
                 "expectations": {
@@ -695,7 +914,7 @@ def main() -> int:
             formal_db_untouched=bool(summary["formal_db_untouched"]),
             run_dir_under_data_uat=str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
             out_dir_under_output_uat=str(OUT_ROOT.resolve()) in str(out_dir.resolve()),
-            detail_xlsx_finance_ok=xlsx_path.exists() and "DRAFT" not in xlsx_path.name,
+            detail_xlsx_finance_ok=bool(finance_verify.get("ok")),
         )
         # 與序列化 ann 交叉核對（偵測記憶體／落盤不一致）
         checks["annotation_serialized_matches_memory"] = (
