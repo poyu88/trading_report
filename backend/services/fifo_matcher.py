@@ -94,8 +94,27 @@ def _match_sell_against_lots(
 ) -> tuple[int, int]:
     """對單一賣出沖減 lot。
 
+    Args:
+        run_id: 配對 run ID。
+        trade: 賣出成交。
+        fifo: 可消耗 lot 佇列（就地更新 ``available``）。
+        allocations: 追加配對片段之輸出清單。
+        issues: 追加／保留 reconciliation 例外。
+        seq_counter: 目前 sequence_no。
+        allow_future_buy: True 時允許 lot 日期晚於賣出（僅 DAY_TRADE 同日池）。
+        match_type: 寫入 allocation 的稽核標籤。
+        max_quantity: 若給定則只沖此數量（Pass2 殘量）。
+        only_trade_date: 若給定則只消耗該日且來自 BUY 的 lot（禁止跨日／opening）。
+        record_issue: False 時不足量不立刻寫 issue（Pass2 自行更新）。
+
     Returns:
         ``(seq_counter, remaining_unmatched)``。
+
+    Side Effects:
+        就地修改 ``fifo``／``allocations``／（可選）``issues``。
+
+    Financial invariants:
+        不造負庫存；``allocated_quantity > 0``；費用不在此函式落點。
     """
     sell_left = trade.quantity if max_quantity is None else max_quantity
     while sell_left > 0 and fifo:
@@ -160,7 +179,26 @@ def _pass2_same_day_reconcile(
     issues: list[ReconciliationIssue],
     seq_counter: int,
 ) -> int:
-    """Pass 2：以當日尚未消耗之 BUY lot 補沖當日未配 SELL。"""
+    """Pass 2：以當日尚未消耗之 BUY lot 補沖當日未配 SELL。
+
+    Args:
+        run_id: 配對 run ID。
+        day: 僅處理該日之 pending SELL。
+        sells: 當日全部 SELL（用於 trade_id 對照）。
+        fifo: Pass1 後剩餘 lot（含當日稍後建立之 BUY）。
+        allocations: 追加 ``SAME_DAY_RECONCILED`` 片段。
+        issues: 就地移除已解或更新殘量之 ``INSUFFICIENT_PRIOR_BUYS``。
+        seq_counter: 目前 sequence_no。
+
+    Returns:
+        更新後的 ``seq_counter``。
+
+    Side Effects:
+        修改 ``fifo``／``allocations``／``issues``。
+
+    Financial invariants:
+        禁止跨日補沖；不得消耗 opening lot；部分補沖仍保留 blocking 殘量。
+    """
     sell_by_id = {s.trade_id: s for s in sells}
     pending: list[tuple[MatchInputTrade, int, int]] = []
     for idx, issue in enumerate(issues):
@@ -233,7 +271,26 @@ def _run_cash_group(
     unsold: list[LotRemaining],
     seq_counter: int,
 ) -> int:
-    """CASH Two-Pass：Pass1 開盤前庫存優先；Pass2 同日未用 BUY 補沖未配 SELL。"""
+    """CASH Two-Pass：Pass1 開盤前庫存優先；Pass2 同日未用 BUY 補沖未配 SELL。
+
+    Args:
+        run_id: 配對 run ID。
+        group_trades: 同一 ``account/symbol/currency`` 且 ``trade_type=CASH``。
+        opening_lots: 已核准期初 lot（僅 CASH）。
+        allocations: 輸出配對。
+        issues: 輸出例外。
+        unsold: 追加期末剩餘 lot。
+        seq_counter: 目前 sequence_no。
+
+    Returns:
+        更新後的 ``seq_counter``。
+
+    Side Effects:
+        寫入 ``allocations``／``issues``／``unsold``。
+
+    Financial invariants:
+        Pass1 不穿插當日買解套；Pass2 不跨日、不改 DAY_TRADE；股數守恆。
+    """
     fifo: deque[LotRemaining] = deque()
     provenance = 0
     for ol in sorted(opening_lots, key=lambda x: (x.buy_date, x.lot_id)):

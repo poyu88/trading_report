@@ -55,7 +55,27 @@ def generate_detail_report(
     *,
     allow_partial: bool = False,
     run_id: str | None = None,
+    include_day_trade_annotation: bool = True,
 ) -> tuple[Path, Path, Path]:
+    """產生明細 Excel、audit.json 與 exceptions.csv。
+
+    Args:
+        session: DB session。
+        account_id: 帳戶 ID。
+        output_dir: 報表輸出目錄。
+        allow_partial: True 時 blocking 改產 DRAFT。
+        run_id: 指定 allocation run；預設取最新。
+        include_day_trade_annotation: 是否附掛 Layer 3 annotation（預設 True）。
+
+    Returns:
+        ``(xlsx_path, audit_path, exceptions_path)``。
+
+    Side Effects:
+        寫入 ``output_dir`` 檔案並新增 ``ReportRun`` 列。
+
+    Financial invariants:
+        Annotation 失敗僅寫入 audit warnings，不中斷已產出之 detail／trace／conservation。
+    """
     account = session.scalar(
         select(Account)
         .options(joinedload(Account.broker))
@@ -210,7 +230,22 @@ def generate_detail_report(
         )
         for a in allocations
     ]
-    annotation_extra = annotation_to_audit_dict(annotate_day_trades(domain_trades, domain_allocs))
+    annotation_extra: dict = {}
+    if include_day_trade_annotation:
+        try:
+            annotation_extra = annotation_to_audit_dict(
+                annotate_day_trades(domain_trades, domain_allocs)
+            )
+        except Exception as exc:  # noqa: BLE001 — 報表不得因註記失敗中斷
+            annotation_extra = {
+                "day_trade_annotation": {
+                    "rules_version": "unknown",
+                    "suspected_day_trade_qty": 0,
+                    "same_day_reconciled_qty": 0,
+                    "candidates": [],
+                    "warnings": [f"ANNOTATION_FAILED:{type(exc).__name__}"],
+                }
+            }
 
     audit_path, exc_path = write_audit_files(
         xlsx_path,

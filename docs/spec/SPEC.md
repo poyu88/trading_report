@@ -394,7 +394,7 @@ ON trades(account_id, symbol, currency, trade_date, trade_time);
   - **Pass 2（同日補沖銷）**：僅針對該日仍有 `unmatched_quantity` 的 CASH SELL，與**該日尚未消耗**的相容 CASH BUY lot，依既有 FIFO 穩定序補沖銷；`match_type=SAME_DAY_RECONCILED`。**禁止跨日**自動補沖銷；禁止造負庫存；不得自動改 DAY_TRADE。Pass 2 後仍不足 → 保留 `INSUFFICIENT_PRIOR_BUYS`。
   - 明確較早日期的 BUY 可配對較晚日期的 SELL；不得配對未來買進（跨日）。
 - **DAY_TRADE**：僅同日配對。同日無序現沖**不得**標 `ORDER_AMBIGUITY` 而跳過；對每個交易日先將當日全部 DAY_TRADE BUY 建成 lot，再以 FIFO 將當日 DAY_TRADE SELL 配入（含檔內先賣後買）。lot **不跨日**、**不消耗 CASH**。配對之 `match_type=DAY_TRADE_FIFO`（僅稽核／trace；不改配對邏輯）。未配平剩餘進 `reconciliation_issues`。
-- **Independent Day-Trade Annotation（Layer 3）**：以 trades＋allocations 唯讀產出稽核註記（audit／exceptions）；**不得**寫回 match 結果或改寫財務欄位。稅減半為輔助證據（規則表＋版本化）；手續費不得驅動判定。Annotation ON／OFF 時財務欄位須全等。
+- **Independent Day-Trade Annotation（Layer 3）**：以 trades＋allocations 唯讀產出稽核註記（audit／exceptions）；**不得**寫回 match 結果或改寫財務欄位。稅規則表僅適用 `currency=TWD` 且 `trade_type=CASH` 且 `gross_amount>0`（`ROUND_HALF_UP`、容差 1 元）；其餘 → `INSUFFICIENT_EVIDENCE`。若同時落入半稅與全稅容差 → `AMBIGUOUS_TAX_EVIDENCE`（優先於 `HALF_RATE`；組含 AMBIGUOUS 不得標 `SUSPECTED_DAY_TRADE`）。`suspected_support_qty = min(buy_qty, half_rate_sell_qty)`（非整組 `sell_qty`）。手續費不得驅動判定。Annotation 失敗僅寫 `ANNOTATION_FAILED` warnings，不中斷報表。Annotation ON／OFF 時財務欄位須全等。
 - 買賣同股票但不同帳戶不得直接相互抵銷。
 - `opening_lots` 必須由核准的真實成本與數量建立，並僅參與 **CASH** FIFO。
 - **數量守恆（audit）**：供給＝`approved opening_lots.quantity + BUY qty`；`supply = sold_from_buys + sold_from_openings + unsold`；`sell_qty = allocated_sell + unmatched`；每筆 BUY／opening lot／SELL 不得超配；僅統計**當次 run** 的 allocations。未核准 lot 不計入供給。
@@ -718,7 +718,7 @@ uv run python -m backend.cli audit --account "main" --db data/uat/esun/tmp.db
 | FIFO-04 | SELL 在所有可用 BUY 前 | 未匹配例外，不配對未來 BUY |
 | FIFO-05 | 同日 CASH 買賣（含缺 time／seq） | Pass 1：開盤前庫存優先，不當日買穿插解套；Pass 2：同日未用 BUY 可補沖未配 SELL（`SAME_DAY_RECONCILED`）；仍不足 → `INSUFFICIENT_PRIOR_BUYS`；**不**標 `ORDER_AMBIGUITY`；不得自動 DAY_TRADE；不得跨日補沖 |
 | FIFO-09 | 2236 合成兩 Pass | Pass 1 matched 3600＋未配 400；Pass 2 `SAME_DAY_RECONCILED` 400；期末庫存 0、未配賣出 0 |
-| AUD-DT-01 | Independent day-trade annotation | 僅稽核附掛；ON／OFF 財務欄位全等；稅減半為輔助證據；不驅動配對 |
+| AUD-DT-01 | Independent day-trade annotation | 僅稽核附掛；ON／OFF 財務欄位全等；TWD／CASH 稅規則＋AMBIGUOUS；`suspected_support_qty=min(buy, half_rate_sell)`；失敗隔離；不驅動配對 |
 | FIFO-06 | 不同帳戶、股票、幣別 | 絕不跨組配對 |
 | FIFO-07 | 同日無序 DAY_TRADE（含先賣後買） | 當日相互 FIFO 配平；股數守恆；不標 ORDER_AMBIGUITY |
 | FIFO-08 | DAY_TRADE 與跨日／同日 CASH 並存 | 現沖不消耗 CASH lot；CASH 不消耗 DAY_TRADE lot |

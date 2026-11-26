@@ -197,3 +197,82 @@ def test_pass1_still_ignores_trade_time_interleave() -> None:
     assert result.allocations[0].match_type == "SAME_DAY_RECONCILED"
     assert result.allocations[0].buy_trade_id == "b1"
     assert result.unsold == []
+
+
+def test_pass2_boundary_qty_399_400_401() -> None:
+    """Pass2 邊界：同日買 400；賣 399／400／401 分別全配／全配／殘 1 blocking。"""
+    base_buy = _t("b1", "2025-05-01", "BUY", 400, "50", source_order=2, symbol="BQ")
+
+    r399 = run_fifo(
+        "bq399",
+        [_t("s399", "2025-05-01", "SELL", 399, "51", source_order=1, symbol="BQ"), base_buy],
+    )
+    assert not r399.blocking
+    assert _qty_by_match_type(r399).get("SAME_DAY_RECONCILED", 0) == 399
+    assert any(u.buy_trade_id == "b1" and u.available == 1 for u in r399.unsold)
+
+    r400 = run_fifo(
+        "bq400",
+        [
+            _t("s400", "2025-05-01", "SELL", 400, "51", source_order=1, symbol="BQ"),
+            _t("b1", "2025-05-01", "BUY", 400, "50", source_order=2, symbol="BQ"),
+        ],
+    )
+    assert not r400.blocking
+    assert _qty_by_match_type(r400).get("SAME_DAY_RECONCILED", 0) == 400
+    assert r400.unsold == []
+
+    r401 = run_fifo(
+        "bq401",
+        [
+            _t("s401", "2025-05-01", "SELL", 401, "51", source_order=1, symbol="BQ"),
+            _t("b1", "2025-05-01", "BUY", 400, "50", source_order=2, symbol="BQ"),
+        ],
+    )
+    assert r401.blocking
+    assert _qty_by_match_type(r401).get("SAME_DAY_RECONCILED", 0) == 400
+    insuff = [i for i in r401.issues if i.issue_code == "INSUFFICIENT_PRIOR_BUYS"]
+    assert len(insuff) == 1
+    assert insuff[0].detail["unmatched_quantity"] == 1
+
+
+def test_pass2_partial_reconcile_keeps_blocking() -> None:
+    """Pass2 僅部分補沖 → 仍 blocking，unmatched 更新為殘量。"""
+    result = run_fifo(
+        "partial-block",
+        [
+            _t("s1", "2025-05-02", "SELL", 1000, "70", source_order=1, symbol="PB"),
+            _t("b1", "2025-05-02", "BUY", 400, "72", source_order=2, symbol="PB"),
+        ],
+    )
+    assert result.blocking
+    assert _qty_by_match_type(result).get("SAME_DAY_RECONCILED", 0) == 400
+    insuff = [i for i in result.issues if i.issue_code == "INSUFFICIENT_PRIOR_BUYS"]
+    assert len(insuff) == 1
+    assert insuff[0].trade_id == "s1"
+    assert insuff[0].detail["unmatched_quantity"] == 600
+
+
+def test_pass2_multiple_pending_sells_stable_order() -> None:
+    """多筆未配 SELL：Pass2 依穩定序消耗同日 BUY，不得跨日。"""
+    result = run_fifo(
+        "multi-pending",
+        [
+            _t("s1", "2025-05-03", "SELL", 300, "70", source_order=1, symbol="MP"),
+            _t("s2", "2025-05-03", "SELL", 300, "71", source_order=2, symbol="MP"),
+            _t("b1", "2025-05-03", "BUY", 500, "72", source_order=3, symbol="MP"),
+            _t("b_next", "2025-05-04", "BUY", 1000, "68", source_order=4, symbol="MP"),
+        ],
+    )
+    assert result.blocking
+    assert _qty_by_match_type(result).get("SAME_DAY_RECONCILED", 0) == 500
+    pass2 = [a for a in result.allocations if a.match_type == "SAME_DAY_RECONCILED"]
+    assert {a.sell_trade_id for a in pass2} == {"s1", "s2"}
+    assert sum(a.quantity for a in pass2 if a.sell_trade_id == "s1") == 300
+    assert sum(a.quantity for a in pass2 if a.sell_trade_id == "s2") == 200
+    # 隔日買不得補沖
+    assert all(a.buy_trade_id != "b_next" for a in result.allocations)
+    insuff = [i for i in result.issues if i.issue_code == "INSUFFICIENT_PRIOR_BUYS"]
+    assert len(insuff) == 1
+    assert insuff[0].trade_id == "s2"
+    assert insuff[0].detail["unmatched_quantity"] == 100

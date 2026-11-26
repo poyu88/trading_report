@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import shutil
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 
 from backend.config import ALGORITHM_VERSION, CASH_SAME_DAY_POLICY, PROJECT_ROOT
 from backend.db.models import (
@@ -30,20 +30,18 @@ from backend.services.reconciliation import build_audit
 from backend.services.report_service import generate_detail_report
 
 UAT_THEME = "fifo_same_day_2236"
-DB_DIR = PROJECT_ROOT / "data" / "uat" / UAT_THEME
+UAT_ROOT = PROJECT_ROOT / "data" / "uat" / UAT_THEME
 OUT_DIR = PROJECT_ROOT / "output" / f"uat_{UAT_THEME}"
 FORMAL_DB = PROJECT_ROOT / "data" / "trading.db"
 ACCOUNT_LABEL = "uat2236"
 
 # 與 tests/test_same_day_reconciliation.py::test_c01 同軌跡（買＝賣＝4000）
 TRADES: list[tuple[str, str, str, int, str, str, str]] = [
-    # day, side, qty, price, commission, tax, note_key
     ("2024-08-05", "BUY", 2000, "100", "40", "0", "b1"),
     ("2024-08-12", "BUY", 1000, "105", "25", "0", "b2"),
     ("2024-08-20", "SELL", 400, "110", "20", "132", "s1"),
     ("2024-08-20", "SELL", 1000, "111", "30", "333", "s2"),
     ("2024-08-26", "SELL", 1000, "112", "30", "336", "s3"),
-    # 113000×0.15%=169.5→170（減半稅輔助證據；與 Pass2 400 股獨立）
     ("2024-08-28", "SELL", 1000, "113", "30", "170", "s4"),
     ("2024-08-28", "BUY", 1000, "114", "25", "0", "b3"),
     ("2024-09-02", "SELL", 579, "115", "20", "200", "s5"),
@@ -51,10 +49,35 @@ TRADES: list[tuple[str, str, str, int, str, str, str]] = [
 ]
 
 
-def _formal_mtime() -> str | None:
-    if not FORMAL_DB.exists():
+def _sha256_file(path: Path) -> str | None:
+    if not path.exists():
         return None
-    return datetime.fromtimestamp(FORMAL_DB.stat().st_mtime).isoformat(sep=" ", timespec="seconds")
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _formal_fingerprint() -> dict:
+    if not FORMAL_DB.exists():
+        return {"exists": False, "mtime": None, "size": None, "sha256": None}
+    st = FORMAL_DB.stat()
+    return {
+        "exists": True,
+        "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(sep=" ", timespec="seconds"),
+        "size": st.st_size,
+        "sha256": _sha256_file(FORMAL_DB),
+    }
+
+
+def _assert_uat_path(path: Path) -> Path:
+    """解析路徑必須落在 ``data/uat/...`` 之下。"""
+    resolved = path.resolve()
+    uat_root = (PROJECT_ROOT / "data" / "uat").resolve()
+    if uat_root not in resolved.parents and resolved != uat_root:
+        raise RuntimeError(f"UAT path escapes data/uat: {resolved}")
+    return resolved
 
 
 def _seed(session) -> Account:
@@ -107,22 +130,77 @@ def _seed(session) -> Account:
     return account
 
 
+def _domain_views(session, account_id: str, run_id: str) -> tuple[list[Trade], list[Allocation]]:
+    trades = list(session.scalars(select(TradeRow).where(TradeRow.account_id == account_id)))
+    alloc_rows = list(
+        session.scalars(select(FifoAllocation).where(FifoAllocation.run_id == run_id))
+    )
+    domain_trades = [
+        Trade(
+            trade_id=t.id,
+            account_id=t.account_id,
+            source_row_id=t.raw_row_id,
+            symbol=t.symbol,
+            name=t.name,
+            trade_date=datetime.fromisoformat(t.trade_date).date(),
+            trade_time=None,
+            trade_sequence=t.trade_sequence,
+            side=t.side,  # type: ignore[arg-type]
+            trade_type=t.trade_type,  # type: ignore[arg-type]
+            currency=t.currency,
+            quantity=t.quantity,
+            unit_price=txt_to_decimal(t.unit_price_txt),
+            gross_amount=txt_to_decimal(t.gross_amount_txt),
+            commission=txt_to_decimal(t.commission_txt),
+            tax=txt_to_decimal(t.tax_txt),
+            interest=txt_to_decimal(t.interest_txt),
+            net_settlement=None,
+        )
+        for t in trades
+    ]
+    domain_allocs = [
+        Allocation(
+            run_id=run_id,
+            allocation_id=a.id,
+            buy_trade_id=a.buy_trade_id,
+            opening_lot_id=a.opening_lot_id,
+            sell_trade_id=a.sell_trade_id,
+            quantity=a.allocated_quantity,
+            sequence_no=a.sequence_no,
+            match_type=a.match_type,
+        )
+        for a in alloc_rows
+    ]
+    return domain_trades, domain_allocs
+
+
 def main() -> int:
-    before_mtime = _formal_mtime()
-    if DB_DIR.exists():
-        shutil.rmtree(DB_DIR)
-    DB_DIR.mkdir(parents=True, exist_ok=True)
+    """執行隔離 UAT 並於**全部**步驟後計算 verdict。
+
+    Side Effects:
+        於 ``data/uat/fifo_same_day_2236/run_<stamp>/`` 與
+        ``output/uat_fifo_same_day_2236/`` 寫入證據；**不**寫正式 DB。
+        禁止 ``rmtree`` 既有 run 目錄。
+
+    Returns:
+        0＝PASS 且正式 DB 指紋未變；否則 1。
+    """
+    before_fp = _formal_fingerprint()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = _assert_uat_path(UAT_ROOT / f"run_{stamp}")
+    run_dir.mkdir(parents=True, exist_ok=False)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    db_path = DB_DIR / "uat.db"
+    db_path = _assert_uat_path(run_dir / "uat.db")
     engine = init_db(db_path)
     Session = make_session_factory(engine)
     summary: dict = {
         "theme": UAT_THEME,
         "started_at_utc": datetime.now(UTC).isoformat(),
+        "run_dir": str(run_dir),
         "db_path": str(db_path),
         "output_dir": str(OUT_DIR),
-        "formal_db_mtime_before": before_mtime,
+        "formal_db_before": before_fp,
         "algorithm_version": ALGORITHM_VERSION,
         "cash_same_day_policy": CASH_SAME_DAY_POLICY,
     }
@@ -130,6 +208,11 @@ def main() -> int:
     with Session() as session:
         account = _seed(session)
         session.commit()
+
+        # migration 適用性：create_all 新 DB 須含 match_type
+        insp = inspect(engine)
+        alloc_cols = {c["name"] for c in insp.get_columns("fifo_allocations")}
+        migration_ok = "match_type" in alloc_cols
 
         run, result = match_fifo_for_account(session, account.id)
         session.commit()
@@ -145,58 +228,25 @@ def main() -> int:
         cons = quantity_conservation(trades, alloc_rows)
         audit = build_audit(session, account.id, run.id)
 
-        domain_trades = [
-            Trade(
-                trade_id=t.id,
-                account_id=t.account_id,
-                source_row_id=t.raw_row_id,
-                symbol=t.symbol,
-                name=t.name,
-                trade_date=datetime.fromisoformat(t.trade_date).date(),
-                trade_time=None,
-                trade_sequence=t.trade_sequence,
-                side=t.side,  # type: ignore[arg-type]
-                trade_type=t.trade_type,  # type: ignore[arg-type]
-                currency=t.currency,
-                quantity=t.quantity,
-                unit_price=txt_to_decimal(t.unit_price_txt),
-                gross_amount=txt_to_decimal(t.gross_amount_txt),
-                commission=txt_to_decimal(t.commission_txt),
-                tax=txt_to_decimal(t.tax_txt),
-                interest=txt_to_decimal(t.interest_txt),
-                net_settlement=None,
-            )
-            for t in trades
-        ]
-        domain_allocs = [
-            Allocation(
-                run_id=run.id,
-                allocation_id=a.id,
-                buy_trade_id=a.buy_trade_id,
-                opening_lot_id=a.opening_lot_id,
-                sell_trade_id=a.sell_trade_id,
-                quantity=a.allocated_quantity,
-                sequence_no=a.sequence_no,
-                match_type=a.match_type,
-            )
-            for a in alloc_rows
+        domain_trades, domain_allocs = _domain_views(session, account.id, run.id)
+        finance_snap = [
+            (a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type) for a in domain_allocs
         ]
         annotation = annotate_day_trades(domain_trades, domain_allocs)
-
-        # H：annotation 不改 allocations（同 run 再算一次）
         annotation2 = annotate_day_trades(domain_trades, domain_allocs)
+        finance_after = [
+            (a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type) for a in domain_allocs
+        ]
         h_ok = (
             annotation.suspected_day_trade_qty == annotation2.suspected_day_trade_qty
-            and [(a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type) for a in domain_allocs]
-            == [
-                (a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type)
-                for a in domain_allocs
-            ]
+            and finance_snap == finance_after
         )
 
         buy_qty = sum(t.quantity for t in trades if t.side == "BUY")
         sell_qty = sum(t.quantity for t in trades if t.side == "SELL")
-        buy_gross = sum((txt_to_decimal(t.gross_amount_txt) for t in trades if t.side == "BUY"), Decimal(0))
+        buy_gross = sum(
+            (txt_to_decimal(t.gross_amount_txt) for t in trades if t.side == "BUY"), Decimal(0)
+        )
         sell_gross = sum(
             (txt_to_decimal(t.gross_amount_txt) for t in trades if t.side == "SELL"), Decimal(0)
         )
@@ -209,6 +259,31 @@ def main() -> int:
                 select(ReconciliationIssueRow).where(ReconciliationIssueRow.run_id == run.id)
             )
         )
+
+        xlsx_path, audit_path, exc_path = generate_detail_report(
+            session,
+            account.id,
+            OUT_DIR,
+            allow_partial=False,
+            run_id=run.id,
+        )
+        session.commit()
+
+        # 冪等：再 match 一次，舊 run 不可覆寫
+        run2, result2 = match_fifo_for_account(session, account.id)
+        session.commit()
+        old = session.get(AllocationRun, run.id)
+        idempotent = {
+            "new_run_id": run2.id,
+            "old_run_preserved": old is not None and old.id == run.id,
+            "allocated_qty_same": sum(a.quantity for a in result2.allocations)
+            == sum(a.quantity for a in result.allocations),
+            "run_count": session.scalar(
+                select(func.count())
+                .select_from(AllocationRun)
+                .where(AllocationRun.account_id == account.id)
+            ),
+        }
 
         summary.update(
             {
@@ -237,6 +312,16 @@ def main() -> int:
                 "tax_total": str(tax_total),
                 "annotation": annotation_to_audit_dict(annotation)["day_trade_annotation"],
                 "h_annotation_non_interference": h_ok,
+                "outputs": {
+                    "detail_xlsx": str(xlsx_path),
+                    "audit_json": str(audit_path),
+                    "exceptions_csv": str(exc_path),
+                    "detail_is_draft": "DRAFT" in xlsx_path.name,
+                    "detail_exists": xlsx_path.exists(),
+                    "audit_exists": audit_path.exists(),
+                },
+                "output_files": sorted(p.name for p in OUT_DIR.glob("*") if p.is_file()),
+                "idempotent_rerun": idempotent,
                 "expectations": {
                     "allocated_qty": 4000,
                     "standard_fifo_qty": 3600,
@@ -248,7 +333,14 @@ def main() -> int:
             }
         )
 
+        after_fp = _formal_fingerprint()
+        summary["formal_db_after"] = after_fp
+        summary["formal_db_untouched"] = before_fp == after_fp
+        summary["finished_at_utc"] = datetime.now(UTC).isoformat()
+
+        # CR-10：verdict 在全部步驟後計算
         checks = {
+            "migration_match_type_column": migration_ok,
             "allocated_4000": summary["allocated_qty"] == 4000,
             "standard_3600": by_type.get("STANDARD_FIFO", 0) == 3600,
             "pass2_400": by_type.get("SAME_DAY_RECONCILED", 0) == 400,
@@ -257,54 +349,27 @@ def main() -> int:
             "conservation_ok": bool(cons["ok"]),
             "integrity_ok": summary["integrity_check"] == "ok",
             "h_ok": h_ok,
+            "report_exists": bool(summary["outputs"]["detail_exists"]),
+            "audit_exists": bool(summary["outputs"]["audit_exists"]),
+            "not_draft": not summary["outputs"]["detail_is_draft"],
+            "annotation_candidates": len(annotation.candidates) > 0,
+            "idempotent_old_preserved": bool(idempotent["old_run_preserved"]),
+            "idempotent_qty_same": bool(idempotent["allocated_qty_same"]),
+            "formal_db_untouched": summary["formal_db_untouched"],
+            "run_dir_under_data_uat": str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
         }
         summary["checks"] = checks
         summary["uat_verdict"] = "PASS" if all(checks.values()) else "FAIL"
 
-        # 無 blocking → 正式（非 DRAFT）明細
-        xlsx_path, audit_path, exc_path = generate_detail_report(
-            session,
-            account.id,
-            OUT_DIR,
-            allow_partial=False,
-            run_id=run.id,
-        )
-        session.commit()
-        summary["outputs"] = {
-            "detail_xlsx": str(xlsx_path),
-            "audit_json": str(audit_path),
-            "exceptions_csv": str(exc_path),
-            "detail_is_draft": "DRAFT" in xlsx_path.name,
-        }
-
-        # 列出 output 目錄內相關檔
-        summary["output_files"] = sorted(p.name for p in OUT_DIR.glob("*") if p.is_file())
-
-        # 冪等：再 match 一次，舊 run 不可覆寫
-        run2, result2 = match_fifo_for_account(session, account.id)
-        session.commit()
-        old = session.get(AllocationRun, run.id)
-        summary["idempotent_rerun"] = {
-            "new_run_id": run2.id,
-            "old_run_preserved": old is not None and old.id == run.id,
-            "allocated_qty_same": sum(a.quantity for a in result2.allocations)
-            == summary["allocated_qty"],
-            "run_count": session.scalar(
-                select(func.count()).select_from(AllocationRun).where(
-                    AllocationRun.account_id == account.id
-                )
-            ),
-        }
-
-    after_mtime = _formal_mtime()
-    summary["formal_db_mtime_after"] = after_mtime
-    summary["formal_db_untouched"] = before_mtime == after_mtime
-    summary["finished_at_utc"] = datetime.now(UTC).isoformat()
-
-    summary_path = DB_DIR / "summary.json"
+    summary_path = run_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 同步一份最新指標到主題根（不刪舊 run）
+    UAT_ROOT.mkdir(parents=True, exist_ok=True)
+    (UAT_ROOT / "latest_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0 if summary["uat_verdict"] == "PASS" and summary["formal_db_untouched"] else 1
+    return 0 if summary["uat_verdict"] == "PASS" else 1
 
 
 if __name__ == "__main__":

@@ -249,6 +249,18 @@
 | 隔離 UAT | 合成 2236：`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；Pass1=3600／Pass2=400／未售0／非 DRAFT；annotation suspected=1000≠reconciled=400；正式 DB mtime 未變；見 `docs/test/UAT_fifo_same_day_2236.md` → **PASS** |
 | 判定 | **有證據 TDD**（見 §6.2 `fifo_v3_two_pass_same_day_v1`）；隔離 UAT **PASS**；Commit／Push／PR／CI **待**使用者授權 |
 
+### 1.18 PR #12 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | CR-01～13：annotation 支持股數／TWD 稅適用／AMBIGUOUS／例外隔離；migration DAY_TRADE backfill；report ON／OFF＋fault；2236 合成 E2E；UAT run 目錄保護／verdict 延後；audit 可追溯欄；Pass2 邊界回歸；docstring／SPEC |
+| RED | `uv run pytest tests/test_day_trade_annotation.py -q` → **5 failed／7 passed**（缺 `half_rate_sell_qty`／AMBIGUOUS／完整 try／CR-12 欄；非 TWD 誤套 HALF_RATE） |
+| GREEN | `day_trade_annotation` 契約修正；migration backfill；`include_day_trade_annotation`；UAT／E2E／matcher 邊界測 |
+| REFACTOR | touched API Google docstring（無行為變更） |
+| 本機 REGRESSION | `uv run pytest -q` → **145 passed**／57.98s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_fixes_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -417,6 +429,7 @@
 | `cash_prior_inventory_fifo_v1` | CASH 同日改採開盤前庫存優先沖減；移除缺序 `ORDER_AMBIGUITY`；DAY_TRADE 不變；1589 合成回歸 | 2026-11-22；`uv run pytest tests/test_fifo.py -q`；**12 failed / 5 passed**；`ORDER_AMBIGUITY` 短路／time 解套；commit `adcadf5` | 2026-11-22；`detect_order_ambiguity` 回空；`_run_cash_group` 按日先賣後買；commit `22662be` | GREEN 已抽出 `_cash_day_sort_key`；無獨立 restruct | **106 passed** | 規格／STATUS `8babf7d`；正式 DB 未動 |
 | `pr7_fifo_cr_fixes_v1` | CR-01 版本追溯、CR-02 期初守恆、CR-03 fingerprint、CR-04 SQLite 整合；真實副本 UAT | 2026-11-22；`uv run pytest tests/test_fifo_cr_fixes.py tests/test_fifo_sqlite_integration.py -q`；**9 failed／5 passed**；版本／opening 守恆／fingerprint；commit `33f2222` | 2026-11-22；`ALGORITHM_VERSION`、`quantity_conservation(opening_lots=…)`、`build_audit`、fingerprint 欄位、backup ro；commit `60d3446` | 無獨立 restruct | **120 passed** | UAT／規格 doc `07b5f4b`；正式 DB 未動 |
 | `fifo_v3_two_pass_same_day_v1` | CASH Pass2 同日補沖銷；`match_type`；Independent day-trade annotation；2236 合成配平 | 2026-11-26；目標測 **9 failed／3 passed**（blocking／缺 `match_type`／annotation stub／版本 v2） | 2026-11-26；Pass2＋`match_type`＋annotation＋migration＋版本 v3；工作區尚未 commit | 無獨立 restruct | **128 passed** | RCA `docs/test/RCA_two_pass_fifo_same_day.md`；正式 DB 未動；Commit 待授權 |
+| `pr12_cr_fixes_v1` | PR #12 CR：annotation 稅證據／支持股數／AMBIGUOUS／例外隔離；migration backfill；report ON／OFF；2236 E2E；UAT 目錄／verdict | 2026-11-26；`tests/test_day_trade_annotation.py` **5 failed／7 passed**（業務缺口） | 2026-11-26；annotation／migration／report／UAT／E2E／matcher 邊界；工作區尚未 commit | docstring（無行為變更） | **145 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
 
 **記錄欄位最低要求**
 
@@ -489,3 +502,4 @@ uv run pytest -v --tb=line
 | 2026-11-22 | **歷史文件一致性 Phase B**：分支 `docs/history-standardization-phase-b`；修正 SPEC／PRD 過時狀態與欄 E、README UAT 隔離範例、BUGBOT 斷鏈改指針、TDD 導覽、Workflow §8 文件慣例、Class C 橫幅；**未**改業務碼／財務演算法／CI YAML；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。REGRESSION 見 §1.14。 |
 | 2026-11-26 | **`fifo_v3_two_pass_same_day_v1` TDD**：分支 `feature/fifo-same-day-reconciliation`；Gate2 契約變更（FIFO-05 Pass2）；RED 9 failed → GREEN Pass2／annotation／`match_type` migration；全量 **128 passed**／66.92s；正式 DB **未**動；Commit／Push／PR **待**授權。 |
 | 2026-11-26 | **隔離 UAT `fifo_same_day_2236`**：合成九筆；`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；allocated 4000（3600＋400 Pass2）；非 DRAFT；annotation 1000≠400；正式 DB mtime 2026-11-22 14:49:49 未變；判定 **PASS**（`UAT_fifo_same_day_2236.md`）。 |
+| 2026-11-26 | **`pr12_cr_fixes_v1` TDD**：PR #12 CR-01～13；RED 5 failed → GREEN annotation／migration／report／E2E／UAT；全量 **145 passed**／57.98s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |

@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from backend.domain.models import Allocation, Trade
 from backend.services.day_trade_annotation import (
     TAX_RULES_VERSION,
     annotate_day_trades,
+    annotation_to_audit_dict,
 )
 from backend.services.fifo_matcher import MatchInputTrade, run_fifo
 
@@ -24,9 +27,12 @@ def _trade(
     commission: str = "20",
     symbol: str = "2236",
     account: str = "acc1",
+    currency: str = "TWD",
+    trade_type: str = "CASH",
+    gross_amount: str | None = None,
 ) -> Trade:
     unit = Decimal(price)
-    gross = unit * qty
+    gross = Decimal(gross_amount) if gross_amount is not None else unit * qty
     tax_d = Decimal(tax)
     comm = Decimal(commission)
     net = gross - comm - tax_d if side == "SELL" else -(gross + comm)
@@ -40,8 +46,8 @@ def _trade(
         trade_time=None,
         trade_sequence=None,
         side=side,  # type: ignore[arg-type]
-        trade_type="CASH",
-        currency="TWD",
+        trade_type=trade_type,  # type: ignore[arg-type]
+        currency=currency,
         quantity=qty,
         unit_price=unit,
         gross_amount=gross,
@@ -77,24 +83,148 @@ def test_annotation_suspects_half_tax_same_day_support() -> None:
     sell_full = _trade("s2", "2024-08-28", "SELL", 1000, "100", tax="300")
     trades = [buy, sell_half, sell_full]
 
-    # 無期初：Pass2 會把 b1 配給先排序的 sell（依 source_order／id）
     match = run_fifo("ann1", [_mit(buy, 1), _mit(sell_half, 2), _mit(sell_full, 3)])
     result = annotate_day_trades(trades, match.allocations)
 
     assert result.rules_version == TAX_RULES_VERSION
+    # CR-01：僅半稅賣出股數計入 support（非整組 sell_qty）
     assert result.suspected_day_trade_qty == 1000
     assert result.same_day_reconciled_qty == sum(
         a.quantity for a in match.allocations if a.match_type == "SAME_DAY_RECONCILED"
     )
-    # suspected ≠ reconciled 概念獨立（本例數量可能相同，但欄位必須分開存在）
     assert hasattr(result, "suspected_day_trade_qty")
     assert hasattr(result, "same_day_reconciled_qty")
     assert any(c.tax_evidence == "HALF_RATE" for c in result.candidates)
     assert all(c.match_type_label != c.annotation_status for c in result.candidates)
 
 
+def test_cr01_support_qty_uses_half_rate_sell_only() -> None:
+    """CR-01：混合 HALF 100 + STANDARD 1900 → suspected = min(buy, half_rate_sell)=100。"""
+    buy = _trade("b1", "2025-04-01", "BUY", 2000, "100", tax="0")
+    sell_half = _trade("s_half", "2025-04-01", "SELL", 100, "100", tax="15")  # 10000*0.0015
+    sell_full = _trade("s_full", "2025-04-01", "SELL", 1900, "100", tax="570")  # 190000*0.003
+    result = annotate_day_trades([buy, sell_half, sell_full], allocations=[])
+
+    assert len(result.candidates) == 1
+    cand = result.candidates[0]
+    assert cand.half_rate_sell_qty == 100
+    assert cand.suspected_support_qty == 100
+    assert result.suspected_day_trade_qty == 100
+    assert cand.tax_evidence == "HALF_RATE"
+    assert cand.annotation_status == "SUSPECTED_DAY_TRADE"
+
+
+def test_cr01_buy_less_than_half_rate_sell_caps_support() -> None:
+    """CR-01：買少於半稅賣 → support = buy_qty。"""
+    buy = _trade("b1", "2025-04-02", "BUY", 50, "100", tax="0")
+    sell_half = _trade("s1", "2025-04-02", "SELL", 100, "100", tax="15")
+    result = annotate_day_trades([buy, sell_half], allocations=[])
+
+    assert result.candidates[0].suspected_support_qty == 50
+    assert result.suspected_day_trade_qty == 50
+
+
+def test_cr01_no_same_day_buy_no_candidate() -> None:
+    """CR-01：無同日買 → 不產 candidate。"""
+    sell_half = _trade("s1", "2025-04-03", "SELL", 100, "100", tax="15")
+    result = annotate_day_trades([sell_half], allocations=[])
+    assert result.candidates == []
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr02_non_twd_insufficient_evidence() -> None:
+    """CR-02：非 TWD 不得硬套 0.3%/0.15% → INSUFFICIENT_EVIDENCE。"""
+    buy = _trade("b1", "2025-04-04", "BUY", 1000, "100", tax="0", currency="USD")
+    # gross=100000；若誤套台股減半 → tax 150 會被舊邏輯判 HALF_RATE
+    sell = _trade("s1", "2025-04-04", "SELL", 1000, "100", tax="150", currency="USD")
+    result = annotate_day_trades([buy, sell], allocations=[])
+
+    assert len(result.candidates) == 1
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.candidates[0].annotation_status == "INSUFFICIENT_EVIDENCE"
+    assert result.candidates[0].suspected_support_qty == 0
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr02_invalid_gross_insufficient_evidence() -> None:
+    """CR-02：無效 gross_amount → INSUFFICIENT_EVIDENCE。"""
+    buy = _trade("b1", "2025-04-05", "BUY", 100, "100", tax="0")
+    sell = _trade(
+        "s1",
+        "2025-04-05",
+        "SELL",
+        100,
+        "100",
+        tax="15",
+        gross_amount="0",
+    )
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr03_ambiguous_when_both_rates_within_tolerance() -> None:
+    """CR-03：|tax-half|≤tol 且 |tax-full|≤tol → AMBIGUOUS；優先於 HALF_RATE；不標 SUSPECTED。"""
+    # gross=200 → half=0.3→0（ROUND_HALF_UP? 0.3→0）、full=0.6→1；選小額使兩者皆≤1
+    # gross=333 → half=0.4995→0、full=0.999→1；tax=0 可同時近 half 與接近 full 邊緣
+    # 更直接：gross=1 → half=0.0015→0、full=0.003→0；tax=0 兩者皆≤tol
+    buy = _trade("b1", "2025-04-06", "BUY", 1, "1", tax="0")
+    sell = _trade("s1", "2025-04-06", "SELL", 1, "1", tax="0")
+    result = annotate_day_trades([buy, sell], allocations=[])
+
+    assert len(result.candidates) == 1
+    cand = result.candidates[0]
+    assert cand.tax_evidence == "AMBIGUOUS_TAX_EVIDENCE"
+    assert cand.annotation_status != "SUSPECTED_DAY_TRADE"
+    assert cand.suspected_support_qty == 0
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr03_group_with_ambiguous_not_suspected() -> None:
+    """CR-03：組內含 AMBIGUOUS 則整組不標 SUSPECTED。"""
+    buy = _trade("b1", "2025-04-07", "BUY", 200, "100", tax="0")
+    sell_half = _trade("s_half", "2025-04-07", "SELL", 100, "100", tax="15")
+    sell_amb = _trade("s_amb", "2025-04-07", "SELL", 1, "1", tax="0")
+    result = annotate_day_trades([buy, sell_half, sell_amb], allocations=[])
+
+    assert result.candidates[0].tax_evidence == "AMBIGUOUS_TAX_EVIDENCE"
+    assert result.candidates[0].annotation_status != "SUSPECTED_DAY_TRADE"
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr04_annotation_failure_wrapped_emits_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-04：內部邏輯拋錯 → ANNOTATION_FAILED warning；不拋出。"""
+    from backend.services import day_trade_annotation as mod
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("synthetic annotation fault")
+
+    monkeypatch.setattr(mod, "_sell_tax_evidence", _boom)
+    trades = [
+        _trade("b1", "2025-04-08", "BUY", 100, "100", tax="0"),
+        _trade("s1", "2025-04-08", "SELL", 100, "100", tax="15"),
+    ]
+    result = annotate_day_trades(trades, allocations=[])
+    assert result.suspected_day_trade_qty == 0
+    assert result.candidates == []
+    assert any(w.startswith("ANNOTATION_FAILED:") for w in result.warnings)
+
+
+def test_cr04_annotation_failure_on_iterable_materialization() -> None:
+    """CR-04：trades 迭代失敗 → 可追溯警告；不得拋錯。"""
+
+    class _BadIter:
+        def __iter__(self):
+            raise ValueError("boom")
+
+    result = annotate_day_trades(_BadIter(), allocations=[])  # type: ignore[arg-type]
+    assert result.suspected_day_trade_qty == 0
+    assert result.same_day_reconciled_qty == 0
+    assert any(w.startswith("ANNOTATION_FAILED:") for w in result.warnings)
+
+
 def test_h01_annotation_on_off_financial_fields_equal() -> None:
-    """H01：Annotation ON＝OFF；allocations／未售／blocking 財務結果全等。"""
+    """H01／CR-09：財務鍵 snapshot 後跑 annotation；allocations／blocking／unsold 全等。"""
     trades_mit = [
         _mit(_trade("b1", "2025-03-20", "BUY", 1000, "72", tax="0"), 1),
         _mit(_trade("s1", "2025-03-20", "SELL", 1000, "70", tax="105"), 2),
@@ -104,27 +234,59 @@ def test_h01_annotation_on_off_financial_fields_equal() -> None:
         _trade("s1", "2025-03-20", "SELL", 1000, "70", tax="105"),
     ]
 
-    off = run_fifo("h01-off", trades_mit)
-    on = run_fifo("h01-on", trades_mit)
-    ann = annotate_day_trades(domain_trades, on.allocations)
+    match = run_fifo("h01", trades_mit)
+    snapshot = {
+        "allocs": [
+            (a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type)
+            for a in match.allocations
+        ],
+        "blocking": match.blocking,
+        "unsold": [(u.buy_trade_id, u.available) for u in match.unsold],
+        "buy_gross": [t.gross_amount for t in domain_trades if t.side == "BUY"],
+        "sell_gross": [t.gross_amount for t in domain_trades if t.side == "SELL"],
+        "commission": [t.commission for t in domain_trades],
+        "tax": [t.tax for t in domain_trades],
+    }
 
-    assert [(a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type) for a in off.allocations] == [
-        (a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type) for a in on.allocations
-    ]
-    assert off.blocking == on.blocking
-    assert [(u.buy_trade_id, u.available) for u in off.unsold] == [
-        (u.buy_trade_id, u.available) for u in on.unsold
-    ]
-    # annotation 不得改寫 allocations
+    ann = annotate_day_trades(domain_trades, match.allocations)
+
+    assert [
+        (a.buy_trade_id, a.sell_trade_id, a.quantity, a.match_type) for a in match.allocations
+    ] == snapshot["allocs"]
+    assert match.blocking == snapshot["blocking"]
+    assert [(u.buy_trade_id, u.available) for u in match.unsold] == snapshot["unsold"]
+    assert [t.gross_amount for t in domain_trades if t.side == "BUY"] == snapshot["buy_gross"]
+    assert [t.gross_amount for t in domain_trades if t.side == "SELL"] == snapshot["sell_gross"]
+    assert [t.commission for t in domain_trades] == snapshot["commission"]
+    assert [t.tax for t in domain_trades] == snapshot["tax"]
     assert isinstance(ann.candidates, list)
-    assert all(isinstance(a, Allocation) for a in on.allocations)
+    assert all(isinstance(a, Allocation) for a in match.allocations)
 
 
-def test_annotation_failure_emits_warning_not_finance_rewrite() -> None:
-    """註記失敗 → 可追溯警告；不得拋錯改寫財務。"""
-    trades = [_trade("b1", "2025-01-01", "BUY", 100, "10", tax="0")]
-    # 故意傳入空 allocations 與不一致輸入仍應回傳結構
-    result = annotate_day_trades(trades, allocations=[])
-    assert result.suspected_day_trade_qty == 0
-    assert result.same_day_reconciled_qty == 0
-    assert result.warnings == [] or all(isinstance(w, str) for w in result.warnings)
+def test_cr12_audit_dict_includes_trace_fields() -> None:
+    """CR-12：audit candidate 含可追溯增量欄位。"""
+    buy = _trade("b1", "2025-04-09", "BUY", 1000, "100", tax="0")
+    sell_half = _trade("s1", "2025-04-09", "SELL", 400, "100", tax="60")
+    sell_full = _trade("s2", "2025-04-09", "SELL", 600, "100", tax="180")
+    allocs = [
+        Allocation(
+            run_id="r1",
+            allocation_id="a1",
+            buy_trade_id="b1",
+            opening_lot_id=None,
+            sell_trade_id="s1",
+            quantity=400,
+            sequence_no=1,
+            match_type="SAME_DAY_RECONCILED",
+        )
+    ]
+    result = annotate_day_trades([buy, sell_half, sell_full], allocs)
+    payload = annotation_to_audit_dict(result)
+    cand = payload["day_trade_annotation"]["candidates"][0]
+    assert set(cand["candidate_sell_trade_ids"]) == {"s1", "s2"}
+    assert set(cand["source_buy_trade_ids"]) == {"b1"}
+    assert cand["half_rate_sell_qty"] == 400
+    assert cand["suspected_support_qty"] == 400
+    assert cand["reconciled_quantity"] == 400
+    assert "uncertainty_reason" in cand
+    assert cand["tax_rule_version"] == TAX_RULES_VERSION
