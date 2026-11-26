@@ -482,6 +482,7 @@
 | `pr12_cr_r3_v1` | PR #12 Round-3：inferred 分類＋稅有效窗 v3／原始 E2E 強化／`build_uat_checks` 反向／非干涉嚴格／migration 財務欄／指紋文件 | 2026-11-26；先寫 RED 契約測（inferred／valid_through／verdict 反向／REQUIRED_AUDIT_KEYS／permutation） | 2026-11-26；`tw_sec_tax_v3`；`build_uat_checks`；E2E／非干涉／migration；工作區尚未 commit | docstring（無行為變更） | **180 passed**／64.28s | 正式 DB 未動；ruff 通過；Commit／PR 回覆待授權 |
 | `pr12_cr_r4_v1` | PR #12 Round-4：Excel 真實財務驗證／檔案層故障注入／Owner 列序／permutation 財務／Trace 逐筆費用／稅期間＋MIXED | **事後驗證**：未留存獨立 RED 失敗輸出；新增 `test_uat_fifo_same_day_file_fault` 等 | 2026-11-26；UAT finance verify／resolve outputs；annotation MIXED；E2E helpers；工作區尚未 commit | 無獨立 restruct | **205 passed**／78.18s | 正式 DB 未動；ruff 通過；Commit／PR 回覆待授權 |
 | `cr10a_finance_verify_v1` | CR-10A：cost／income／qty／interest 獨立 Decimal golden 核對＋`min_detail_rows` 結構下限；禁單列灌總額 | 2026-11-26；`-k "cost_income_both_up … single_row_fake …"` → **6 failed／1 passed**（cost±1＋income±1 仍 ok；qty 竄改仍 ok；單列仍 ok；golden 缺鍵） | 2026-11-26；擴充 golden；`verify_detail_xlsx_finance` 獨立比對＋結構；多列正向；工作區尚未 commit | 無獨立 restruct | **211 passed／1 skipped**／83.85s | 正式 DB 未動；ruff 通過；**待複審**；Commit／PR 待授權 |
+| `golden_phase01_inventory_v1` | Phase 0／1 黃金驗收：Decimal 文字正規化匿名測＋盤點腳本／非敏感 Manifest 模板與規範文件；真實 Manifest／evidence 本機 gitignored | **非業務 RED**：正規化為盤點交叉核對基礎建設；匿名測首次即對齊實作 | 2026-11-26；`backend/util/decimal_text.py`；`scripts/_golden_phase01_inventory.py`（唯讀）；`docs/test/GOLDEN_ACCEPTANCE_PHASE01.md` | 無獨立 restruct | **222 passed／1 skipped**／66.79s | 正式 DB 未寫入；ruff 通過；**CR-10A 仍未結案**；Phase 2 未授權；Commit／Push 待複審 |
 
 **記錄欄位最低要求**
 

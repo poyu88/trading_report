@@ -1,0 +1,26 @@
+{
+  "case_id": "GOLD-00X",
+  "source_path": "UNKNOWN",
+  "source_format": "UNKNOWN",
+  "source_sha256": "UNKNOWN_MUST_BE_64_HEX_OR_MULTIPLE",
+  "file_size_bytes": "UNKNOWN",
+  "broker": "UNKNOWN",
+  "account_alias": "broker_acct_A",
+  "parser_profile": "UNKNOWN",
+  "parser_version": "UNKNOWN",
+  "date_from": "UNKNOWN",
+  "date_to": "UNKNOWN",
+  "physical_row_count": "UNKNOWN",
+  "valid_trade_count": "UNKNOWN",
+  "excluded_row_count": "UNKNOWN",
+  "duplicate_row_count": "UNKNOWN",
+  "symbol_count": "UNKNOWN",
+  "contains_2236": "UNKNOWN",
+  "source_role": "A",
+  "validation_status": "TEMPLATE_NOT_INVENTORIED",
+  "known_limitations": [
+    "本檔為非敏感 Schema／模板；不得填入真實交易明細",
+    "無法取得之欄位必須寫 UNKNOWN／NOT_APPLICABLE；不得用 0 或 True 充數",
+    "真實 Manifest 僅存在本機 data/golden/manifest/（gitignored）"
+  ]
+}
