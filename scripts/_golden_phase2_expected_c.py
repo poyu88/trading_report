@@ -35,6 +35,33 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def phase2_exit_code(cases: dict[str, dict[str, Any]]) -> int:
+    """來源完整性 FAIL 或 validation BLOCKED 時回傳非零結束碼。
+
+    PARTIAL（缺期初／UNKNOWN invalid）允許 exit 0，但不得標完整驗收成功。
+    """
+    for meta in cases.values():
+        status = str(meta.get("validation_status") or "")
+        integrity = str(meta.get("source_integrity") or "")
+        if status == "BLOCKED_SOURCE_INTEGRITY" or integrity == "FAIL":
+            return 1
+    return 0
+
+
+def may_mark_full_acceptance(
+    *,
+    validation_status: str,
+    source_integrity: str,
+    has_source_lock_evidence: bool,
+) -> bool:
+    """完整驗收成功須同時具備獨立核算完成、來源完整性 PASS、來源鎖定證據。"""
+    if not has_source_lock_evidence:
+        return False
+    if source_integrity != "PASS":
+        return False
+    return validation_status == "INDEPENDENTLY_COMPUTED"
+
+
 def _enrich_capital_rows(
     rows: list[dict[str, Any]],
     *,
@@ -381,27 +408,41 @@ def main() -> int:
         doc["built_at_utc"] = built_at
         _write_json(EXPECTED_C / f"{case_id}.json", doc)
 
+    case_summaries = {
+        cid: {
+            "validation_status": d["validation_status"],
+            "source_integrity": d.get("source_integrity", {}).get("status"),
+            "fifo_scope": d.get("fifo_scope"),
+            "trade_id_unique": d.get("trade_id_unique"),
+            "allocation_count": len(d.get("allocations") or []),
+            "allocation_line_count": len(d.get("allocation_lines") or []),
+            "aggregates_valid_trade_count": d["aggregates"]["valid_trade_count"],
+            "fifo_unmatched_sell_qty": d["fifo_expected"]["unmatched_sell_qty"],
+            "realized_status": d["realized_and_open"]["status"],
+            "invalid_row_count": d.get("invalid_row_count"),
+            "full_acceptance_ok": may_mark_full_acceptance(
+                validation_status=d["validation_status"],
+                source_integrity=str(
+                    (d.get("source_integrity") or {}).get("status") or ""
+                ),
+                has_source_lock_evidence=bool(
+                    (d.get("source_integrity") or {}).get("status") == "PASS"
+                    and not (d.get("source_integrity") or {}).get("sha256_mismatches")
+                ),
+            ),
+        }
+        for cid, d in docs.items()
+    }
+    code = phase2_exit_code(case_summaries)
     summary = {
         "phase": "2_r2",
         "built_at_utc": built_at,
         "authorization": (
-            "Owner PR12 Phase 2 複審修正；CR-10A 仍開；Merge／Migration 未授權"
+            "Owner PR12 Phase 2 複審通過；Phase 3／CR-10A 已授權；"
+            "Merge／Migration 未授權"
         ),
-        "cases": {
-            cid: {
-                "validation_status": d["validation_status"],
-                "source_integrity": d.get("source_integrity", {}).get("status"),
-                "fifo_scope": d.get("fifo_scope"),
-                "trade_id_unique": d.get("trade_id_unique"),
-                "allocation_count": len(d.get("allocations") or []),
-                "allocation_line_count": len(d.get("allocation_lines") or []),
-                "aggregates_valid_trade_count": d["aggregates"]["valid_trade_count"],
-                "fifo_unmatched_sell_qty": d["fifo_expected"]["unmatched_sell_qty"],
-                "realized_status": d["realized_and_open"]["status"],
-                "invalid_row_count": d.get("invalid_row_count"),
-            }
-            for cid, d in docs.items()
-        },
+        "cases": case_summaries,
+        "exit_code": code,
         "note": "完整財務答案／逐筆 allocation 僅本機 expected_c；公開 Git 僅非敏感程式與文件",
     }
     _write_json(EVIDENCE / "phase02_expected_c_summary.json", summary)
@@ -438,7 +479,7 @@ def main() -> int:
         _write_json(mpath, manifest)
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+    return code
 
 
 if __name__ == "__main__":

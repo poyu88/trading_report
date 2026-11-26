@@ -1,6 +1,6 @@
 # 真實交易黃金驗收 — Phase 2 獨立 C 層（R1.0）
 
-> **狀態**：Owner 已授權 Phase 2；複審修正後本機 C 已重產。**CR-10A 仍未結案**。Merge／正式 Migration／寫入正式 DB **禁止**。
+> **狀態**：Phase 2 複審通過；Owner 已授權 **Phase 3／CR-10A**。本機 GOLD-001-2236 C↔D **已驗**。Merge／正式 Migration／寫入正式 DB **禁止**。
 > **本文件**：非敏感技術規範。**禁止**貼入真實交易明細、帳戶號碼、完整財務答案數字。
 
 ## 1. 目標
@@ -60,9 +60,17 @@
 - 缺核准期初之賣出完整成本／損益（→ PARTIAL／unmatched）
 - DAY_TRADE pool（`fifo_scope=CASH_ONLY`）
 - 外部 trade id／多帳戶真實樣本／特殊商品等（見 `PENDING_DATA_VALIDATION.md`）
-- 報表 A～W 逐欄與 CR-10A 財務驗證器綁定（待獨立 Reviewer／CR-10A）
-- 受測 `report_finance.trunc_toward_zero` 負數語意（與 C 層已修正者分離；見 PENDING）
+- 報表 A～W 其他代號／全年邊界（見 `PENDING_DATA_VALIDATION.md`）
+- GOLD-004 全年 D 端到端（C 已就緒；非 2236 阻擋）
 
-## 5. 下一步
+## 5. Phase 3／CR-10A（已接回）
 
-Phase 2 完成後等待獨立 Reviewer，準備接回 **CR-10A** 財務驗證。不得自行 Merge。
+| 項目 | 說明 |
+|---|---|
+| 比對模組 | `backend/golden/compare_c_d.py`（來源指紋；禁改 C） |
+| 管線觀測 | `backend/golden/phase3_pipeline.py` |
+| 本機 UAT | `scripts/_golden_phase3_cr10a_uat.py` → `data/uat/golden_cr10a_2236/`＋`runs_d/` |
+| 結束碼 | Phase 2：`phase2_exit_code`（FAIL／BLOCKED→非 0）；缺來源鎖定不得 `full_acceptance_ok` |
+| TRUNC | 受測 `report_finance.trunc_toward_zero` 正負皆朝零（GOLD-TRUNC-NEG **CLOSED**） |
+
+不得自行 Merge。

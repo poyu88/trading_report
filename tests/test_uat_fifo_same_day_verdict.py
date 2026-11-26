@@ -372,10 +372,51 @@ def test_verify_detail_xlsx_finance_fails_when_finance_cells_cleared(tmp_path: P
     assert result["ok"] is False
 
 
-@pytest.mark.skip(reason="RED-07：逐筆金額對沖驗收待辦（非本輪 CR-10A 聚合範圍）")
-def test_verify_detail_xlsx_finance_per_row_offset_deferred() -> None:
-    """RED-07（待辦）：逐筆對沖但聚合總額不變時，現行聚合驗收仍可能通過。"""
-    raise AssertionError("per-row finance verification not in CR-10A scope")
+def test_verify_detail_xlsx_finance_fails_when_per_row_offsets_cancel(
+    tmp_path: Path,
+) -> None:
+    """RED-07：逐筆成本／收入互抵但總額不變 → 須以 per_row golden FAIL。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "per_row.xlsx")
+    # 讀出合法逐筆作為 golden
+    wb = load_workbook(path, data_only=True)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    costs: list[Decimal] = []
+    incomes: list[Decimal] = []
+    for row in ws.iter_rows(min_row=2, max_col=len(headers), values_only=True):
+        if all(v is None for v in row):
+            continue
+        costs.append(Decimal(str(row[idx["成本"]] or 0)))
+        incomes.append(Decimal(str(row[idx["收入"]] or 0)))
+    golden = {
+        **golden,
+        "per_row_costs": costs,
+        "per_row_incomes": incomes,
+    }
+    assert verify_detail_xlsx_finance(path, golden)["ok"] is True
+
+    # 列 0 +1、列 1 -1 → 總額不變
+    wb2 = load_workbook(path)
+    ws2 = wb2.active
+    assert ws2 is not None
+    headers2 = [c.value for c in next(ws2.iter_rows(min_row=1, max_row=1))]
+    idx2 = {h: i + 1 for i, h in enumerate(headers2)}
+    r0_cost = ws2.cell(2, idx2["成本"])
+    r1_cost = ws2.cell(3, idx2["成本"])
+    r0_income = ws2.cell(2, idx2["收入"])
+    r1_income = ws2.cell(3, idx2["收入"])
+    r0_cost.value = float(Decimal(str(r0_cost.value)) + Decimal(1))
+    r1_cost.value = float(Decimal(str(r1_cost.value)) - Decimal(1))
+    r0_income.value = float(Decimal(str(r0_income.value)) + Decimal(1))
+    r1_income.value = float(Decimal(str(r1_income.value)) - Decimal(1))
+    wb2.save(path)
+
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+    assert "per_row_costs" in result["diffs"] or "per_row_incomes" in result["diffs"]
 
 
 def test_verify_detail_xlsx_finance_fails_missing_file(tmp_path: Path) -> None:

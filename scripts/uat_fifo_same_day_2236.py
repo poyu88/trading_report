@@ -351,13 +351,14 @@ def compute_finance_golden_from_uat_trades(
 
 def verify_detail_xlsx_finance(
     xlsx_path: Path,
-    golden: dict[str, Decimal],
+    golden: dict[str, Any],
 ) -> dict[str, Any]:
     """讀取明細 Excel A–W 財務儲存格並與 golden **獨立**比對（fail-closed）。
 
     Args:
         xlsx_path: 明細報表路徑。
-        golden: ``compute_finance_golden_from_uat_trades`` 產出。
+        golden: ``compute_finance_golden_from_uat_trades`` 產出；
+            可選 ``per_row_costs``／``per_row_incomes``（list[Decimal]）做逐筆核對。
 
     Returns:
         ``{"ok": bool, "actual": dict, "diffs": dict, "errors": list}``。
@@ -370,9 +371,10 @@ def verify_detail_xlsx_finance(
         不得以檔案存在或檔名非 DRAFT 當作財務驗證成功。
         ``cost``／``income`` 必須各自對 golden，不得僅靠 ``income-cost==profit``。
         ``data_rows < min_detail_rows`` → FAIL（擋單列灌總額）。
+        若提供逐筆 golden，列間互相抵銷但總額不變仍須 FAIL。
     """
     errors: list[str] = []
-    actual: dict[str, Decimal] = {}
+    actual: dict[str, Any] = {}
     diffs: dict[str, dict[str, str]] = {}
     if not xlsx_path.is_file():
         return {
@@ -399,12 +401,17 @@ def verify_detail_xlsx_finance(
         buy_comm = sell_comm = tax_sum = interest = Decimal(0)
         cost = income = profit = Decimal(0)
         data_rows = 0
+        row_costs: list[Decimal] = []
+        row_incomes: list[Decimal] = []
 
-        def _add(col: str, acc: Decimal, row: tuple[Any, ...]) -> Decimal:
+        def _cell(col: str, row: tuple[Any, ...]) -> Decimal:
             val = row[idx[col]]
             if val is None:
-                return acc
-            return acc + Decimal(str(val))
+                return Decimal(0)
+            return Decimal(str(val))
+
+        def _add(col: str, acc: Decimal, row: tuple[Any, ...]) -> Decimal:
+            return acc + _cell(col, row)
 
         for row in ws.iter_rows(min_row=2, max_col=len(HEADERS), values_only=True):
             if all(v is None for v in row):
@@ -416,8 +423,12 @@ def verify_detail_xlsx_finance(
             sell_comm = _add("手續費（賣）", sell_comm, row)
             tax_sum = _add("交易稅", tax_sum, row)
             interest = _add("利息", interest, row)
-            cost = _add("成本", cost, row)
-            income = _add("收入", income, row)
+            row_cost = _cell("成本", row)
+            row_income = _cell("收入", row)
+            row_costs.append(row_cost)
+            row_incomes.append(row_income)
+            cost += row_cost
+            income += row_income
             profit = _add("損益", profit, row)
         if data_rows == 0:
             return {
@@ -465,6 +476,23 @@ def verify_detail_xlsx_finance(
                 "expected": str(actual["profit"]),
                 "actual": str(actual["income_minus_cost"]),
             }
+        # RED-07：逐筆成本／收入（互抵但總額不變仍須抓到）
+        per_costs = golden.get("per_row_costs")
+        per_incomes = golden.get("per_row_incomes")
+        if per_costs is not None:
+            exp_costs = [Decimal(str(x)) for x in per_costs]
+            if row_costs != exp_costs:
+                diffs["per_row_costs"] = {
+                    "expected": ",".join(str(x) for x in exp_costs),
+                    "actual": ",".join(str(x) for x in row_costs),
+                }
+        if per_incomes is not None:
+            exp_incomes = [Decimal(str(x)) for x in per_incomes]
+            if row_incomes != exp_incomes:
+                diffs["per_row_incomes"] = {
+                    "expected": ",".join(str(x) for x in exp_incomes),
+                    "actual": ",".join(str(x) for x in row_incomes),
+                }
     except Exception as exc:  # noqa: BLE001 — fail-closed
         return {
             "ok": False,
@@ -745,6 +773,11 @@ def _run_actual_migration_check(run_dir: Path) -> dict:
     }
 
 
+def uat_exit_code(verdict: str) -> int:
+    """CR-10B：UAT 判定對應行程結束碼（PASS→0；其餘→1）。"""
+    return 0 if verdict == "PASS" else 1
+
+
 def main() -> int:
     """執行隔離 UAT 並於**全部**步驟後計算 verdict。
 
@@ -972,7 +1005,7 @@ def main() -> int:
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0 if summary["uat_verdict"] == "PASS" else 1
+    return uat_exit_code(str(summary["uat_verdict"]))
 
 
 if __name__ == "__main__":

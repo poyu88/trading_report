@@ -30,7 +30,8 @@
 - Verdict 以 `build_uat_checks`（`scripts/uat_fifo_same_day_2236.py`）組裝之 **全部** `checks` 為準；反向失敗見 `tests/test_uat_fifo_same_day_verdict.py`／檔案層故障注入見 `tests/test_uat_fifo_same_day_file_fault.py`。
 - `detail_xlsx_finance_ok` 必須來自 `verify_detail_xlsx_finance`（讀 Excel A–W），**不得**以檔案存在／檔名非 DRAFT 預設 True。
 - **CR-10A**：`verify_detail_xlsx_finance` 須以 fixture Decimal golden **獨立**核對 `buy_qty`／`sell_qty`／買賣手續費／稅／利息／**成本**／**收入**／損益，並保留 `income-cost==profit`；`data_rows < min_detail_rows`（本軌跡＝賣出筆數 6）→ FAIL（禁單列灌總額冒充）。不得只靠恒等式當成本／收入驗收。
-- **本輪未涵蓋**：RED-07 逐筆金額對沖；CR-06B `_assert_excel_finance`；CR-10B `main()` 結束碼；CR-10C Trace／Conservation 內容驗證。
+- **已補**：RED-07 逐筆互抵（`per_row_costs`／`per_row_incomes`）；CR-10B `uat_exit_code`。
+- **本輪未涵蓋**：CR-10C Trace／Conservation **內容**逐欄驗證（檔案存在／刪除已涵蓋）。
 - 必要產出以 audit 內 `fifo_trace_file`／`conservation_file` 實際路徑驗證（`resolve_required_outputs`），不用 glob 關鍵字。
 
 ## 2. 產出清單（人工可查）

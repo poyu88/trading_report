@@ -823,6 +823,21 @@ def build_expected_c_document(
         },
         "trade_id_unique": trade_ids_unique(trades),
         "trade_count": len(trades),
+        "trade_fingerprints": [
+            {
+                "source_trade_id": t.trade_id,
+                "symbol": t.symbol,
+                "trade_date": t.trade_date.isoformat(),
+                "side": t.side,
+                "quantity": t.quantity,
+                "unit_price": str(t.unit_price),
+                "gross_amount": str(t.gross_amount),
+                "commission": str(t.commission),
+                "tax": str(t.tax),
+                "interest": str(t.interest) if t.interest_known else "",
+            }
+            for t in trades
+        ],
         "fields_not_computable": not_computable,
         "known_limitations": limitations,
     }

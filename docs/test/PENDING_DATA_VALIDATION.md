@@ -104,15 +104,15 @@
 |---|---|
 | CR ID | GOLD-FIN-EDGE |
 | 問題名稱 | 零股、尾差、部分配對、跨年等真實逐筆財務邊界 |
-| 程式位置 | `scripts/uat_fifo_same_day_2236.py`::`verify_detail_xlsx_finance`；報表投影（CR-10A 仍開） |
-| 目前行為 | Phase 2 已有本機獨立 C 彙總／FIFO／損益；Excel 逐欄與 CR-10A 尚未綁定 |
-| 已驗證範圍 | 匿名／合成故障注入；合成 C 層契約測 |
-| 未驗證範圍 | 真實帳戶逐筆邊界全覆蓋；C↔Excel 逐欄 |
+| 程式位置 | `scripts/uat_fifo_same_day_2236.py`::`verify_detail_xlsx_finance`；`backend/golden/compare_c_d.py` |
+| 目前行為 | GOLD-001-2236 已完成本機 C↔D 聚合／指紋／故障注入；其他邊界樣本仍缺 |
+| 已驗證範圍 | GOLD-001-2236 隔離 UAT；合成 C↔D；RED-07 逐筆互抵；INV-05 同向偏移 |
+| 未驗證範圍 | 零股／跨年／特殊尾差等其他真實片段全覆蓋；GOLD-004 全年 D 端到端 |
 | 缺少資料 | 對應邊界之真實對帳單片段（不得為滿足 CR 而自造） |
-| 資料齊全後 | 以本機 C 綁定 CR-10A／UAT 真實驗收 |
-| 未來驗收條件 | 獨立 C 與 Excel 逐欄一致；缺資料不預設 PASS |
-| 重新啟動條件 | 獨立 Reviewer 通過後接 CR-10A；來源鎖定 |
-| 目前狀態 | PENDING_DATA（Phase 2 C 已建；邊界／CR-10A 仍待） |
+| 資料齊全後 | 擴充本機 C↔D 案例；缺資料不預設 PASS |
+| 未來驗收條件 | 各邊界獨立 C 與正式管線一致 |
+| 重新啟動條件 | Owner 提供可重用邊界封存 |
+| 目前狀態 | PENDING_DATA（001-2236 已驗；其餘邊界仍待） |
 
 ## 受測 report_finance 負數 TRUNC 語意（與 C 層分離）
 
@@ -121,18 +121,31 @@
 | CR ID | GOLD-TRUNC-NEG |
 | 問題名稱 | 受測 `backend.services.report_finance.trunc_toward_zero` 對負數使用 `ROUND_UP`（離零），與 Decimal「朝零＝ROUND_DOWN」不符 |
 | 程式位置 | `backend/services/report_finance.py`::`trunc_toward_zero` |
-| 目前行為 | 正數朝零；負數離零（例：`-1.9` → `-2`） |
-| 已驗證範圍 | 獨立 C 層 `backend.golden.expected_c.trunc_toward_zero` 已改為一律 `ROUND_DOWN`（合成測覆蓋負數） |
-| 未驗證範圍 | 受測報表路徑負數單價／價金片段之生產修正與回歸 |
-| 缺少資料 | 無需新交易；待 CR-10A 接回時以合成負數片段驗收 |
-| 資料齊全後 | 修正受測函式＋契約測；不得削弱既有正數 TRUNC 斷言 |
+| 目前行為 | **已修正**：正負數一律 `ROUND_DOWN`（朝零） |
+| 已驗證範圍 | 合成負數契約測＋既有正數 `test_fragment_gross_trunc` 回歸 |
+| 未驗證範圍 | （無；本項結案） |
+| 缺少資料 | 無 |
+| 資料齊全後 | — |
 | 未來驗收條件 | 正負數皆朝零；與獨立 C 一致 |
-| 重新啟動條件 | 獨立 Reviewer 通過後接 CR-10A |
-| 目前狀態 | PENDING_DATA（C 層已修；受測路徑待 CR-10A） |
+| 重新啟動條件 | — |
+| 目前狀態 | **CLOSED**（Phase 3／CR-10A 接回已修） |
+
+## GOLD-002／003／004 適用範圍（Phase 3）
+
+| case | 驗收 | 待資料／限制 |
+|---|---|---|
+| GOLD-002 | PARTIAL：來源 PARTIAL、可算 FIFO／aggregates；不得完整成功 | HTML `invalid_row_count=UNKNOWN`；realized 因未配賣出不完全 |
+| GOLD-003 | PARTIAL：已確認缺買進／未知幣別／非 CASH 類型欄 | 期初、DAY_TRADE pool、幣別；**不得補造期初／預設 0** |
+| GOLD-004 | C 層 `INDEPENDENTLY_COMPUTED`＋來源 PASS（本機） | 全年 D 端到端 UAT 尚未跑（504 筆）；非阻擋 CR-10A 2236 |
+
+本機摘要：`data/golden/evidence/phase03_partial_cases_summary.json`（gitignored）。
 
 ## 延期（DEFERRED；本輪非阻擋）
 
 | ID | 說明 | 狀態 |
 |---|---|---|
-| CR-10A／10B／10C | 真實資料財務驗證器／UAT 主流程／稽核內容 | DEFERRED |
+| CR-10A GOLD-001-2236 | 本機隔離 UAT C↔D **PASS**；證據本機 `runs_d` | **本輪已驗**（真實數字不入 Git） |
+| CR-10B／10C | 合成檔案層故障注入＋`uat_exit_code`；真實報表反向見 2236 UAT | 部分完成；擴充案例非阻擋 |
+| CR-06B／06C | 既有合成九筆 E2E 維持 | 既有通過 |
+| GOLD-004 全年 D UAT | C 已就緒；正式管線全年比對 | DEFERRED（資料量大；非 2236 阻擋） |
 | Manifest Pydantic／mypy／Hypothesis／Mutation／完整稅務引擎 | 獨立評估 | DEFERRED |

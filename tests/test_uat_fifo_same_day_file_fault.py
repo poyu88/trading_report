@@ -20,6 +20,7 @@ from scripts.uat_fifo_same_day_2236 import (
     build_uat_checks,
     compute_finance_golden_from_uat_trades,
     resolve_required_outputs,
+    uat_exit_code,
     verify_detail_xlsx_finance,
 )
 
@@ -251,6 +252,13 @@ def test_cr10c_tamper_audit_suspected_qty_fails(tmp_path: Path) -> None:
     assert checks["annotation_suspected_exact_1000"] is False
     assert all(checks.values()) is False
     ctx["session"].close()
+
+
+def test_cr10b_uat_exit_code_nonzero_on_fail() -> None:
+    """CR-10B：verdict FAIL／非 PASS → 非零結束碼；PASS → 0。"""
+    assert uat_exit_code("PASS") == 0
+    assert uat_exit_code("FAIL") == 1
+    assert uat_exit_code("DRAFT") == 1
 
 
 def test_cr10c_resolve_required_outputs_rejects_directory_named_like_file(
