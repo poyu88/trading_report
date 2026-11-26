@@ -484,6 +484,7 @@
 | `cr10a_finance_verify_v1` | CR-10A：cost／income／qty／interest 獨立 Decimal golden 核對＋`min_detail_rows` 結構下限；禁單列灌總額 | 2026-11-26；`-k "cost_income_both_up … single_row_fake …"` → **6 failed／1 passed**（cost±1＋income±1 仍 ok；qty 竄改仍 ok；單列仍 ok；golden 缺鍵） | 2026-11-26；擴充 golden；`verify_detail_xlsx_finance` 獨立比對＋結構；多列正向；工作區尚未 commit | 無獨立 restruct | **211 passed／1 skipped**／83.85s | 正式 DB 未動；ruff 通過；**待複審**；Commit／PR 待授權 |
 | `golden_phase01_inventory_v1` | Phase 0／1 黃金驗收：Decimal 文字正規化匿名測＋盤點腳本／非敏感 Manifest 模板與規範文件；真實 Manifest／evidence 本機 gitignored | **非業務 RED**：正規化為盤點交叉核對基礎建設；匿名測首次即對齊實作 | 2026-11-26；`backend/util/decimal_text.py`；`scripts/_golden_phase01_inventory.py`（唯讀）；`docs/test/GOLDEN_ACCEPTANCE_PHASE01.md` | 無獨立 restruct | **222 passed／1 skipped**／66.79s | 正式 DB 未寫入；ruff 通過；**CR-10A 仍未結案**；Phase 2 未授權；Commit／Push 待複審 |
 | `golden_cr_01_06_07_08_09_v1` | GOLD-CR：日期真實排序、非法 Decimal fail-closed、千分位／±0、SHA256 鎖定阻礙、盤點失敗非零結束碼；PENDING_DATA 文件 | 2026-11-26；`tests/test_golden_cr_fixes.py` 收集期缺模組 → ERROR／既有非法數值契約需改 | 2026-11-26；`date_text`／`sha256_lock`／強化 `decimal_text`；inventory 結束碼 | 無獨立 restruct | **231 passed／1 skipped**／74.94s | 正式 DB 未寫；CR-10A 仍開；待資料項見 `PENDING_DATA_VALIDATION.md` |
+| `golden_cr_06_07_r2_v1` | GOLD-CR-06／07 複審：`is_finite` 拒 NaN／Inf；非法不回 sentinel；千分位先驗證再去逗號 | 2026-11-26；擴充 `test_golden_cr_fixes`（非有限／非法千分位／相同非法不得相等） | 2026-11-26；`decimal_text`＋`nums_equal`／`_norm_num_key` | 無 | **245 passed／1 skipped**／66.35s | 01／08／09／PENDING 文件不重開；Phase 2 未授權 |
 
 **記錄欄位最低要求**
 

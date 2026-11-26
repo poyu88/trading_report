@@ -408,17 +408,25 @@ def normalize_qty(text: str) -> str:
 
 
 def normalize_num(text: str) -> str:
-    """正規化金額／單價字串（委派 ``backend.util.decimal_text``）。
-
-    非法數值回傳唯一 sentinel（含原文摘要），使交叉核對無法誤判為相等
-    （GOLD-CR-06 fail-closed）。
-    """
+    """正規化金額／單價字串；非法數值直接 raise（GOLD-CR-06；不回傳 sentinel）。"""
     from backend.util.decimal_text import normalize_decimal_text
 
+    return normalize_decimal_text(text)
+
+
+def nums_equal(left: str, right: str) -> bool:
+    """交叉核對用：任一方非法 → False（相同非法文字亦不得判相等）。"""
+    from backend.util.decimal_text import decimal_texts_equal
+
+    return decimal_texts_equal(left, right)
+
+
+def _norm_num_key(text: str) -> Any:
+    """鍵用正規化；非法值使用唯一物件，避免兩筆非法誤匹配。"""
     try:
-        return normalize_decimal_text(text)
+        return normalize_num(text)
     except ValueError:
-        return f"__INVALID_DECIMAL__:{text!r}"
+        return ("__INVALID_DECIMAL__", object())
 
 
 def inventory_exit_code(*, blockers: list[str], inv_fail: bool) -> int:
@@ -553,11 +561,11 @@ def cross_check_csv_to_db(
             r["trade_date"].replace("-", "/"),
             side_to_buy_sell(r["side_raw"]),
             normalize_qty(r["quantity"]),
-            normalize_num(r["unit_price"]),
-            normalize_num(r["gross_amount"]),
-            normalize_num(r["commission"]),
-            normalize_num(r["tax"]),
-            normalize_num(r["net_settlement"]),
+            _norm_num_key(r["unit_price"]),
+            _norm_num_key(r["gross_amount"]),
+            _norm_num_key(r["commission"]),
+            _norm_num_key(r["tax"]),
+            _norm_num_key(r["net_settlement"]),
         )
 
     def db_key(r: dict[str, Any]) -> tuple[Any, ...]:
@@ -575,11 +583,11 @@ def cross_check_csv_to_db(
             td,
             r["side"],
             str(r["quantity"]),
-            normalize_num(r["unit_price_txt"]),
-            normalize_num(r["gross_amount_txt"]),
-            normalize_num(r["commission_txt"]),
-            normalize_num(r["tax_txt"]),
-            normalize_num(r["net_settlement_txt"] or ""),
+            _norm_num_key(r["unit_price_txt"]),
+            _norm_num_key(r["gross_amount_txt"]),
+            _norm_num_key(r["commission_txt"]),
+            _norm_num_key(r["tax_txt"]),
+            _norm_num_key(r["net_settlement_txt"] or ""),
         )
 
     # Also normalize CSV dates
@@ -617,37 +625,38 @@ def cross_check_csv_to_db(
                 "unit_price": {
                     "csv": cr["unit_price"],
                     "db": dr["unit_price_txt"],
-                    "ok": normalize_num(cr["unit_price"])
-                    == normalize_num(dr["unit_price_txt"]),
+                    "ok": nums_equal(cr["unit_price"], dr["unit_price_txt"]),
                 },
                 "gross_amount": {
                     "csv": cr["gross_amount"],
                     "db": dr["gross_amount_txt"],
-                    "ok": normalize_num(cr["gross_amount"])
-                    == normalize_num(dr["gross_amount_txt"]),
+                    "ok": nums_equal(cr["gross_amount"], dr["gross_amount_txt"]),
                 },
                 "commission": {
                     "csv": cr["commission"],
                     "db": dr["commission_txt"],
-                    "ok": normalize_num(cr["commission"])
-                    == normalize_num(dr["commission_txt"]),
+                    "ok": nums_equal(cr["commission"], dr["commission_txt"]),
                 },
                 "tax": {
                     "csv": cr["tax"],
                     "db": dr["tax_txt"],
-                    "ok": normalize_num(cr["tax"]) == normalize_num(dr["tax_txt"]),
+                    "ok": nums_equal(cr["tax"], dr["tax_txt"]),
                 },
                 "interest": {
                     "csv": cr.get("interest", ""),
                     "db": dr["interest_txt"],
-                    "ok": normalize_num(cr.get("interest", "") or "0")
-                    == normalize_num(dr["interest_txt"] or "0"),
+                    "ok": nums_equal(
+                        cr.get("interest", "") or "0",
+                        dr["interest_txt"] or "0",
+                    ),
                 },
                 "net_settlement": {
                     "csv": cr["net_settlement"],
                     "db": dr["net_settlement_txt"],
-                    "ok": normalize_num(cr["net_settlement"])
-                    == normalize_num(dr["net_settlement_txt"] or ""),
+                    "ok": nums_equal(
+                        cr["net_settlement"],
+                        dr["net_settlement_txt"] or "",
+                    ),
                 },
                 "raw_row_id": {"csv": "NOT_IN_SOURCE", "db": dr["raw_row_id"], "ok": None},
                 "trade_id": {"csv": "NOT_IN_SOURCE", "db": dr["trade_id"], "ok": None},
