@@ -235,6 +235,219 @@
 > - 第二輪獨立 CR（HEAD `f8b68bf`）：**PASS WITH NOTES**（P1 RESOLVED；P2／P3 文件 NOTES）
 > - Merge／人工 UAT：仍須使用者明確授權
 
+### 1.17 Two-Pass FIFO Same-Day Reconciliation（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（自 `master`＠`474a95b`） |
+| 變更 | CASH Pass2 同日補沖銷；`match_type`；`day_trade_annotation`；Alembic `b2c3d4e5f6a7`；SPEC／PRD／FIFO-05／FIFO-09；Case3／4／7／9／time-ignore 契約改寫 |
+| RED | `uv run pytest tests/test_same_day_reconciliation.py tests/test_day_trade_annotation.py …` → **9 failed／3 passed**（缺 Pass2／`match_type`／annotation／版本仍 v2） |
+| GREEN | `_run_cash_group` Pass2；`Allocation.match_type`；annotation Layer3；`ALGORITHM_VERSION=fifo_v3_two_pass_same_day_reconcile` |
+| REFACTOR | 無獨立 restruct（Pass2 helper 於 GREEN 抽出） |
+| 本機 REGRESSION | `uv run pytest -q` → **128 passed**／66.92s（2026-11-26）；正式 DB **未** apply／migrate／寫入 |
+| RCA | `docs/test/RCA_two_pass_fifo_same_day.md` |
+| 隔離 UAT | 合成 2236：`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；Pass1=3600／Pass2=400／未售0／非 DRAFT；annotation suspected=1000≠reconciled=400；正式 DB mtime 未變；見 `docs/test/UAT_fifo_same_day_2236.md` → **PASS** |
+| 判定 | **有證據 TDD**（見 §6.2 `fifo_v3_two_pass_same_day_v1`）；隔離 UAT **PASS**；Commit／Push／PR／CI **待**使用者授權 |
+
+### 1.18 PR #12 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | CR-01～13：annotation 支持股數／TWD 稅適用／AMBIGUOUS／例外隔離；migration DAY_TRADE backfill；report ON／OFF＋fault；2236 合成 E2E；UAT run 目錄保護／verdict 延後；audit 可追溯欄；Pass2 邊界回歸；docstring／SPEC |
+| RED | `uv run pytest tests/test_day_trade_annotation.py -q` → **5 failed／7 passed**（缺 `half_rate_sell_qty`／AMBIGUOUS／完整 try／CR-12 欄；非 TWD 誤套 HALF_RATE） |
+| GREEN | `day_trade_annotation` 契約修正；migration backfill；`include_day_trade_annotation`；UAT／E2E／matcher 邊界測 |
+| REFACTOR | touched API Google docstring（無行為變更） |
+| 本機 REGRESSION | `uv run pytest -q` → **145 passed**／57.98s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_fixes_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
+### 1.19 PR #12 Round-2 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | Round-2：CR-02 商品／生效日稅適用；CR-04 annotation 準備全包例外＋OFF 跳過；CR-06 原始九筆 Parser／Import E2E；CR-05 migration FK／opening／lossy downgrade；CR-07 Excel A–W 比較；CR-10／11 UAT verdict／WAL／獨立 out；CR-12 same_day vs half_rate ids |
+| RED | `uv run pytest tests/test_day_trade_annotation.py tests/test_annotation_report_noninterfere.py tests/test_fifo_same_day_2236_original_import_e2e.py -q` → **7 failed／15 passed**（ETF／未知／生效日前仍 HALF；缺 CR-12 欄；prep 未隔離；缺 half_rate ids） |
+| GREEN | `tw_sec_tax_v2` 分類＋生效日；report prep 邊界；原始九筆 import E2E；migration／UAT／audit 欄位強化 |
+| REFACTOR | 無獨立 restruct |
+| 本機 REGRESSION | `uv run pytest -q` → **153 passed**／71.67s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_r2_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
+### 1.20 PR #12 Round-3 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線審查 `ddc7530`） |
+| 變更 | Round-3：CR-02 `INFERRED_TW_COMMON_STOCK`＋`tw_sec_tax_v3` 有效窗；CR-06 原始序／permutation／Excel／費用守恆；CR-10 `build_uat_checks`＋反向測；CR-07 `REQUIRED_AUDIT_KEYS`＋未平倉／未配對；CR-05 migration 全財務欄；CR-11 指紋限制文件；CR-13 docstring |
+| RED | 先擴充 `test_day_trade_annotation`／`test_uat_fifo_same_day_verdict`／`test_annotation_report_noninterfere`／original import E2E／migration 斷言（針對尚未滿足之 inferred／有效窗／verdict 假性通過／嚴格 audit keys） |
+| GREEN | annotation v3；UAT `build_uat_checks`；非干涉嚴格化；E2E／migration／UAT 文件 |
+| REFACTOR | touched API／UAT helpers Google docstring（無行為變更） |
+| 本機 REGRESSION | `uv run pytest -q` → **180 passed**／64.28s（2026-11-26）；`git diff --check` 通過；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_r3_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
+### 1.21 PR #12 Round-4 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線審查 `07d0f31`） |
+| 變更 | Round-4：CR-10A／B／C 真實 Excel 財務驗證＋檔案層故障注入；CR-06A／B／C Owner canonical 列序＋permutation 財務＋Trace 逐筆費用；CR-02A／B／C 稅期間文件／核實期限／MIXED 分類 |
+| RED／證據性質 | **事後驗證／新增回歸**：本輪先寫失敗契約測並於同輪最小實作；**未**另行留存獨立 RED pytest 失敗輸出。誠實標記，不冒充已執行 RED。 |
+| GREEN | `verify_detail_xlsx_finance`／`resolve_required_outputs`；`detail_xlsx_finance_ok` 必填；Owner 列序；`MIXED_INSTRUMENT_EVIDENCE`；SPEC／audit 依據欄 |
+| REFACTOR | 無獨立 restruct |
+| 本機 REGRESSION | `uv run pytest -q` → **205 passed**／78.18s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據（事後驗證）**（見 §6.2 `pr12_cr_r4_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
+### 1.22 CR-10A 獨立財務黃金驗證（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（審查基線 `10eab5d`；唯一授權 **CR-10A**） |
+| 變更 | `compute_finance_golden_from_uat_trades` 擴充 cost／income／interest／unsold／min_detail_rows；`verify_detail_xlsx_finance` 獨立比對 qty／fees／tax／interest／cost／income／profit＋結構下限；正向案例改多列合成；RED-07 標 skip 待辦 |
+| RED | `uv run pytest tests/test_uat_fifo_same_day_verdict.py -k "cost_income_both_up or cost_income_both_down or buy_qty or sell_qty or single_row_fake or compute_finance_golden or matching_totals" -v --tb=short` → **6 failed／1 passed**（cost+1／income+1 仍 ok；qty 竄改仍 ok；單列灌總額仍 ok；golden 缺 `interest` 等鍵）。RED-06（清空必要儲存格）於舊碼已因恒等式失敗而 PASSED。 |
+| GREEN | 擴充 golden；verify 獨立欄位＋`data_rows < min_detail_rows` fail-closed；多列正向 helper |
+| REFACTOR | 無獨立 restruct（僅測試 import 整理） |
+| 本機 REGRESSION | 相關：`tests/test_uat_fifo_same_day_verdict.py`＋`file_fault` → **43 passed／1 skipped**；全量 `uv run pytest -q` → **211 passed／1 skipped**／83.85s（2026-11-26）；`uv run ruff check scripts/uat_fifo_same_day_2236.py tests/test_uat_fifo_same_day_verdict.py` 通過；正式 DB mtime **2026-11-22**（本輪**未**寫入） |
+| 判定 | **有證據 TDD**（見 §6.2 `cr10a_finance_verify_v1`）；**待複審**；Commit／Push／PR **未**執行 |
+
+### 1.23 GOLD-CR 第二批最小修正（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線 `ba27f30`；僅授權三項） |
+| 變更 | `_norm_num_key` 可序列化唯一非法鍵；`compare_fingerprint_bundles` 納入 WAL／SHM；`git_security_audit` 實際 `git ls-files` |
+| RED | `uv run pytest tests/test_golden_cr_fixes.py::test_gold_cr06_invalid_norm_key_unique_and_json_serializable tests/test_golden_cr_fixes.py::test_gold_cr03_fingerprint_drift_includes_wal_shm tests/test_golden_cr_fixes.py::test_gold_cr04_git_security_audit_uses_git_commands -q` → **3 failed**（`object` 不可 JSON；缺 `compare_fingerprint_bundles`／`git_security_audit`） |
+| GREEN | 序列號標記取代 `object()`；指紋前後比含 sidecar；git 稽核寫入 evidence |
+| REFACTOR | 無 |
+| 本機 REGRESSION | 相關 `test_golden_cr_fixes`＋`test_decimal_text_normalize` → **37 passed**；全量 `uv run pytest -q` → **248 passed／1 skipped**／63.67s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `golden_cr_batch2_v1`）；待獨立複審；Phase 2／Merge／Migration **未**授權 |
+
+### 1.24 GOLD-CR-04／05／10／11 收斂（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線 `4da77f0`） |
+| 變更 | `git_security_audit` 檢查 returncode；`classify_capital_csv_row`；`resolve_batches_by_sha256`；交叉核對 trade_type／currency／account／parse_status／列相對序 |
+| RED | 4 新測 failed（缺 runner／classify／resolve；交叉缺 trade_type） |
+| GREEN | 上列函式＋`analyze_capital_csv`／`cross_check_csv_to_db` 最小接線 |
+| REFACTOR | 無 |
+| 本機 REGRESSION | `test_golden_cr_fixes` → **28 passed**；全量 `uv run pytest -q` → **252 passed／1 skipped**／64.92s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `golden_cr_batch3_v1`）；PENDING 外部鍵／多帳戶真實樣本維持；Phase 2／Merge／Migration **未**授權 |
+
+### 1.25 GOLD-CR-10 收尾與 Phase 0／1 收斂（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線 `51895c3`） |
+| 變更 | invalid／excluded 分計；`csv_acceptance_gate`；交叉有非法列不得 PASS；Phase 0／1 收斂摘要 |
+| RED | `test_gold_cr10_invalid_rows_separated_and_block_acceptance` failed（缺分計／gate） |
+| GREEN | `build_capital_csv_analysis_from_rows`／gate／cross_check／summary blockers |
+| REFACTOR | 無 |
+| 本機 REGRESSION | `test_golden_cr_fixes` → **29 passed**；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**寫入 |
+| 判定 | Phase 0／1 基礎開發收尾；待 Owner 確認 Phase 2；Merge／Migration **未**授權 |
+
+### 1.26 Phase 2 獨立 C 層（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | `backend/golden/expected_c.py`；`scripts/_golden_phase2_expected_c.py`；HTML／玉山 `invalid_row_count=UNKNOWN`；Phase02／PENDING／STATUS 文件 |
+| RED | `tests/test_golden_expected_c.py` 收集期 `ModuleNotFoundError: backend.golden` |
+| GREEN | 獨立彙總／CASH Two-Pass／§7 損益；本機 `data/golden/expected_c/`（gitignore） |
+| REFACTOR | ruff FURB157（`Decimal(0)`）；無業務行為變更 |
+| 本機 REGRESSION | `test_golden_expected_c` → **8 passed**；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**寫入 |
+| 判定 | Phase 2 C 層本機完成；待獨立 Reviewer；CR-10A／Merge／Migration **未**授權 |
+
+### 1.27 Phase 2 複審修正（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | trade_id 來源+列號；負數 TRUNC 朝零；帳戶／幣別分池；來源完整性閘門；逐筆 allocation_lines；GOLD-001-2236 |
+| RED | 擴充 `test_golden_expected_c` → **9 failed／7 passed**（缺唯一 ID／trunc 公開／integrity／逐筆等） |
+| GREEN | 上列契約最小實作；本機 expected_c 重產 |
+| REFACTOR | 無大型重構 |
+| 本機 REGRESSION | `test_golden_expected_c` → **16 passed**；全量 **269 passed／1 skipped**／81.41s；ruff 通過；正式 DB **未**寫入 |
+| 判定 | 複審項已修；待獨立 Reviewer 接 CR-10A；Merge／Migration **未**授權 |
+
+### 1.28 Phase 3／CR-10A 接回（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（Owner PR #12 Phase 3 授權） |
+| 變更 | Phase2 `phase2_exit_code`／`may_mark_full_acceptance`；`report_finance` 負數朝零；`compare_c_d`／`phase3_pipeline`；RED-07 逐筆互抵；`uat_exit_code`；本機 CR-10A UAT 腳本 |
+| RED | `test_golden_phase2_exit`／`test_report_finance_trunc_neg`／`test_golden_compare_c_d` 缺實作／負數 `-1.9→-2` |
+| GREEN | 上列最小實作；合成 C↔D；真實 GOLD-001-2236 隔離 UAT **PASS**（證據本機 gitignored） |
+| REFACTOR | 無大型重構 |
+| 本機 REGRESSION | `uv run pytest -q` → **285 passed**／66.31s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | 初版接回；後續複審見 §1.29 |
+
+### 1.29 Phase 3 複審修正（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12 Phase 3 複審） |
+| 變更 | C `allocation_lines`→Trace 逐筆指紋核對；`open_cost` 觀測／禁填 expected；CR-10B 故障 summary／exit；CR-10C 產物內容；WAL／SHM 指紋；GOLD-004 全年 D |
+| RED | per_row 未接 C；open_cost 無條件 0；CR-10B 僅 helper |
+| GREEN | `allocation_line_finance_rows`／`compare_allocation_lines_to_trace_rows`；`observe_open_cost_from_detail_xlsx`；UAT／004 腳本 |
+| REFACTOR | 無大型重構 |
+| 本機 UAT | GOLD-001-2236 **PASS**；GOLD-004 **PASS**（HTML bridge；CSV Parser 仍 PENDING）；正式 DB 指紋 PASS |
+| 本機 REGRESSION | `uv run pytest -q` → **288 passed**／65.08s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | 可驗證財務項已收斂；Merge／Migration **未**授權 |
+
+### 1.30 Phase 3 合併前收尾（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12 Phase 3 合併前收尾） |
+| 變更 | GOLD-004 `decide_gold004_verdict`（必要失敗→FAIL）；CR-10C 守恆實際值／audit 一致性；CR-10A 重複鍵多重集＋列數；CR-10B 故障用實際觀測；Excel 未驗證範圍明示 |
+| RED | `tests/test_golden_phase3_wrap.py`：缺 `decide_gold004_verdict`；守恆僅字串存在；重複鍵 dict 覆蓋 |
+| GREEN | `decide_gold004_verdict`；`verify_audit_artifacts_content` 強化；`compare_allocation_lines_to_trace_rows` 多重集；UAT 腳本 |
+| REFACTOR | 無大型重構 |
+| 本機 UAT | GOLD-001-2236 **PASS**（fault 僅 `detail_xlsx_finance_ok`）；GOLD-004 **PASS**（`necessary_ok`；HTML bridge；CSV Parser 仍 PENDING） |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed**／74.81s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | 合併前財務驗收可交 Reviewer；**不得** Merge／正式 Migration／寫正式 DB |
+
+### 1.31 原始 CR-01～13 完整銷帳（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12：暫停 Merge Readiness，返回原始 CR） |
+| 變更 | 新增 `docs/test/PR12_ORIGINAL_CR_WRITEOFF.md`；CR-06C Trace 利息／稅非零落點斷言；UAT／PENDING 對齊；**GOLD 與原始 CR 分列** |
+| 優先核對 | CR-02↔SPEC `tw_sec_tax_v3`；CR-06B Excel；CR-06C Trace 費稅息；CR-10A／B／C 對回 Round-4＋Phase 3 |
+| 銷帳摘要 | 無 BLOCKER／OPEN；多數 RESOLVED；02／05／06／06B／06C／10／10A／11／13 為 PASS_WITH_NOTES |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed**／66.52s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | 原始 CR 銷帳表已交；**等待 Reviewer 最終審查**；不得 Merge／Migration／寫正式 DB |
+
+### 1.32 CR-06C 第一片段收尾＋Merge Readiness 實查
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12 Owner：CR-06C 必要收尾＋合併準備） |
+| 強化 | Trace `allocation_id`→`sequence_no` 對位第一片段費／稅／息；後續片段必須 0；獨立 C `allocation_lines`＋Excel 買賣手續費／稅；重用 TRUNC 價金守恆 |
+| GREEN | `tests/test_fifo_same_day_2236_original_import_e2e.py` **6 passed**；產品碼無變更（行為已正確，驗收強化） |
+| 文件 | `PR12_ORIGINAL_CR_WRITEOFF.md` 更新 CR-06C 實際驗收範圍；非零利息維持 PENDING_DATA |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed**／61.38s；`uv run ruff check .` 通過；正式 DB **未**寫入／**未** migrate |
+| 判定 | 見 Merge Readiness Report；**等待 Owner 最終授權 Merge** |
+
+### 1.33 測試資料來源與驗收誠信稽核（Merge 暫停）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12：Merge 前資料誠信稽核） |
+| 變更 | 新增 `docs/test/PR12_TEST_DATA_SOURCE_AUDIT.md`；關鍵測試／UAT／fixture 標 `SOURCE:`；CR-06C 非零利息 `pytest.skip` 占位 |
+| 十項檢查 | 初版偏樂觀；**最終複審**見 §1.34 |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed／1 skipped**／68.28s；`uv run ruff check .` 通過；正式 DB **未**動；**暫停 Merge** |
+| 判定 | 稽核表已交；等待 Reviewer 最終確認 |
+
+### 1.34 測試資料來源稽核最終複審
+
+| 項目 | 結果 |
+|---|---|
+| 變更 | 稽核表改寫：REAL_DERIVED **已進公開 Git**；人工均分 xlsx 用途收緊為比較器／FAULT；處置分列 ANNOTATION_ONLY／FIXED／SYNTHETIC／PENDING／SENSITIVITY |
+| 敏感 | `ORIGINAL_ROWS` 財務欄＋PR Comment 特徵值 → **Owner 待決**；未改寫歷史 |
+| 測試 | 僅註解／文件；抽樣 `test_uat_fifo_same_day_verdict`；未重跑無關大型 UAT |
+| 判定 | **暫停 Merge**；提交 Owner 待決事項 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -402,6 +615,22 @@
 | `capital_html_finance_regression_v1` | 群益 `statement_html_v1` 合成路徑：防 HIST-01 部分配對吃全額、費用一次、利息扣減、早賣 DRAFT／exceptions 守恆欄、A～W | **非 RED**：RCA 確認現況已正確後補測；首次執行即 **4 passed**；不得冒充業務 RED；測試 commit `d8d9578` | 無新業務碼（沿用 `report_finance`／projector） | 無 | **94 passed** | RCA／STATUS doc `453e0e0`；測試 `tests/test_capital_html_finance_regression.py` |
 | `cash_prior_inventory_fifo_v1` | CASH 同日改採開盤前庫存優先沖減；移除缺序 `ORDER_AMBIGUITY`；DAY_TRADE 不變；1589 合成回歸 | 2026-11-22；`uv run pytest tests/test_fifo.py -q`；**12 failed / 5 passed**；`ORDER_AMBIGUITY` 短路／time 解套；commit `adcadf5` | 2026-11-22；`detect_order_ambiguity` 回空；`_run_cash_group` 按日先賣後買；commit `22662be` | GREEN 已抽出 `_cash_day_sort_key`；無獨立 restruct | **106 passed** | 規格／STATUS `8babf7d`；正式 DB 未動 |
 | `pr7_fifo_cr_fixes_v1` | CR-01 版本追溯、CR-02 期初守恆、CR-03 fingerprint、CR-04 SQLite 整合；真實副本 UAT | 2026-11-22；`uv run pytest tests/test_fifo_cr_fixes.py tests/test_fifo_sqlite_integration.py -q`；**9 failed／5 passed**；版本／opening 守恆／fingerprint；commit `33f2222` | 2026-11-22；`ALGORITHM_VERSION`、`quantity_conservation(opening_lots=…)`、`build_audit`、fingerprint 欄位、backup ro；commit `60d3446` | 無獨立 restruct | **120 passed** | UAT／規格 doc `07b5f4b`；正式 DB 未動 |
+| `fifo_v3_two_pass_same_day_v1` | CASH Pass2 同日補沖銷；`match_type`；Independent day-trade annotation；2236 合成配平 | 2026-11-26；目標測 **9 failed／3 passed**（blocking／缺 `match_type`／annotation stub／版本 v2） | 2026-11-26；Pass2＋`match_type`＋annotation＋migration＋版本 v3；工作區尚未 commit | 無獨立 restruct | **128 passed** | RCA `docs/test/RCA_two_pass_fifo_same_day.md`；正式 DB 未動；Commit 待授權 |
+| `pr12_cr_fixes_v1` | PR #12 CR：annotation 稅證據／支持股數／AMBIGUOUS／例外隔離；migration backfill；report ON／OFF；2236 E2E；UAT 目錄／verdict | 2026-11-26；`tests/test_day_trade_annotation.py` **5 failed／7 passed**（業務缺口） | 2026-11-26；annotation／migration／report／UAT／E2E／matcher 邊界；工作區尚未 commit | docstring（無行為變更） | **145 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
+| `pr12_cr_r2_v1` | PR #12 Round-2：稅適用範圍／annotation prep 邊界／原始九筆 import E2E／migration FK／Excel ON-OFF／UAT WAL＋獨立 out／CR-12 ids | 2026-11-26；目標測 **7 failed／15 passed**（ETF／未知／生效日前仍 HALF；缺欄；prep 未隔離） | 2026-11-26；`tw_sec_tax_v2`；report prep 邊界；original import E2E；UAT／migration 強化；工作區尚未 commit | 無獨立 restruct | **153 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
+| `pr12_cr_r3_v1` | PR #12 Round-3：inferred 分類＋稅有效窗 v3／原始 E2E 強化／`build_uat_checks` 反向／非干涉嚴格／migration 財務欄／指紋文件 | 2026-11-26；先寫 RED 契約測（inferred／valid_through／verdict 反向／REQUIRED_AUDIT_KEYS／permutation） | 2026-11-26；`tw_sec_tax_v3`；`build_uat_checks`；E2E／非干涉／migration；工作區尚未 commit | docstring（無行為變更） | **180 passed**／64.28s | 正式 DB 未動；ruff 通過；Commit／PR 回覆待授權 |
+| `pr12_cr_r4_v1` | PR #12 Round-4：Excel 真實財務驗證／檔案層故障注入／Owner 列序／permutation 財務／Trace 逐筆費用／稅期間＋MIXED | **事後驗證**：未留存獨立 RED 失敗輸出；新增 `test_uat_fifo_same_day_file_fault` 等 | 2026-11-26；UAT finance verify／resolve outputs；annotation MIXED；E2E helpers；工作區尚未 commit | 無獨立 restruct | **205 passed**／78.18s | 正式 DB 未動；ruff 通過；Commit／PR 回覆待授權 |
+| `cr10a_finance_verify_v1` | CR-10A：cost／income／qty／interest 獨立 Decimal golden 核對＋`min_detail_rows` 結構下限；禁單列灌總額 | 2026-11-26；`-k "cost_income_both_up … single_row_fake …"` → **6 failed／1 passed**（cost±1＋income±1 仍 ok；qty 竄改仍 ok；單列仍 ok；golden 缺鍵） | 2026-11-26；擴充 golden；`verify_detail_xlsx_finance` 獨立比對＋結構；多列正向；工作區尚未 commit | 無獨立 restruct | **211 passed／1 skipped**／83.85s | 正式 DB 未動；ruff 通過；**待複審**；Commit／PR 待授權 |
+| `golden_phase01_inventory_v1` | Phase 0／1 黃金驗收：Decimal 文字正規化匿名測＋盤點腳本／非敏感 Manifest 模板與規範文件；真實 Manifest／evidence 本機 gitignored | **非業務 RED**：正規化為盤點交叉核對基礎建設；匿名測首次即對齊實作 | 2026-11-26；`backend/util/decimal_text.py`；`scripts/_golden_phase01_inventory.py`（唯讀）；`docs/test/GOLDEN_ACCEPTANCE_PHASE01.md` | 無獨立 restruct | **222 passed／1 skipped**／66.79s | 正式 DB 未寫入；ruff 通過；**CR-10A 仍未結案**；Phase 2 未授權；Commit／Push 待複審 |
+| `golden_cr_01_06_07_08_09_v1` | GOLD-CR：日期真實排序、非法 Decimal fail-closed、千分位／±0、SHA256 鎖定阻礙、盤點失敗非零結束碼；PENDING_DATA 文件 | 2026-11-26；`tests/test_golden_cr_fixes.py` 收集期缺模組 → ERROR／既有非法數值契約需改 | 2026-11-26；`date_text`／`sha256_lock`／強化 `decimal_text`；inventory 結束碼 | 無獨立 restruct | **231 passed／1 skipped**／74.94s | 正式 DB 未寫；CR-10A 仍開；待資料項見 `PENDING_DATA_VALIDATION.md` |
+| `golden_cr_06_07_r2_v1` | GOLD-CR-06／07 複審：`is_finite` 拒 NaN／Inf；非法不回 sentinel；千分位先驗證再去逗號 | 2026-11-26；擴充 `test_golden_cr_fixes`（非有限／非法千分位／相同非法不得相等） | 2026-11-26；`decimal_text`＋`nums_equal`／`_norm_num_key` | 無 | **245 passed／1 skipped**／66.35s | 01／08／09／PENDING 文件不重開；Phase 2 未授權 |
+| `golden_cr_batch2_v1` | 第二批：非法 Decimal 鍵可 JSON 序列化；GOLD-CR-03 WAL／SHM 指紋前後比；GOLD-CR-04 實際 git ls-files 稽核 | 2026-11-26；3 新測 **failed**（object 不可序列化；缺比較／稽核函式） | 2026-11-26；`_norm_num_key`／`compare_fingerprint_bundles`／`git_security_audit` | 無 | **248 passed／1 skipped**／63.67s | 01／06核心／07／08／09 不重開；PENDING 維持；Phase 2 未授權 |
+| `golden_cr_batch3_v1` | CR-04 returncode；CR-10 列合法性；CR-11 批次歧義；CR-05 可立即核對欄 | 2026-11-26；4 新測 **failed** | 2026-11-26；audit／classify／resolve／cross_check 擴充 | 無 | **252 passed／1 skipped**／64.92s | 03／06 結案不重開；PENDING 外部鍵／多帳戶真實樣本 |
+| `golden_cr10_close_v1` | CR-10：invalid／excluded 分計；非法列阻擋完整驗收；Phase 0／1 收斂文件 | 2026-11-26；分計／gate 測 **failed** | 2026-11-26；`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate` | 無 | **253 passed／1 skipped**／63.96s | 04 結案；HTML／玉山 invalid 擴充仍 PENDING |
+| `golden_phase2_expected_c_v1` | Phase 2：獨立 C（A＋SPEC）；GOLD-001～004 本機答案；HTML／玉山 invalid→UNKNOWN | 2026-11-26；`test_golden_expected_c` 收集 **ERROR**（缺 `backend.golden`） | 2026-11-26；`expected_c` 模組＋phase2 腳本＋inventory UNKNOWN | ruff Decimal(0) | **261 passed／1 skipped**／74.78s | 真實答案 gitignored；CR-10A／Merge／Migration 未授權；待獨立 Reviewer |
+| `golden_phase2_r2_v1` | Phase 2 複審：唯一 trade_id、負數 TRUNC、帳戶／幣別隔離、來源閘門、逐筆 lines、GOLD-001-2236 | 2026-11-26；**9 failed／7 passed** | 2026-11-26；expected_c＋phase2 腳本重產 | 無 | **269 passed／1 skipped**／81.41s | 受測 report_finance 負數 TRUNC 仍 PENDING；真實答案未入 Git |
+| `golden_phase3_cr10a_v1` | Phase 3：exit 碼／TRUNC-NEG／C↔D／RED-07／CR-10B exit／本機 2236 UAT | 2026-11-26；exit／trunc／compare 缺模組或負數離零 | 2026-11-26；phase2 exit＋report_finance＋compare／pipeline＋UAT 腳本 | ruff B023 | **285 passed**／66.31s | 真實答案／runs_d 本機；Merge／Migration 未授權 |
+| `golden_phase3_wrap_v1` | Phase 3 合併前：GOLD-004 必要失敗→FAIL；CR-10C 守恆實際值；CR-10A 重複鍵多重集；CR-10B 觀測非固定 True | 2026-11-26；`test_golden_phase3_wrap` ImportError／契約 failed | 2026-11-26；`decide_gold004_verdict`＋artifacts／compare／UAT | 無 | **299 passed**／74.81s | GOLD-001／004 UAT PASS；CSV Parser 仍 PENDING；Merge／Migration 未授權 |
 
 **記錄欄位最低要求**
 
@@ -472,3 +701,24 @@ uv run pytest -v --tb=line
 | 2026-11-22 | **`cash_prior_inventory_fifo_v1` TDD**：分支 `feat/cash-prior-inventory-fifo`；RED 12 failed（`ORDER_AMBIGUITY`／time 解套）→ GREEN 按日先賣後買；全量 **106 passed**／76.53s；SPEC／PRD／README／FIFO-05 對齊；正式 DB **未** apply／migrate；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。 |
 | 2026-11-22 | **`pr7_fifo_cr_fixes_v1` TDD**：RED 9 failed → GREEN 版本／守恆／fingerprint／SQLite IT；全量 **120 passed**／65.16s；副本 UAT（基準＠`77f3ed7`）1589 通過、`ORDER_AMBIGUITY` 不再於新 run 出現；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`、`data/uat/`。 |
 | 2026-11-22 | **歷史文件一致性 Phase B**：分支 `docs/history-standardization-phase-b`；修正 SPEC／PRD 過時狀態與欄 E、README UAT 隔離範例、BUGBOT 斷鏈改指針、TDD 導覽、Workflow §8 文件慣例、Class C 橫幅；**未**改業務碼／財務演算法／CI YAML；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。REGRESSION 見 §1.14。 |
+| 2026-11-26 | **`fifo_v3_two_pass_same_day_v1` TDD**：分支 `feature/fifo-same-day-reconciliation`；Gate2 契約變更（FIFO-05 Pass2）；RED 9 failed → GREEN Pass2／annotation／`match_type` migration；全量 **128 passed**／66.92s；正式 DB **未**動；Commit／Push／PR **待**授權。 |
+| 2026-11-26 | **隔離 UAT `fifo_same_day_2236`**：合成九筆；`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；allocated 4000（3600＋400 Pass2）；非 DRAFT；annotation 1000≠400；正式 DB mtime 2026-11-22 14:49:49 未變；判定 **PASS**（`UAT_fifo_same_day_2236.md`）。 |
+| 2026-11-26 | **`pr12_cr_fixes_v1` TDD**：PR #12 CR-01～13；RED 5 failed → GREEN annotation／migration／report／E2E／UAT；全量 **145 passed**／57.98s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
+| 2026-11-26 | **`pr12_cr_r2_v1` TDD**：PR #12 Round-2；RED 7 failed → GREEN 稅適用／prep 邊界／原始九筆 import E2E／migration／Excel／UAT；全量 **153 passed**／71.67s；隔離 UAT **PASS**；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
+| 2026-11-26 | **`pr12_cr_r3_v1` TDD**：PR #12 Round-3；inferred／`tw_sec_tax_v3`／E2E permutation／`build_uat_checks` 反向／REQUIRED_AUDIT_KEYS／migration 財務欄／指紋文件；全量 **180 passed**／64.28s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
+| 2026-11-26 | **`pr12_cr_r4_v1`（事後驗證）**：PR #12 Round-4；真實 Excel 財務驗證＋檔案層故障注入；Owner canonical 列序；MIXED 分類；全量 **205 passed**／78.18s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
+| 2026-11-26 | **`cr10a_finance_verify_v1` TDD**：唯一授權 CR-10A；RED 6 failed（cost／income 同時偏移、qty、單列灌總額、golden 缺鍵）→ GREEN 獨立欄位＋`min_detail_rows`；全量 **211 passed／1 skipped**／83.85s；ruff 通過；正式 DB **未**動；**待複審**；Commit／Push／PR **未**執行。 |
+| 2026-11-26 | **`golden_cr_batch2_v1` TDD**：非法鍵 JSON 序列化＋CR-03 WAL／SHM 指紋比＋CR-04 git ls-files；RED 3 failed → GREEN；全量 **248 passed／1 skipped**／63.67s；ruff 通過；正式 DB **未**動；PENDING 維持；Phase 2／Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_cr_batch3_v1` TDD**：CR-04 returncode、CR-10 列合法性、CR-11 歧義、CR-05 可核對欄；RED 4 failed → GREEN；全量 **252 passed／1 skipped**／64.92s；ruff 通過；正式 DB **未**動；PENDING 外部鍵／多帳戶維持。 |
+| 2026-11-26 | **`golden_cr10_close_v1`**：invalid／excluded 分計＋阻擋完整 PASS；Phase 0／1 收斂摘要；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**動；待 Owner 確認 Phase 2。 |
+| 2026-11-26 | **`golden_phase2_expected_c_v1`**：Owner 授權 Phase 2；獨立 C 模組＋合成測；本機 expected_c GOLD-001～004；HTML／玉山 invalid→UNKNOWN；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**動；真實答案未入 Git；待獨立 Reviewer／CR-10A；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase2_r2_v1`**：複審修正—唯一 trade_id、負數 TRUNC 朝零、帳戶／幣別分池、來源閘門、逐筆 allocation_lines、GOLD-001-2236；RED 9 failed → GREEN；全量 **269 passed／1 skipped**／81.41s；ruff 通過；正式 DB **未**動；真實答案未入 Git；受測 trunc 負數見 PENDING；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase3_cr10a_v1`**：Owner 授權 Phase 3；Phase2 FAIL／BLOCKED 非零結束碼；GOLD-TRUNC-NEG 受測朝零；C↔D 比對＋本機 GOLD-001-2236 UAT **PASS**；RED-07 逐筆互抵；CR-10B `uat_exit_code`；GOLD-002／003 PARTIAL、004 C 就緒；全量 **285 passed**／66.31s；ruff 通過；正式 DB **未**動；真實證據未入 Git；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase3_cr10a_r2_v1`**：複審—allocation_lines↔Trace 逐筆；open_cost 觀測；CR-10B／10C；WAL／SHM；GOLD-004 全年 D **PASS**（HTML bridge）；全量 **288 passed**／65.08s；ruff 通過；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase3_wrap_v1`**：合併前收尾—GOLD-004 必要失敗不得 PARTIAL；CR-10C 守恆實際值；CR-10A 重複鍵多重集；CR-10B 觀測非固定 True；Excel 未驗證範圍明示；全量 **299 passed**／74.81s；ruff 通過；GOLD-001／004 UAT **PASS**；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |
+| 2026-11-26 | **原始 CR 銷帳**：`PR12_ORIGINAL_CR_WRITEOFF.md`；GOLD≠原始 CR；CR-06C 利息／稅落點強化；暫停 Merge Readiness；正式 DB **未**動；待 Reviewer 最終審查。 |
+| 2026-11-26 | **`pr12_cr06c_merge_ready_v1`**：CR-06C 第一片段 sequence 對位＋獨立 C／Excel；全量 **299 passed**／61.38s；ruff 通過；隔離 DB integrity／FK 實查；隔離 migration upgrade／downgrade 實查；正式 DB **未**寫入／**未** migrate；Merge **待** Owner 授權。 |
+| 2026-11-26 | **`pr12_test_data_audit_v1`**：測試資料來源／誠信稽核表；SOURCE 標籤；非零利息 PENDING skip；全量 **299 passed／1 skipped**／68.28s；ruff 通過；**暫停 Merge**；正式 DB **未**動。 |
+| 2026-11-26 | **`pr12_test_data_audit_r2_v1`**：最終複審—REAL_DERIVED 公開風險事實、人工均分用途收緊、處置分列、Owner 待決；未改寫歷史；**暫停 Merge**。 |
+| 2026-11-26 | **`pr12_private_fixture_migration_v1`**：Owner 授權私有備份／真實測資遷出／留言盤點／隔離 filter-repo 演練；`ORIGINAL_ROWS`→`data/golden/private_fixtures/`（gitignore）；公開缺檔 `PRIVATE_FIXTURE_UNAVAILABLE` skip；私有斷言不洩漏數值；gate 測 RED／GREEN；全量 **302 passed／1 skipped**／80.56s；ruff 通過；隔離演練：path-remove 污染 E2E＋docs callback；**未**遠端重寫／**未** force push／**未** Merge／正式 DB **未**動；Commit／遠端清理 **待** Owner。 |
+| 2026-11-26 | **`pr12_private_fixture_migration_v1`**：Owner 授權私有備份／真實測資遷出／留言盤點／隔離 filter-repo 演練；`ORIGINAL_ROWS`→`data/golden/private_fixtures/`（gitignore）；公開缺檔 `PRIVATE_FIXTURE_UNAVAILABLE` skip；私有斷言不洩漏數值；gate 測 RED／GREEN；全量 **302 passed／1 skipped**／80.56s；ruff 通過；隔離演練：path-remove 污染 E2E＋docs callback；**未**遠端重寫／**未** force push／**未** Merge／正式 DB **未**動；Commit／遠端清理 **待** Owner。 |

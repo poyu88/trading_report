@@ -1,0 +1,383 @@
+"""CR-10B／10C：UAT 實際檔案層故障注入（非僅 mock 布林）。
+
+SOURCE: FAULT_INJECTION（底層報表路徑 SYNTHETIC_CONTRACT）
+- 篡改／刪除實際產物 → FAIL；正式 DB 指紋為觀測值非固定 True。
+- 合成路徑未跑 migration／冪等／H → 不得當正向完整 UAT 證據。
+"""
+
+from __future__ import annotations
+
+import json
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from openpyxl import Workbook, load_workbook
+from sqlalchemy import select
+
+from backend.db.models import FifoAllocation
+from backend.db.session import init_db, make_session_factory
+from backend.services.allocation_service import match_fifo_for_account
+from backend.services.report_service import generate_detail_report
+from scripts.uat_fifo_same_day_2236 import (
+    TRADES,
+    _formal_fingerprint,
+    _seed,
+    build_uat_checks,
+    compute_finance_golden_from_uat_trades,
+    resolve_required_outputs,
+    uat_exit_code,
+    verify_detail_xlsx_finance,
+)
+
+
+def _run_synthetic_report(tmp_path: Path):
+    """於 tmp DB 跑合成 2236 → match → report（不碰正式 DB）。"""
+    formal_before = _formal_fingerprint()
+    db_path = tmp_path / "fault.db"
+    engine = init_db(db_path)
+    Session = make_session_factory(engine)
+    session = Session()
+    try:
+        account = _seed(session)
+        session.commit()
+        run, result = match_fifo_for_account(session, account.id)
+        session.commit()
+        out = tmp_path / "out"
+        xlsx, audit_path, exc_path = generate_detail_report(
+            session, account.id, out, run_id=run.id, allow_partial=False
+        )
+        session.commit()
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        alloc_rows = list(
+            session.scalars(select(FifoAllocation).where(FifoAllocation.run_id == run.id))
+        )
+        formal_after = _formal_fingerprint()
+        return {
+            "session": session,
+            "account": account,
+            "run": run,
+            "result": result,
+            "alloc_rows": alloc_rows,
+            "out": out,
+            "xlsx": xlsx,
+            "audit_path": audit_path,
+            "exc_path": exc_path,
+            "audit": audit,
+            # 實際觀測：正式 DB 指紋未變（非固定 True）
+            "formal_db_untouched": formal_before == formal_after,
+        }
+    except Exception:
+        session.rollback()
+        session.close()
+        raise
+
+
+# 合成路徑未跑 migration／冪等／annotation-H；不得當正向或反向證據
+_NOT_CLAIMED_CHECKS = frozenset(
+    {
+        "actual_migration_day_trade_backfill",
+        "actual_migration_cash_standard_ok",
+        "actual_migration_fk_ok",
+        "actual_migration_integrity_ok",
+        "idempotent_old_preserved",
+        "idempotent_old_keys_unchanged",
+        "idempotent_new_keys_equal",
+        "idempotent_qty_same",
+        "h_ok",
+    }
+)
+
+
+def _claimed_checks(checks: dict[str, bool]) -> dict[str, bool]:
+    """僅保留本輪可觀測檢查（排除未執行探針）。"""
+    return {k: v for k, v in checks.items() if k not in _NOT_CLAIMED_CHECKS}
+
+
+def _base_checks_kwargs(ctx: dict, *, finance_ok: bool, required: dict[str, bool]) -> dict:
+    by_type: dict[str, int] = {}
+    for a in ctx["result"].allocations:
+        by_type[a.match_type] = by_type.get(a.match_type, 0) + a.quantity
+    # conservation／formal_db 取自本輪實際觀測（非固定 True）
+    return {
+        "required_outputs": required,
+        "migration_probe": {
+            "day_trade_backfill_ok": False,
+            "cash_standard_ok": False,
+            "foreign_key_check_empty": False,
+            "integrity_ok": False,
+        },
+        "fresh_schema_has_match_type": True,
+        "allocated_qty": sum(a.quantity for a in ctx["result"].allocations),
+        "qty_by_match_type": by_type,
+        "unsold_qty": sum(u.available for u in ctx["result"].unsold),
+        "blocking": bool(ctx["result"].blocking),
+        "conservation_ok": bool(ctx["audit"].get("conservation_ok")),
+        "audit_json": ctx["audit"],
+        "integrity_check_result": "ok",
+        "h_annotation_non_interference": False,
+        "detail_is_draft": "DRAFT" in ctx["xlsx"].name,
+        "idempotent": {
+            "old_run_preserved": False,
+            "old_run_keys_unchanged": False,
+            "new_run_keys_equal_old": False,
+            "allocated_qty_same": False,
+        },
+        "formal_db_untouched": bool(ctx.get("formal_db_untouched")),
+        "run_dir_under_data_uat": True,
+        "out_dir_under_output_uat": True,
+        "detail_xlsx_finance_ok": finance_ok,
+    }
+
+
+def test_cr10b_actual_excel_profit_tamper_fails(tmp_path: Path) -> None:
+    """CR-10B：實際修改 Excel 損益 1 元 → finance 驗證失敗 → verdict FAIL。"""
+    ctx = _run_synthetic_report(tmp_path)
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    ok_before = verify_detail_xlsx_finance(ctx["xlsx"], golden)
+    assert ok_before["ok"] is True
+
+    wb = load_workbook(ctx["xlsx"])
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    # 找第一筆有損益的列並 +1
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        cell = row[idx["損益"]]
+        if cell.value is not None:
+            cell.value = float(Decimal(str(cell.value)) + Decimal(1))
+            break
+    wb.save(ctx["xlsx"])
+
+    after = verify_detail_xlsx_finance(ctx["xlsx"], golden)
+    assert after["ok"] is False
+    assert "profit" in after["diffs"]
+
+    required = resolve_required_outputs(
+        audit_json=ctx["audit"],
+        out_dir=ctx["out"],
+        detail_xlsx=ctx["xlsx"],
+        audit_path=ctx["audit_path"],
+        exceptions_path=ctx["exc_path"],
+    )
+    checks = _claimed_checks(
+        build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=after["ok"], required=required))
+    )
+    assert checks["detail_xlsx_finance_ok"] is False
+    assert checks["conservation_ok"] is True  # 觀測自 audit，非固定
+    assert checks["formal_db_untouched"] is True
+    assert all(checks.values()) is False
+    ctx["session"].close()
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["手續費（買）", "手續費（賣）", "交易稅"],
+)
+def test_cr10b_actual_excel_fee_column_tamper_fails(tmp_path: Path, column: str) -> None:
+    """CR-10B：實際修改 Excel 手續費／稅 1 元 → FAIL。"""
+    ctx = _run_synthetic_report(tmp_path)
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+
+    wb = load_workbook(ctx["xlsx"])
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        cell = row[idx[column]]
+        if cell.value is not None:
+            cell.value = float(Decimal(str(cell.value)) + Decimal(1))
+            break
+    wb.save(ctx["xlsx"])
+
+    after = verify_detail_xlsx_finance(ctx["xlsx"], golden)
+    assert after["ok"] is False
+    ctx["session"].close()
+
+
+def test_cr10b_blank_excel_replacement_fails(tmp_path: Path) -> None:
+    """CR-10B：以空白 Excel 取代明細 → FAIL。"""
+    ctx = _run_synthetic_report(tmp_path)
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    Workbook().save(ctx["xlsx"])
+    result = verify_detail_xlsx_finance(ctx["xlsx"], golden)
+    assert result["ok"] is False
+    ctx["session"].close()
+
+
+def test_cr10b_unreadable_excel_replacement_fails(tmp_path: Path) -> None:
+    """CR-10B：無法讀取檔案取代明細 → FAIL。"""
+    ctx = _run_synthetic_report(tmp_path)
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    ctx["xlsx"].write_bytes(b"garbage")
+    result = verify_detail_xlsx_finance(ctx["xlsx"], golden)
+    assert result["ok"] is False
+    ctx["session"].close()
+
+
+def test_cr10c_delete_fifo_trace_fails_required_outputs(tmp_path: Path) -> None:
+    """CR-10C：刪除實際 FIFO Trace → required_outputs.fifo_trace False。"""
+    ctx = _run_synthetic_report(tmp_path)
+    trace = Path(ctx["audit"]["fifo_trace_file"])
+    assert trace.is_file()
+    trace.unlink()
+    required = resolve_required_outputs(
+        audit_json=ctx["audit"],
+        out_dir=ctx["out"],
+        detail_xlsx=ctx["xlsx"],
+        audit_path=ctx["audit_path"],
+        exceptions_path=ctx["exc_path"],
+    )
+    assert required["fifo_trace"] is False
+    checks = _claimed_checks(
+        build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=True, required=required))
+    )
+    assert checks["required_fifo_trace"] is False
+    assert all(checks.values()) is False
+    ctx["session"].close()
+
+
+def test_cr10c_delete_conservation_fails_required_outputs(tmp_path: Path) -> None:
+    """CR-10C：刪除實際 Conservation CSV → required_outputs.conservation False。"""
+    ctx = _run_synthetic_report(tmp_path)
+    cons = Path(ctx["audit"]["conservation_file"])
+    assert cons.is_file()
+    cons.unlink()
+    required = resolve_required_outputs(
+        audit_json=ctx["audit"],
+        out_dir=ctx["out"],
+        detail_xlsx=ctx["xlsx"],
+        audit_path=ctx["audit_path"],
+        exceptions_path=ctx["exc_path"],
+    )
+    assert required["conservation"] is False
+    checks = _claimed_checks(
+        build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=True, required=required))
+    )
+    assert checks["required_conservation"] is False
+    assert all(checks.values()) is False
+    ctx["session"].close()
+
+
+def test_cr10c_tamper_audit_suspected_qty_fails(tmp_path: Path) -> None:
+    """CR-10B：修改實際 audit.json 疑似當沖股數 → FAIL。"""
+    ctx = _run_synthetic_report(tmp_path)
+    audit = dict(ctx["audit"])
+    audit["day_trade_annotation"] = dict(audit["day_trade_annotation"])
+    audit["day_trade_annotation"]["suspected_day_trade_qty"] = 999
+    ctx["audit_path"].write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")
+    loaded = json.loads(ctx["audit_path"].read_text(encoding="utf-8"))
+    required = resolve_required_outputs(
+        audit_json=loaded,
+        out_dir=ctx["out"],
+        detail_xlsx=ctx["xlsx"],
+        audit_path=ctx["audit_path"],
+        exceptions_path=ctx["exc_path"],
+    )
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    finance = verify_detail_xlsx_finance(ctx["xlsx"], golden)
+    checks = _claimed_checks(
+        build_uat_checks(
+            **_base_checks_kwargs(
+                {**ctx, "audit": loaded},
+                finance_ok=finance["ok"],
+                required=required,
+            )
+        )
+    )
+    assert checks["annotation_suspected_exact_1000"] is False
+    assert all(checks.values()) is False
+    ctx["session"].close()
+
+
+def test_cr10b_uat_exit_code_nonzero_on_fail() -> None:
+    """CR-10B：verdict FAIL／非 PASS → 非零結束碼；PASS → 0。"""
+    assert uat_exit_code("PASS") == 0
+    assert uat_exit_code("FAIL") == 1
+    assert uat_exit_code("DRAFT") == 1
+
+
+def test_cr10b_fault_copy_produces_fail_exit_and_summary(tmp_path: Path) -> None:
+    """CR-10B：合法報表副本竄改後經 checks → FAIL、非零 exit、可追溯失敗項。"""
+    ctx = _run_synthetic_report(tmp_path)
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    assert verify_detail_xlsx_finance(ctx["xlsx"], golden)["ok"] is True
+
+    fault = tmp_path / "fault.xlsx"
+    shutil_copy = __import__("shutil").copy2
+    shutil_copy(ctx["xlsx"], fault)
+    wb = load_workbook(fault)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        cell = row[idx["成本"]]
+        if cell.value is not None:
+            cell.value = float(Decimal(str(cell.value)) + Decimal(1))
+            break
+    wb.save(fault)
+
+    finance = verify_detail_xlsx_finance(fault, golden)
+    assert finance["ok"] is False
+    required = resolve_required_outputs(
+        audit_json=ctx["audit"],
+        out_dir=ctx["out"],
+        detail_xlsx=fault,
+        audit_path=ctx["audit_path"],
+        exceptions_path=ctx["exc_path"],
+    )
+    checks = _claimed_checks(
+        build_uat_checks(
+            **_base_checks_kwargs(ctx, finance_ok=bool(finance["ok"]), required=required)
+        )
+    )
+    verdict = "PASS" if all(checks.values()) else "FAIL"
+    exit_code = uat_exit_code(verdict)
+    summary = {
+        "uat_verdict": verdict,
+        "exit_code": exit_code,
+        "failed_checks": [k for k, v in checks.items() if not v],
+        "finance_diffs": finance["diffs"],
+        "observations": {
+            "conservation_ok": bool(ctx["audit"].get("conservation_ok")),
+            "formal_db_untouched": bool(ctx.get("formal_db_untouched")),
+        },
+    }
+    assert verdict == "FAIL"
+    assert exit_code != 0
+    assert "detail_xlsx_finance_ok" in summary["failed_checks"]
+    assert summary["finance_diffs"]
+    assert summary["observations"]["formal_db_untouched"] is True
+    ctx["session"].close()
+
+
+def test_cr10c_resolve_required_outputs_rejects_directory_named_like_file(
+    tmp_path: Path,
+) -> None:
+    """CR-10C：同名目錄不得當成必要檔案通過。"""
+    out = tmp_path / "out"
+    out.mkdir()
+    fake_trace = out / "FIFO配對及未配對明細_fake.xlsx"
+    fake_trace.mkdir()  # 目錄而非檔案
+    detail = out / "detail.xlsx"
+    detail.write_text("x", encoding="utf-8")
+    audit_path = out / "a.json"
+    audit = {
+        "fifo_trace_file": str(fake_trace),
+        "conservation_file": str(out / "missing_cons.csv"),
+    }
+    audit_path.write_text(json.dumps(audit), encoding="utf-8")
+    exc = out / "e.csv"
+    exc.write_text("x", encoding="utf-8")
+    required = resolve_required_outputs(
+        audit_json=audit,
+        out_dir=out,
+        detail_xlsx=detail,
+        audit_path=audit_path,
+        exceptions_path=exc,
+    )
+    assert required["fifo_trace"] is False
+    assert required["conservation"] is False

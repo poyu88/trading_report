@@ -71,6 +71,7 @@ def _business_keys(result) -> list[tuple]:
             a.sell_trade_id,
             a.quantity,
             a.sequence_no,
+            a.match_type,
         )
         for a in result.allocations
     )
@@ -190,7 +191,7 @@ def test_cash_prior_inventory_case2_partial_opening_remain() -> None:
 
 
 def test_cash_prior_inventory_case3_insufficient_no_day_trade_escape() -> None:
-    """Case3：opening 500；SELL+BUY 各 1000 → blocking，不足 500；不得當沖解套。"""
+    """Case3：opening 500；SELL+BUY 各 1000 → Pass1 配 500；Pass2 補 500；仍為 CASH。"""
     result = run_fifo(
         "c3",
         [
@@ -199,20 +200,21 @@ def test_cash_prior_inventory_case3_insufficient_no_day_trade_escape() -> None:
         ],
         [_ol("ol1", 500, "60")],
     )
-    assert result.blocking
-    insuff = [i for i in result.issues if i.issue_code == "INSUFFICIENT_PRIOR_BUYS"]
-    assert len(insuff) == 1
-    assert insuff[0].detail["unmatched_quantity"] == 500
+    assert not result.blocking
+    assert not any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
     assert not any(i.issue_code == "ORDER_AMBIGUITY" for i in result.issues)
-    # 部分配對 500 來自 opening；當日 BUY 不得解套當日 SELL
-    assert sum(a.quantity for a in result.allocations) == 500
-    assert all(a.opening_lot_id == "ol1" for a in result.allocations)
-    assert all(a.buy_trade_id is None for a in result.allocations)
-    assert any(u.buy_trade_id == "b1" and u.available == 1000 for u in result.unsold)
+    assert sum(a.quantity for a in result.allocations) == 1000
+    std = [a for a in result.allocations if a.match_type == "STANDARD_FIFO"]
+    recon = [a for a in result.allocations if a.match_type == "SAME_DAY_RECONCILED"]
+    assert sum(a.quantity for a in std) == 500
+    assert all(a.opening_lot_id == "ol1" for a in std)
+    assert sum(a.quantity for a in recon) == 500
+    assert all(a.buy_trade_id == "b1" for a in recon)
+    assert any(u.buy_trade_id == "b1" and u.available == 500 for u in result.unsold)
 
 
 def test_cash_prior_inventory_case4_zero_opening_cash_blocks() -> None:
-    """Case4：opening 0；同日 BUY+SELL CASH → blocking，無自動 DAY_TRADE。"""
+    """Case4：opening 0；同日 BUY+SELL CASH → Pass2 配平；無自動 DAY_TRADE。"""
     result = run_fifo(
         "c4",
         [
@@ -220,11 +222,13 @@ def test_cash_prior_inventory_case4_zero_opening_cash_blocks() -> None:
             _t("s1", "2025-03-20", "SELL", 1000, "70"),
         ],
     )
-    assert result.blocking
-    assert any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
-    assert result.allocations == []
+    assert not result.blocking
+    assert not any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
+    assert len(result.allocations) == 1
+    assert result.allocations[0].match_type == "SAME_DAY_RECONCILED"
+    assert result.allocations[0].buy_trade_id == "b1"
+    assert result.unsold == []
     assert not any(i.issue_code == "ORDER_AMBIGUITY" for i in result.issues)
-    assert any(u.buy_trade_id == "b1" and u.available == 1000 for u in result.unsold)
 
 
 def test_cash_prior_inventory_case5_day_trade_still_matches() -> None:
@@ -263,7 +267,7 @@ def test_cash_prior_inventory_case6_multi_sell_exact() -> None:
 
 
 def test_cash_prior_inventory_case7_multi_sell_overage() -> None:
-    """Case7：opening 1000；多筆 SELL 合計 1500 → 超額 500 blocking。"""
+    """Case7：opening 1000；多筆 SELL 合計 1500 → Pass2 以同日買補 500 後配平。"""
     result = run_fifo(
         "c7",
         [
@@ -273,11 +277,12 @@ def test_cash_prior_inventory_case7_multi_sell_overage() -> None:
         ],
         [_ol("ol1", 1000, "60")],
     )
-    assert result.blocking
-    insuff = [i for i in result.issues if i.issue_code == "INSUFFICIENT_PRIOR_BUYS"]
-    assert sum(i.detail["unmatched_quantity"] for i in insuff) == 500
-    assert sum(a.quantity for a in result.allocations) == 1000
-    assert any(u.buy_trade_id == "b1" and u.available == 1000 for u in result.unsold)
+    assert not result.blocking
+    assert not any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
+    assert sum(a.quantity for a in result.allocations) == 1500
+    assert sum(a.quantity for a in result.allocations if a.match_type == "STANDARD_FIFO") == 1000
+    assert sum(a.quantity for a in result.allocations if a.match_type == "SAME_DAY_RECONCILED") == 500
+    assert any(u.buy_trade_id == "b1" and u.available == 500 for u in result.unsold)
 
 
 def test_cash_prior_inventory_case8_cash_and_day_trade_isolated() -> None:
@@ -303,7 +308,7 @@ def test_cash_prior_inventory_case8_cash_and_day_trade_isolated() -> None:
 
 
 def test_cash_prior_inventory_case9_no_cross_group() -> None:
-    """Case9：多帳戶／多股票／幣別 → 不跨組。"""
+    """Case9：多帳戶／多股票／幣別 → 不跨組；accB 以 Pass2 同組補沖。"""
     result = run_fifo(
         "c9",
         [
@@ -314,16 +319,18 @@ def test_cash_prior_inventory_case9_no_cross_group() -> None:
         ],
         [
             _ol("ol_a", 100, "9", account="accA", symbol="AAA"),
-            # accB 無 opening → 該組不足
+            # accB 無 opening → Pass2 同組 b_b 補沖
         ],
     )
     a_alloc = [a for a in result.allocations if a.sell_trade_id == "s_a"]
     assert len(a_alloc) == 1
     assert a_alloc[0].opening_lot_id == "ol_a"
-    assert not any(a.sell_trade_id == "s_b" for a in result.allocations)
-    assert any(
-        i.issue_code == "INSUFFICIENT_PRIOR_BUYS" and i.trade_id == "s_b" for i in result.issues
-    )
+    assert a_alloc[0].match_type == "STANDARD_FIFO"
+    b_alloc = [a for a in result.allocations if a.sell_trade_id == "s_b"]
+    assert len(b_alloc) == 1
+    assert b_alloc[0].buy_trade_id == "b_b"
+    assert b_alloc[0].match_type == "SAME_DAY_RECONCILED"
+    assert not any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
     # 不得跨組：accA opening 不可被 accB 消耗
     assert all(a.opening_lot_id != "ol_a" or a.sell_trade_id == "s_a" for a in result.allocations)
 
@@ -365,7 +372,7 @@ def test_cash_prior_inventory_1589_synthetic() -> None:
 
 
 def test_cash_same_day_ignores_trade_time_buy_before_sell() -> None:
-    """即使 trade_time 顯示買先於賣，CASH 仍不得用當日 BUY 解套當日 SELL。"""
+    """即使 trade_time 顯示買先於賣，Pass1 仍不穿插；Pass2 才 SAME_DAY_RECONCILED。"""
     result = run_fifo(
         "time-policy",
         [
@@ -373,8 +380,10 @@ def test_cash_same_day_ignores_trade_time_buy_before_sell() -> None:
             _t("s1", "2025-03-20", "SELL", 1000, "70", trade_time="14:00:00", seq=2),
         ],
     )
-    assert result.blocking
-    assert any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
+    assert not result.blocking
+    assert not any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
     assert not any(i.issue_code == "ORDER_AMBIGUITY" for i in result.issues)
-    assert result.allocations == []
-    assert any(u.buy_trade_id == "b1" and u.available == 1000 for u in result.unsold)
+    assert len(result.allocations) == 1
+    assert result.allocations[0].match_type == "SAME_DAY_RECONCILED"
+    assert result.allocations[0].buy_trade_id == "b1"
+    assert result.unsold == []

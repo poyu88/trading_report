@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any, Protocol
 
 TWOPLACES = Decimal("0.01")
@@ -103,17 +103,18 @@ def q2(value: Decimal) -> Decimal:
 
 
 def trunc_toward_zero(value: Decimal) -> Decimal:
-    """朝零截斷為整數 Decimal（TRUNC 價金片段）。
+    """朝零截斷為整數 Decimal（TRUNC 價金片段；含負數）。
 
     Args:
         value: ``qty × unit_price`` 等乘積。
 
     Returns:
         朝零取整後的整數 Decimal（非四捨五入）。
+
+    Note:
+        ``decimal.ROUND_DOWN`` 語意為朝零；不得對負數使用 ``ROUND_UP``（離零）。
     """
-    if value >= 0:
-        return value.to_integral_value(rounding=ROUND_DOWN)
-    return value.to_integral_value(rounding=ROUND_UP)
+    return value.to_integral_value(rounding=ROUND_DOWN)
 
 
 def allocate_trade_fragment_amounts(

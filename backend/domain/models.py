@@ -70,6 +70,7 @@ class Allocation:
     sell_trade_id: str
     quantity: int
     sequence_no: int
+    match_type: str = "STANDARD_FIFO"
 
 
 @dataclass
