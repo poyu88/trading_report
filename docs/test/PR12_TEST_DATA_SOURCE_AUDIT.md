@@ -1,15 +1,16 @@
-# PR #12 — 測試資料來源與驗收誠信稽核表
+# PR #12 — 測試資料來源與驗收誠信稽核表（最終複審）
 
 > **性質**：Merge 前稽核（Class C）。**暫停 Merge**；先前有條件通過結論保留。  
-> **範圍**：本 PR 測試／fixture／UAT／獨立 C／文件；非重開全部 CR、非大型新功能。  
-> **禁止**：新增虛假交易、偽造期初、降低驗收標準、Merge、正式 Migration、寫正式 DB、改寫 Git 歷史。
+> **範圍**：本 PR 測試／fixture／UAT／獨立 C／文件／公開 Git 與 PR Comment；非重開 CR、非大型新功能。  
+> **禁止**：新增虛假交易、偽造期初、降低驗收標準、Merge、正式 Migration、寫正式 DB、改寫 Git 歷史／force push。  
+> **本回報不貼出完整真實明細。**
 
 ## 0. 分類語意
 
 | 代碼 | 意義 |
 |---|---|
 | `REAL_SOURCE` | 本機真實對帳單／原始 CSV（通常 gitignored） |
-| `REAL_DERIVED` | 自真實來源匿名／摘錄／HTML bridge；保留原始價金等財務欄 |
+| `REAL_DERIVED` | 自真實來源匿名／摘錄／HTML bridge；**仍可能含敏感財務欄** |
 | `SYNTHETIC_UNIT` | 合成單元／純函式 |
 | `SYNTHETIC_CONTRACT` | 合成契約／管線（常含 price×qty） |
 | `FAULT_INJECTION` | 故意損壞產物／受控失敗輸入 |
@@ -17,81 +18,143 @@
 | `PENDING_DATA` | 缺可靠資料；不得 PASS |
 | `INVALID_EVIDENCE` | 無驗收用途或冒充驗證 |
 
----
+### 處置類型（本複審強制分列）
 
-## 1. 十項重點檢查結論
-
-| # | 檢查項 | 結論 |
-|---|---|---|
-| 1 | Agent 任意建立未標記交易 | **未發現未標記項**；本輪補 SOURCE 標籤。合成軌跡與 Owner REAL_DERIVED 已分開 |
-| 2 | 人工平均拆分／灌總額報表 | **未作為正向證據**；`test_uat_fifo_same_day_verdict` 有單列灌總額 **反例**（FAULT） |
-| 3 | 從受測輸出反推 Expected | **未發現**；C 禁依賴 Projector；UAT golden 自 TRADES／C 核算；`observe_open_cost_*` 僅觀測 Actual |
-| 4 | Expected 填入 Actual | **未發現** |
-| 5 | 固定 True／成功字串冒充 | **未發現冒充**；`finance_ok=True` 僅出現在 verdict **單元**受控輸入；UAT `detail_xlsx_finance_ok` 來自 `verify_*`；fault 觀測非固定 True |
-| 6 | 缺資料填 0／成功 | **已知限制已標**；合成 UAT interest=0 屬 SYNTHETIC；CR-06C 非零利息 → PENDING skip |
-| 7 | 為過測改 Expected | **未發現**本輪為配合失敗而改寫 golden |
-| 8 | 驗收函式未接入主流程 | **主要函式已接入**（`verify_detail_xlsx_finance`／`build_uat_checks`／`verify_audit_artifacts_content`／`decide_gold004_verdict`） |
-| 9 | 未執行卻宣稱 PASS | **文件已區分**合成 UAT PASS vs REAL／PENDING；GOLD-004 HTML bridge ≠ CSV Parser |
-| 10 | 真實明細／敏感進公開 Git | **Git 追蹤無** `.db`／`.env`／`input/`／expected_c JSON；fixtures 為合成 HTML |
-
-**敏感資料 Git 歷史**：目前追蹤檔未見真實帳戶明細。本機未追蹤之 `esun_local_changes.patch`／`scripts/_capital_rca_*`／`data/` **不得**提交。若未來發現已入歷史，僅回報範圍，**禁止** force push／改寫歷史。
-
----
-
-## 2. 逐項稽核
-
-| 檔案／函式 | 分類 | 用途 | 獨立驗收價值 | 問題 | 決策 | 待資料條件 |
-|---|---|---|---|---|---|---|
-| `tests/test_fifo_same_day_2236_original_import_e2e.py`／`ORIGINAL_ROWS` | REAL_DERIVED | Owner 九筆欄位→管線；CR-06A/B/C | 有（原始價金／列序／費用第一片段） | 利息皆 0 | **保留＋標籤**；新增 PENDING skip | 非零利息真實樣本 |
-| 同上／`test_cr06c_nonzero_interest_*` | PENDING_DATA | 占位 | 未來有 | 無資料 | **skip（明確 reason）** | 真實非零利息列 |
-| `tests/test_fifo_same_day_2236_e2e.py`／`TRADES` | SYNTHETIC_CONTRACT | RCA 合成 E2E | 部分（演算法契約） | price×qty≠券商價金 | **保留**；禁止當真實財務 | — |
-| `scripts/uat_fifo_same_day_2236.py`／`TRADES`＋`verify_*` | SYNTHETIC_CONTRACT | 隔離合成 UAT | 有（流程／verdict／隔離） | 非真實價金；interest=0 | **保留**；expectations 註明非判定來源 | 真實帳戶副本另列 PENDING |
-| `tests/test_uat_fifo_same_day_verdict.py` | SYNTHETIC_CONTRACT＋FAULT | fail-closed／灌總額反例 | 有 | 無 | **保留** | — |
-| `tests/test_uat_fifo_same_day_file_fault.py` | FAULT_INJECTION | 檔案層故障 | 有（範圍內） | 未跑 migration／冪等／H | **保留**；已排除未宣稱 checks | — |
-| `tests/test_day_trade_annotation.py` | SYNTHETIC_UNIT | 稅／支持股數／例外 | 有（契約） | 非完整稅引擎 | **保留** | 特殊商品真實樣本分列 |
-| `tests/test_annotation_report_noninterfere.py` | SYNTHETIC＋FAULT | ON/OFF／fault | 有 | 無 | **保留** | — |
-| `tests/test_same_day_reconciliation.py` | SYNTHETIC_UNIT／CONTRACT | Pass2 契約 | 有 | 無 | **保留** | — |
-| `tests/test_match_type_migration.py` | SYNTHETIC_CONTRACT | migration 探針 | 有 | lossy downgrade | **保留** | — |
-| `tests/test_golden_*.py`（expected_c／compare／phase*／cr_fixes） | SYNTHETIC_UNIT／CONTRACT／FAULT | C 層與比對契約 | 有 | 真實 C JSON 不上 Git | **保留** | 本機 REAL 見 UAT 腳本 |
-| `tests/test_report_finance_trunc_neg.py` | SYNTHETIC_UNIT | trunc 朝零 | 有 | 無 | **保留** | — |
-| `tests/test_decimal_text_normalize.py` | SYNTHETIC_UNIT | Decimal 正規化 | 有 | 無 | **保留** | — |
-| `tests/fixtures/statement_sample.html` | SYNTHETIC_UNIT | Parser 結構 | 有 | 已標合成 | **保留** | — |
-| `tests/fixtures/fifo_fee.html` | SYNTHETIC_UNIT | 費用落點 | 有 | 本輪補 SOURCE 註解 | **保留** | — |
-| `scripts/_golden_phase3_cr10a_uat.py` | REAL_SOURCE→DERIVED | GOLD-001 隔離 UAT | 有（本機） | 證據 gitignored | **保留**；缺檔不得 PASS | — |
-| `scripts/_golden_phase3_gold004_uat.py` | REAL_SOURCE→DERIVED | GOLD-004 | 部分 | HTML bridge；CSV Parser PENDING | **保留** | capital_csv profile |
-| `backend/golden/expected_c.py` | （演算法；答案來源外部） | 獨立 C | 有 | 禁 import 受測 FIFO | **保留** | — |
-| `backend/golden/compare_c_d.py`／`phase3_pipeline.py` | n/a | C↔D／觀測 | 有 | open_cost 觀測≠改 C | **保留** | — |
-| `docs/test/UAT_fifo_same_day_2236.md` | 文件 | 合成 UAT 紀錄 | — | 已標合成 | **保留** | — |
-| `docs/test/PR12_ORIGINAL_CR_WRITEOFF.md` | 文件 | 原始 CR 銷帳 | — | 與 GOLD 分列 | **保留** | 見 PENDING |
-| 未追蹤 `scripts/_capital_rca_*`／`esun_local_changes.patch` | 本機／勿入 Git | RCA | — | 可能含敏感 | **不提交** | — |
-
-**本輪未發現需 REMOVE 的 INVALID_EVIDENCE。** 未為維持通過數而停用有效測試。
-
----
-
-## 3. 本輪修正摘要
-
-1. 關鍵測試／UAT／fixture／golden 腳本補 `SOURCE:` 標籤與限制說明。  
-2. 新增 `test_cr06c_nonzero_interest_first_fragment_pending_data`（`pytest.skip`＋PENDING reason），避免未完成項從報告消失。  
-3. UAT `expectations` 註明僅供人工對照，判定以 `checks`／`finance_verify` 為準。  
-4. `fifo_fee.html` 補合成來源註解。
-
----
-
-## 4. 測試結果（實際）
-
-| 項目 | 結果 |
+| 類型 | 意義 |
 |---|---|
-| `uv run pytest -q` | **299 passed，1 skipped，0 failed，0 xfail**／68.28s |
-| `uv run ruff check .` | All checks passed |
-| 相對先前 299 passed | passed **不變**；**skipped +1**＝`test_cr06c_nonzero_interest_first_fragment_pending_data`（PENDING_DATA 占位，非削弱斷言） |
-| 正式 DB | **未**寫入／**未** migrate |
-| 品質指標 | 不以通過數為唯一標準；見本表分類與十項檢查 |
+| `ANNOTATION_ONLY` | 原有程式／用途已正確，僅補 SOURCE／限制註解 |
+| `LOGIC_OR_DOC_FIXED` | 原有表述／用途邊界不清，已實際修正文件或測試說明（非僅貼標） |
+| `SYNTHETIC_KEEP_NOT_REAL` | 合成測試保留，**不屬**真實財務證據 |
+| `PENDING_REVERIFY` | 待資料後重新驗證 |
+| `SENSITIVITY_OWNER_DECIDE` | 敏感／REAL_DERIVED 已公開；**Owner 待決**是否允許保留 |
 
 ---
 
-## 5. 變更紀錄
+## 1. 真實衍生資料公開風險（複審重點）
+
+### 1.1 事實（已進公開 Git／GitHub）
+
+| 位置 | 是否含真實交易財務欄 | 說明（不貼明細） |
+|---|---|---|
+| `tests/test_fifo_same_day_2236_original_import_e2e.py` 之 `ORIGINAL_ROWS` | **是** | 九筆含日期、股數、單價、**原始價金**、手續費、稅、淨收付；名稱匿名「合成2236」。REAL_DERIVED。引入自 PR 分支 Commit（含 `ddc7530`／`07d0f31`／`10eab5d` 等） |
+| 同上檔案斷言／Docstring | **部分** | 含結構性描述（如 579、半稅／全稅列序）；複審後 Docstring **不再**重複貼出特徵價金常數 |
+| `docs/test/PR12_ORIGINAL_CR_WRITEOFF.md` 等 | **結構／摘要** | 列序與驗收敘述（如 145／290／579）；**未**嵌入完整九筆價金表 |
+| `tests/fixtures/*.html` | **否（合成）** | 已標合成；非 ORIGINAL_ROWS 特徵價金 |
+| 追蹤之 JSON／CSV／Excel | **無** expected_c／真實對帳單入庫 | `git ls-files` 無 `.db`／`input/`／`data/golden/expected_c/*.json` |
+| PR #12 Issue Comments（公開） | **是（至少特徵值）** | 至少 1 則含特徵價金常數；另有多則提及 `ORIGINAL_ROWS`／日期結構。inline review comments＝0 |
+| 本機未追蹤 `data/`、`_capital_rca_*`、`esun_local_changes.patch` | 可能含真實 | **未**提交；持續禁止入庫 |
+
+**結論**：不得僅依「無 .db／gitignore」宣稱敏感未提交。`ORIGINAL_ROWS` 的 REAL_DERIVED 財務欄**已在公開追蹤 Python 檔與至少一則 PR Comment**。Agent **未**改寫歷史；是否允許繼續保留 → **Owner 待決**（`SENSITIVITY_OWNER_DECIDE`）。
+
+### 1.2 對照：合成軌跡（非同一敏感集合）
+
+`scripts/uat_fifo_same_day_2236.py`／`test_fifo_same_day_2236_e2e.py`／`test_same_day_reconciliation.py` 使用 **price×qty** 合成金額，與 Owner 原始價金不同；屬 `SYNTHETIC_KEEP_NOT_REAL`。
+
+---
+
+## 2. 人工報表與合成驗收（`_write_matching_multi_row_detail_xlsx`）
+
+| 項目 | 內容 |
+|---|---|
+| 定義處 | `tests/test_uat_fifo_same_day_verdict.py` |
+| 行為 | 將合成 golden **均勻拆分**到多列（殘差末列） |
+| 呼叫端 | 僅本檔：`test_verify_detail_xlsx_finance_ok_on_matching_totals`（比較器 ok）及多個 RED／FAULT 竄改基底；**無** UAT 主流程／FIFO E2E／GOLD 真實路徑呼叫 |
+| 合法用途 | `verify_detail_xlsx_finance` **比較器**單元／契約／故障注入 |
+| 非法用途（禁止） | 當作 FIFO／TRUNC 片段正確、或真實財務正向驗收 |
+| 複審前問題 | 稽核表寫「未作為正向證據」過於籠統；`ok_on_matching_totals` 確為比較器**正向**路徑，易被誤讀為 FIFO 證據 |
+| 複審修正 | **LOGIC_OR_DOC_FIXED**：函式與 ok 測試 Docstring 改為明示「僅比較器；均分≠FIFO；非真實財務」 |
+
+`_write_minimal_detail_xlsx`：單列灌總額，**僅反例**（FAULT）→ `SYNTHETIC_KEEP_NOT_REAL`。
+
+真實／管線 FIFO 財務正向證據應來自：REAL_DERIVED original import E2E、隔離合成 UAT（流程契約）、或本機 REAL_SOURCE GOLD UAT（gitignored）— **不是**人工均分 xlsx。
+
+---
+
+## 3. 處置分列總表（勿一律「未發現問題」）
+
+### 3.1 ANNOTATION_ONLY（原已正確，僅補標）
+
+| 項目 | 說明 |
+|---|---|
+| 多數 `SOURCE:` 模組標籤 | annotation／same_day／migration／golden unit／fixtures／UAT 合成腳本標籤 |
+| `fifo_fee.html` 合成註解 | 補齊 |
+| UAT `expectations` 註解 | 判定仍以 checks／verify 為準（原邏輯已如此） |
+
+### 3.2 LOGIC_OR_DOC_FIXED（本複審或前輪有實質邊界修正）
+
+| 項目 | 說明 |
+|---|---|
+| CR-06C Trace 第一片段 sequence 對位 | **前輪**強化斷言（非僅註解） |
+| `_write_matching_multi_row_detail_xlsx`＋ok 測試 Docstring | **本複審**釐清用途，修正「冒充 FIFO／真實財務」誤讀風險 |
+| 稽核表 §1／§2／§3 | **本複審**改寫：承認 REAL_DERIVED 已公開；人工均分用途收緊 |
+| ORIGINAL_ROWS 模組頭 | **本複審**標敏感風險＋Owner 待決；Docstring 減少特徵價金複述 |
+
+### 3.3 SYNTHETIC_KEEP_NOT_REAL
+
+| 項目 | 說明 |
+|---|---|
+| UAT／E2E／Pass2 `TRADES`（price×qty） | 演算法／隔離契約；非真實價金 |
+| annotation／golden 合成單元 | 契約有效；非完整真實稅務／帳戶驗收 |
+| 人工均分／單列灌總額 helper | 僅比較器／FAULT |
+| `finance_ok=True` 於 verdict 單元 | 受控輸入測判定邏輯 |
+
+### 3.4 PENDING_REVERIFY
+
+| 項目 | 說明 |
+|---|---|
+| CR-06C 非零利息 | `test_cr06c_nonzero_interest_first_fragment_pending_data` **skipped** |
+| GOLD-CSV-PARSER | HTML bridge ≠ 原始 CSV Parser |
+| 真實帳戶全集財務差異 | DEFERRED／PENDING_DATA |
+| GOLD-CR-02／05 等 | 見 `PENDING_DATA_VALIDATION.md` |
+
+### 3.5 SENSITIVITY_OWNER_DECIDE
+
+| 項目 | 說明 |
+|---|---|
+| `ORIGINAL_ROWS` 留在公開 Git | 含真實衍生財務欄；Owner 決定保留／另案遷出（Agent 不改寫歷史） |
+| PR Comment 中特徵價金 | 已公開；Owner 決定是否另處理（Agent 不刪遠端） |
+
+---
+
+## 4. 十項檢查（複審後誠實表述）
+
+| # | 檢查項 | 複審結論 |
+|---|---|---|
+| 1 | 未標記交易 | 合成已標；REAL_DERIVED 已標但**有公開風險** |
+| 2 | 人工均分／灌總額 | 均分 helper **僅比較器／FAULT**（本複審文件收緊）；灌總額為反例 |
+| 3 | 反推 Expected | 未發現 C／UAT golden 自 Excel 反推 |
+| 4 | Expected→Actual | 未發現 |
+| 5 | 固定 True 冒充 | 未發現 UAT 主流程固定 True；單元受控 True 已標 |
+| 6 | 缺資料填 0／成功 | 合成 interest=0 已標；非零利息 PENDING skip |
+| 7 | 為過測改 Expected | 未發現本輪為此削弱斷言 |
+| 8 | 未接入主流程 | 主要 verify／checks 已接入 |
+| 9 | 未執行稱 PASS | 合成 UAT／GOLD bridge 範圍已文件化；不得越界 |
+| 10 | 敏感進公開 Git | **有**：REAL_DERIVED 九筆財務欄在追蹤測試檔＋PR Comment 特徵值；無完整 DB／CSV 入庫 |
+
+---
+
+## 5. Owner 待決事項
+
+1. **是否允許**匿名 REAL_DERIVED 九筆財務欄繼續留在公開 Git（`ORIGINAL_ROWS`）。  
+2. **是否處理**已出現於 PR Comment 的特徵價金（Agent 不 force push／不刪歷史）。  
+3. 若要求遷出：另開授權任務（新路徑／密／縮減欄位）；**非本輪**執行。  
+4. 確認人工均分 xlsx **僅**比較器用途之文件收緊是否足夠。  
+5. Merge 仍暫停至 Reviewer／Owner 最終確認。
+
+---
+
+## 6. 本輪執行範圍
+
+- 更新本稽核表；收緊人工均分／ORIGINAL_ROWS 敏感說明。  
+- **未**重跑無關大型 GOLD／真實帳戶 UAT（依 Owner：僅文件／註解時不必）。  
+- 相關單元測試可抽樣確認；全量 pytest 若僅註解變更可視 CI／需要補跑。  
+- **未** Merge／**未**正式 Migration／**未**寫正式 DB。
+
+---
+
+## 7. 變更紀錄
 
 | 日期 | 說明 |
 |---|---|
-| 2026-11-26 | 初版：Merge 前測試資料來源／誠信稽核；SOURCE 標籤；PENDING skip；暫停 Merge |
+| 2026-11-26 | 初版：SOURCE 標籤；PENDING skip；暫停 Merge |
+| 2026-11-26 | **最終複審**：REAL_DERIVED 公開風險事實；人工均分用途收緊；處置分列 ANNOTATION_ONLY／FIXED／SYNTHETIC／PENDING／SENSITIVITY；Owner 待決 |

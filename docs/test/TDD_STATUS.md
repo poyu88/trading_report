@@ -435,9 +435,18 @@
 |---|---|
 | 分支 | `feature/fifo-same-day-reconciliation`（PR #12：Merge 前資料誠信稽核） |
 | 變更 | 新增 `docs/test/PR12_TEST_DATA_SOURCE_AUDIT.md`；關鍵測試／UAT／fixture 標 `SOURCE:`；CR-06C 非零利息 `pytest.skip` 占位 |
-| 十項檢查 | 未發現 INVALID_EVIDENCE／反推 Expected／固定 True 冒充／敏感入 Git；合成 vs REAL_DERIVED 已分列 |
+| 十項檢查 | 初版偏樂觀；**最終複審**見 §1.34 |
 | 本機 REGRESSION | `uv run pytest -q` → **299 passed／1 skipped**／68.28s；`uv run ruff check .` 通過；正式 DB **未**動；**暫停 Merge** |
 | 判定 | 稽核表已交；等待 Reviewer 最終確認 |
+
+### 1.34 測試資料來源稽核最終複審
+
+| 項目 | 結果 |
+|---|---|
+| 變更 | 稽核表改寫：REAL_DERIVED **已進公開 Git**；人工均分 xlsx 用途收緊為比較器／FAULT；處置分列 ANNOTATION_ONLY／FIXED／SYNTHETIC／PENDING／SENSITIVITY |
+| 敏感 | `ORIGINAL_ROWS` 財務欄＋PR Comment 特徵值 → **Owner 待決**；未改寫歷史 |
+| 測試 | 僅註解／文件；抽樣 `test_uat_fifo_same_day_verdict`；未重跑無關大型 UAT |
+| 判定 | **暫停 Merge**；提交 Owner 待決事項 |
 
 ---
 
@@ -710,3 +719,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **原始 CR 銷帳**：`PR12_ORIGINAL_CR_WRITEOFF.md`；GOLD≠原始 CR；CR-06C 利息／稅落點強化；暫停 Merge Readiness；正式 DB **未**動；待 Reviewer 最終審查。 |
 | 2026-11-26 | **`pr12_cr06c_merge_ready_v1`**：CR-06C 第一片段 sequence 對位＋獨立 C／Excel；全量 **299 passed**／61.38s；ruff 通過；隔離 DB integrity／FK 實查；隔離 migration upgrade／downgrade 實查；正式 DB **未**寫入／**未** migrate；Merge **待** Owner 授權。 |
 | 2026-11-26 | **`pr12_test_data_audit_v1`**：測試資料來源／誠信稽核表；SOURCE 標籤；非零利息 PENDING skip；全量 **299 passed／1 skipped**／68.28s；ruff 通過；**暫停 Merge**；正式 DB **未**動。 |
+| 2026-11-26 | **`pr12_test_data_audit_r2_v1`**：最終複審—REAL_DERIVED 公開風險事實、人工均分用途收緊、處置分列、Owner 待決；未改寫歷史；**暫停 Merge**。 |

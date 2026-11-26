@@ -1,16 +1,18 @@
 """CR-06：原始九筆 2236 欄位 → Parser／Import → FIFO → Report → Audit。
 
-SOURCE: REAL_DERIVED
+SOURCE: REAL_DERIVED（敏感風險：財務欄已進公開 Git，見稽核表 Owner 待決）
 - Owner 提供之原始檔欄位（日期／價／量／價金／費／稅／淨收付）匿名嵌入；
   名稱「合成2236」僅匿名標籤，**不是** price×qty 合成軌跡。
+- REAL_DERIVED ≠ 非敏感；匿名名稱不消除財務明細公開風險。
 - 不得以價×量覆蓋券商原始成交金額；正式 DB 不讀寫。
 - 非零利息真實樣本：PENDING_DATA（本 fixture 利息皆 0）。
 
 Canonical 列序來源：Owner 原始檔陳述序（非 RCA／合成軌跡）。
 - ``2024-08-28``：SELL(tax=145 半稅) → SELL(tax=290 全稅) → BUY
-- ``2024-09-02``：SELL(579@111.5, gross=64558≠111.5×579) → SELL(21@112)
+- ``2024-09-02``：SELL(579@111.5, gross≠price×qty) → SELL(21@112)
 其他同日排列僅作 permutation；不得將非原始序宣稱為 Owner 原始序。
 不得將本檔宣稱為完整真實帳戶 REAL_SOURCE 財務驗收。
+是否允許繼續保留於公開 Git：**Owner 待決**（Agent 不得改寫歷史／force push）。
 """
 
 from __future__ import annotations

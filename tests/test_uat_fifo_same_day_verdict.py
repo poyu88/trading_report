@@ -204,10 +204,14 @@ def _write_matching_multi_row_detail_xlsx(
     profit: Decimal | None = None,
     n_rows: int | None = None,
 ) -> Path:
-    """寫入多列合成明細，財務加總對齊 golden（正向／竄改基底）。
+    """寫入多列合成明細，財務加總對齊 golden（比較器單元／FAULT 基底）。
 
-    將買賣股數、費用、成本、收入、損益均勻拆到 ``n_rows``（預設＝賣出筆數），
-    殘差放末列，確保加總精確。禁止以單列總額冒充完整報表。
+    SOURCE: SYNTHETIC_CONTRACT + FAULT_INJECTION helper
+    - 將買賣股數、費用、成本、收入、損益**均勻拆分**到 ``n_rows``（預設＝賣出筆數），
+      殘差放末列，僅保證加總精確，便於測試 ``verify_detail_xlsx_finance``。
+    - **不是** FIFO／TRUNC 片段價金真相；**不得**作為真實或管線 FIFO 正確性證據。
+    - **不是** REAL_DERIVED／REAL_SOURCE 財務正向驗收。
+    - 禁止以單列總額冒充完整報表（見 ``_write_minimal_detail_xlsx`` 反例）。
     """
     golden = compute_finance_golden_from_uat_trades(TRADES)
     rows = n_rows if n_rows is not None else int(golden.get("min_detail_rows", 6))
@@ -281,7 +285,11 @@ def _mutate_xlsx_column_sum(
 
 
 def test_verify_detail_xlsx_finance_ok_on_matching_totals(tmp_path: Path) -> None:
-    """CR-10A：多列合成明細財務加總與 golden 一致 → ok（禁止單列灌總額）。"""
+    """比較器契約：人工均分多列加總＝golden → verify ok。
+
+    僅證明 ``verify_detail_xlsx_finance`` 對聚合一致輸入回 True；
+    **不**證明 FIFO／報表片段正確，亦非真實財務正向證據。
+    """
     golden = compute_finance_golden_from_uat_trades(TRADES)
     path = _write_matching_multi_row_detail_xlsx(tmp_path / "ok.xlsx")
     result = verify_detail_xlsx_finance(path, golden)
