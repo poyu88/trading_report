@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from backend.reports.field_schema import HEADERS
 from scripts.uat_fifo_same_day_2236 import (
@@ -169,22 +169,23 @@ def test_build_uat_checks_missing_required_outputs_empty_fails() -> None:
 
 
 def _write_minimal_detail_xlsx(path: Path, *, profit: Decimal = Decimal(28618)) -> Path:
-    """寫入具備 HEADERS 的最小明細（僅一列賣出費用／損益）。"""
+    """寫入單列灌總額明細（結構不足；僅供 RED-05 反例）。"""
     wb = Workbook()
     ws = wb.active
     assert ws is not None
     for col, header in enumerate(HEADERS, start=1):
         ws.cell(1, col, header)
     idx = {h: i + 1 for i, h in enumerate(HEADERS)}
-    # 將 golden 全部分攤到一列（驗證加總路徑）
     golden = compute_finance_golden_from_uat_trades(TRADES)
+    cost = golden["buy_gross"] + golden["buy_commission"]
+    income = cost + profit
+    ws.cell(2, idx["股數（買）"], float(golden["buy_qty"]))
+    ws.cell(2, idx["股數（賣）"], float(golden["sell_qty"]))
     ws.cell(2, idx["手續費（買）"], float(golden["buy_commission"]))
     ws.cell(2, idx["手續費（賣）"], float(golden["sell_commission"]))
     ws.cell(2, idx["交易稅"], float(golden["tax"]))
-    ws.cell(2, idx["成本"], float(golden["buy_gross"] + golden["buy_commission"]))
-    # income - cost == profit；調整 income 使 profit 參數生效
-    cost = golden["buy_gross"] + golden["buy_commission"]
-    income = cost + profit
+    ws.cell(2, idx["利息"], 0)
+    ws.cell(2, idx["成本"], float(cost))
     ws.cell(2, idx["收入"], float(income))
     ws.cell(2, idx["損益"], float(profit))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,10 +193,92 @@ def _write_minimal_detail_xlsx(path: Path, *, profit: Decimal = Decimal(28618)) 
     return path
 
 
-def test_verify_detail_xlsx_finance_ok_on_matching_totals(tmp_path: Path) -> None:
-    """CR-10A：Excel 財務加總與 golden 一致 → ok。"""
+def _write_matching_multi_row_detail_xlsx(
+    path: Path,
+    *,
+    profit: Decimal | None = None,
+    n_rows: int | None = None,
+) -> Path:
+    """寫入多列合成明細，財務加總對齊 golden（正向／竄改基底）。
+
+    將買賣股數、費用、成本、收入、損益均勻拆到 ``n_rows``（預設＝賣出筆數），
+    殘差放末列，確保加總精確。禁止以單列總額冒充完整報表。
+    """
     golden = compute_finance_golden_from_uat_trades(TRADES)
-    path = _write_minimal_detail_xlsx(tmp_path / "ok.xlsx", profit=golden["expected_report_profit"])
+    rows = n_rows if n_rows is not None else int(golden.get("min_detail_rows", 6))
+    if rows < 1:
+        raise ValueError("n_rows must be >= 1")
+    profit_total = (
+        profit if profit is not None else golden["expected_report_profit"]
+    )
+    cost_total = golden.get("cost", golden["buy_gross"] + golden["buy_commission"])
+    income_total = golden.get("income", cost_total + profit_total)
+    # 若呼叫端覆寫 profit，同步調整 income 以維持恒等式
+    if profit is not None:
+        income_total = cost_total + profit_total
+
+    def _split(total: Decimal) -> list[Decimal]:
+        base = (total / rows).quantize(Decimal("0.01"))
+        parts = [base] * (rows - 1)
+        parts.append(total - sum(parts))
+        return parts
+
+    buy_qtys = _split(golden["buy_qty"])
+    sell_qtys = _split(golden["sell_qty"])
+    buy_comms = _split(golden["buy_commission"])
+    sell_comms = _split(golden["sell_commission"])
+    taxes = _split(golden["tax"])
+    interests = _split(golden.get("interest", Decimal(0)))
+    costs = _split(cost_total)
+    incomes = _split(income_total)
+    profits = _split(profit_total)
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    for col, header in enumerate(HEADERS, start=1):
+        ws.cell(1, col, header)
+    idx = {h: i + 1 for i, h in enumerate(HEADERS)}
+    for i in range(rows):
+        r = i + 2
+        ws.cell(r, idx["股數（買）"], float(buy_qtys[i]))
+        ws.cell(r, idx["股數（賣）"], float(sell_qtys[i]))
+        ws.cell(r, idx["手續費（買）"], float(buy_comms[i]))
+        ws.cell(r, idx["手續費（賣）"], float(sell_comms[i]))
+        ws.cell(r, idx["交易稅"], float(taxes[i]))
+        ws.cell(r, idx["利息"], float(interests[i]))
+        ws.cell(r, idx["成本"], float(costs[i]))
+        ws.cell(r, idx["收入"], float(incomes[i]))
+        ws.cell(r, idx["損益"], float(profits[i]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return path
+
+
+def _mutate_xlsx_column_sum(
+    path: Path,
+    column: str,
+    *,
+    delta: Decimal,
+) -> None:
+    """將指定欄第一個非空儲存格加上 delta（供竄改案例）。"""
+    wb = load_workbook(path)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        cell = row[idx[column]]
+        if cell.value is not None:
+            cell.value = float(Decimal(str(cell.value)) + delta)
+            break
+    wb.save(path)
+
+
+def test_verify_detail_xlsx_finance_ok_on_matching_totals(tmp_path: Path) -> None:
+    """CR-10A：多列合成明細財務加總與 golden 一致 → ok（禁止單列灌總額）。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "ok.xlsx")
     result = verify_detail_xlsx_finance(path, golden)
     assert result["ok"] is True
     assert result["diffs"] == {}
@@ -204,13 +287,95 @@ def test_verify_detail_xlsx_finance_ok_on_matching_totals(tmp_path: Path) -> Non
 def test_verify_detail_xlsx_finance_fails_when_profit_off_by_one(tmp_path: Path) -> None:
     """CR-10A：損益差 1 元 → ok=False，diffs 記錄。"""
     golden = compute_finance_golden_from_uat_trades(TRADES)
-    path = _write_minimal_detail_xlsx(
+    path = _write_matching_multi_row_detail_xlsx(
         tmp_path / "bad_profit.xlsx",
         profit=golden["expected_report_profit"] + Decimal(1),
     )
     result = verify_detail_xlsx_finance(path, golden)
     assert result["ok"] is False
     assert "profit" in result["diffs"]
+
+
+def test_verify_detail_xlsx_finance_fails_when_cost_income_both_up(tmp_path: Path) -> None:
+    """RED-01：cost+1 且 income+1（profit 不變）→ 須獨立抓到 cost／income。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "cost_income_up.xlsx")
+    _mutate_xlsx_column_sum(path, "成本", delta=Decimal(1))
+    _mutate_xlsx_column_sum(path, "收入", delta=Decimal(1))
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+    assert "cost" in result["diffs"] or "income" in result["diffs"]
+
+
+def test_verify_detail_xlsx_finance_fails_when_cost_income_both_down(tmp_path: Path) -> None:
+    """RED-02：cost-1 且 income-1（profit 不變）→ 須獨立抓到 cost／income。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "cost_income_down.xlsx")
+    _mutate_xlsx_column_sum(path, "成本", delta=Decimal(-1))
+    _mutate_xlsx_column_sum(path, "收入", delta=Decimal(-1))
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+    assert "cost" in result["diffs"] or "income" in result["diffs"]
+
+
+def test_verify_detail_xlsx_finance_fails_when_buy_qty_tampered(tmp_path: Path) -> None:
+    """RED-03：竄改股數（買）合計 → diffs 含 buy_qty。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "buy_qty.xlsx")
+    _mutate_xlsx_column_sum(path, "股數（買）", delta=Decimal(1))
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+    assert "buy_qty" in result["diffs"]
+
+
+def test_verify_detail_xlsx_finance_fails_when_sell_qty_tampered(tmp_path: Path) -> None:
+    """RED-04：竄改股數（賣）合計 → diffs 含 sell_qty。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "sell_qty.xlsx")
+    _mutate_xlsx_column_sum(path, "股數（賣）", delta=Decimal(1))
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+    assert "sell_qty" in result["diffs"]
+
+
+def test_verify_detail_xlsx_finance_rejects_single_row_fake_totals(tmp_path: Path) -> None:
+    """RED-05：單列灌總額不得冒充完整報表（data_rows／結構下限）。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_minimal_detail_xlsx(
+        tmp_path / "single_row_fake.xlsx",
+        profit=golden["expected_report_profit"],
+    )
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+    assert (
+        "data_rows" in result["diffs"]
+        or "min_detail_rows" in result["diffs"]
+        or any("data_rows" in e or "min_detail" in e for e in result["errors"])
+    )
+
+
+def test_verify_detail_xlsx_finance_fails_when_finance_cells_cleared(tmp_path: Path) -> None:
+    """RED-06：保留表頭、清空成本／收入／股數等必要儲存格 → fail-closed。"""
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    path = _write_matching_multi_row_detail_xlsx(tmp_path / "cleared.xlsx")
+    wb = load_workbook(path)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    clear_cols = ["股數（買）", "股數（賣）", "成本", "收入", "利息"]
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        for col in clear_cols:
+            row[idx[col]].value = None
+    wb.save(path)
+    result = verify_detail_xlsx_finance(path, golden)
+    assert result["ok"] is False
+
+
+@pytest.mark.skip(reason="RED-07：逐筆金額對沖驗收待辦（非本輪 CR-10A 聚合範圍）")
+def test_verify_detail_xlsx_finance_per_row_offset_deferred() -> None:
+    """RED-07（待辦）：逐筆對沖但聚合總額不變時，現行聚合驗收仍可能通過。"""
+    raise AssertionError("per-row finance verification not in CR-10A scope")
 
 
 def test_verify_detail_xlsx_finance_fails_missing_file(tmp_path: Path) -> None:
@@ -248,6 +413,18 @@ def test_compute_finance_golden_from_uat_trades_independent() -> None:
     assert golden["buy_commission"] == Decimal(90)  # 40+25+25
     assert golden["sell_commission"] == Decimal(135)  # 20+30+30+30+20+5
     assert golden["tax"] == Decimal(1178)
+    assert golden["interest"] == Decimal(0)
+    assert golden["cost"] == golden["buy_gross"] + golden["buy_commission"]
+    assert golden["income"] == (
+        golden["sell_gross"]
+        - golden["sell_commission"]
+        - golden["tax"]
+        - golden["interest"]
+    )
+    assert golden["unsold_qty"] == Decimal(0)
+    assert golden["remaining_inventory_cost"] == Decimal(0)
+    assert golden["min_detail_rows"] == Decimal(6)
     assert golden["expected_report_profit"] == (
         golden["sell_gross"] - golden["buy_gross"] - golden["commission"] - golden["tax"]
     )
+    assert golden["expected_report_profit"] == golden["income"] - golden["cost"]

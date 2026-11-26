@@ -292,17 +292,24 @@ def compute_finance_golden_from_uat_trades(
         trades: ``(day, side, qty, price, commission, tax, key)``；預設 ``TRADES``。
 
     Returns:
-        含買賣股數／價金／手續費／稅／``expected_report_profit`` 之 dict。
+        含買賣股數／價金／手續費／稅／利息／成本／收入／未售／
+        ``min_detail_rows``／``expected_report_profit`` 之 dict。
 
     Side Effects:
         無。
 
     Financial invariants:
-        ``expected_report_profit = sell_gross - buy_gross - commission - tax``
-        （全配平且費用一次落點契約；不得以檔案存在替代）。
+        ``cost = buy_gross + buy_commission``；
+        ``income = sell_gross - sell_commission - tax - interest``；
+        ``expected_report_profit = income - cost``
+        （= ``sell_gross - buy_gross - commission - tax``；全配平且費用一次落點）；
+        本 UAT 軌跡 ``interest``／``unsold_qty``／``remaining_inventory_cost`` 為 0；
+        ``min_detail_rows`` = 賣出筆數（聚合結構地板，非逐筆驗收）。
+        不得自 Excel 反推 golden。
     """
     rows = trades if trades is not None else TRADES
     buy_qty = sell_qty = 0
+    sell_rows = 0
     buy_gross = sell_gross = commission = tax = Decimal(0)
     buy_commission = sell_commission = Decimal(0)
     for _day, side, qty, price, comm, tx, _key in rows:
@@ -319,6 +326,10 @@ def compute_finance_golden_from_uat_trades(
             sell_qty += qty
             sell_gross += g
             sell_commission += c
+            sell_rows += 1
+    interest = Decimal(0)
+    cost = buy_gross + buy_commission
+    income = sell_gross - sell_commission - tax - interest
     return {
         "buy_qty": Decimal(buy_qty),
         "sell_qty": Decimal(sell_qty),
@@ -328,7 +339,13 @@ def compute_finance_golden_from_uat_trades(
         "buy_commission": buy_commission,
         "sell_commission": sell_commission,
         "tax": tax,
-        "expected_report_profit": sell_gross - buy_gross - commission - tax,
+        "interest": interest,
+        "cost": cost,
+        "income": income,
+        "unsold_qty": Decimal(0),
+        "remaining_inventory_cost": Decimal(0),
+        "min_detail_rows": Decimal(sell_rows),
+        "expected_report_profit": income - cost,
     }
 
 
@@ -336,7 +353,7 @@ def verify_detail_xlsx_finance(
     xlsx_path: Path,
     golden: dict[str, Decimal],
 ) -> dict[str, Any]:
-    """讀取明細 Excel A–W 財務儲存格並與 golden 比對（fail-closed）。
+    """讀取明細 Excel A–W 財務儲存格並與 golden **獨立**比對（fail-closed）。
 
     Args:
         xlsx_path: 明細報表路徑。
@@ -344,13 +361,15 @@ def verify_detail_xlsx_finance(
 
     Returns:
         ``{"ok": bool, "actual": dict, "diffs": dict, "errors": list}``。
-        檔案缺失、損毀、表頭錯誤、空白或數值不符 → ``ok=False``。
+        檔案缺失、損毀、表頭錯誤、空白、結構列數不足或數值不符 → ``ok=False``。
 
     Side Effects:
         僅讀取 ``xlsx_path``；不寫入。
 
     Note:
         不得以檔案存在或檔名非 DRAFT 當作財務驗證成功。
+        ``cost``／``income`` 必須各自對 golden，不得僅靠 ``income-cost==profit``。
+        ``data_rows < min_detail_rows`` → FAIL（擋單列灌總額）。
     """
     errors: list[str] = []
     actual: dict[str, Decimal] = {}
@@ -376,24 +395,30 @@ def verify_detail_xlsx_finance(
                 "errors": ["header_mismatch"],
             }
         idx = {h: i for i, h in enumerate(HEADERS)}
-        buy_comm = sell_comm = tax_sum = cost = income = profit = Decimal(0)
+        buy_qty = sell_qty = Decimal(0)
+        buy_comm = sell_comm = tax_sum = interest = Decimal(0)
+        cost = income = profit = Decimal(0)
         data_rows = 0
+
+        def _add(col: str, acc: Decimal, row: tuple[Any, ...]) -> Decimal:
+            val = row[idx[col]]
+            if val is None:
+                return acc
+            return acc + Decimal(str(val))
+
         for row in ws.iter_rows(min_row=2, max_col=len(HEADERS), values_only=True):
             if all(v is None for v in row):
                 continue
             data_rows += 1
-            if row[idx["手續費（買）"]] is not None:
-                buy_comm += Decimal(str(row[idx["手續費（買）"]]))
-            if row[idx["手續費（賣）"]] is not None:
-                sell_comm += Decimal(str(row[idx["手續費（賣）"]]))
-            if row[idx["交易稅"]] is not None:
-                tax_sum += Decimal(str(row[idx["交易稅"]]))
-            if row[idx["成本"]] is not None:
-                cost += Decimal(str(row[idx["成本"]]))
-            if row[idx["收入"]] is not None:
-                income += Decimal(str(row[idx["收入"]]))
-            if row[idx["損益"]] is not None:
-                profit += Decimal(str(row[idx["損益"]]))
+            buy_qty = _add("股數（買）", buy_qty, row)
+            sell_qty = _add("股數（賣）", sell_qty, row)
+            buy_comm = _add("手續費（買）", buy_comm, row)
+            sell_comm = _add("手續費（賣）", sell_comm, row)
+            tax_sum = _add("交易稅", tax_sum, row)
+            interest = _add("利息", interest, row)
+            cost = _add("成本", cost, row)
+            income = _add("收入", income, row)
+            profit = _add("損益", profit, row)
         if data_rows == 0:
             return {
                 "ok": False,
@@ -401,19 +426,34 @@ def verify_detail_xlsx_finance(
                 "diffs": diffs,
                 "errors": ["empty_data_rows"],
             }
+        min_rows = int(golden["min_detail_rows"])
         actual = {
+            "data_rows": Decimal(data_rows),
+            "buy_qty": buy_qty,
+            "sell_qty": sell_qty,
             "buy_commission": buy_comm,
             "sell_commission": sell_comm,
             "tax": tax_sum,
+            "interest": interest,
             "cost": cost,
             "income": income,
             "profit": profit,
             "income_minus_cost": income - cost,
         }
+        if data_rows < min_rows:
+            diffs["data_rows"] = {
+                "expected": f">={min_rows}",
+                "actual": str(data_rows),
+            }
         checks = {
+            "buy_qty": golden["buy_qty"],
+            "sell_qty": golden["sell_qty"],
             "buy_commission": golden["buy_commission"],
             "sell_commission": golden["sell_commission"],
             "tax": golden["tax"],
+            "interest": golden["interest"],
+            "cost": golden["cost"],
+            "income": golden["income"],
             "profit": golden["expected_report_profit"],
         }
         for key, expected in checks.items():

@@ -29,6 +29,8 @@
 - **不**宣稱涵蓋所有並發、OS 快取、防毒／備份工具等情境。
 - Verdict 以 `build_uat_checks`（`scripts/uat_fifo_same_day_2236.py`）組裝之 **全部** `checks` 為準；反向失敗見 `tests/test_uat_fifo_same_day_verdict.py`／檔案層故障注入見 `tests/test_uat_fifo_same_day_file_fault.py`。
 - `detail_xlsx_finance_ok` 必須來自 `verify_detail_xlsx_finance`（讀 Excel A–W），**不得**以檔案存在／檔名非 DRAFT 預設 True。
+- **CR-10A**：`verify_detail_xlsx_finance` 須以 fixture Decimal golden **獨立**核對 `buy_qty`／`sell_qty`／買賣手續費／稅／利息／**成本**／**收入**／損益，並保留 `income-cost==profit`；`data_rows < min_detail_rows`（本軌跡＝賣出筆數 6）→ FAIL（禁單列灌總額冒充）。不得只靠恒等式當成本／收入驗收。
+- **本輪未涵蓋**：RED-07 逐筆金額對沖；CR-06B `_assert_excel_finance`；CR-10B `main()` 結束碼；CR-10C Trace／Conservation 內容驗證。
 - 必要產出以 audit 內 `fifo_trace_file`／`conservation_file` 實際路徑驗證（`resolve_required_outputs`），不用 glob 關鍵字。
 
 ## 2. 產出清單（人工可查）
@@ -56,7 +58,7 @@
 | H 非干涉（財務鍵 snapshot） | true |
 | 正式 DB 指紋未變（含 WAL／SHM；無並發寫入前提） | true |
 | run／out 目錄落在對應 UAT 根 | true |
-| `detail_xlsx_finance_ok` | `verify_detail_xlsx_finance` 與 Decimal golden 全等（fail-closed） |
+| `detail_xlsx_finance_ok` | `verify_detail_xlsx_finance` 與 Decimal golden **獨立欄位**全等（含 cost／income／qty／interest；結構下限；fail-closed） |
 | `annotation_has_warnings_key` | 序列化 annotation **必須**含 `warnings` 鍵 |
 
 必要條件失敗 → `uat_verdict=FAIL`。不得以記憶體 annotation 物件單獨作為最終判定。
