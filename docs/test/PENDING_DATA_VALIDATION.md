@@ -24,15 +24,15 @@
 |---|---|
 | CR ID | GOLD-CR-05 |
 | 問題名稱 | CSV 無 `raw_row_id`／`trade_id`／batch 等欄；完整性僅能部分交叉 |
-| 程式位置 | `scripts/_golden_phase01_inventory.py`::`cross_check_csv_to_db`；Manifest `known_limitations` |
-| 目前行為 | 缺欄標 `NOT_IN_SOURCE`；不以 DB 列取代 A |
-| 已驗證範圍 | 可對欄（代號／買賣／日期／價量／費稅息／淨收付）交叉 |
-| 未驗證範圍 | 來源端原生 id 對帳；列序與 raw_row 一對一契約之獨立憑證 |
+| 程式位置 | `scripts/_golden_phase01_inventory.py`::`cross_check_csv_to_db`／`classify_capital_csv_row` |
+| 目前行為 | 缺欄標 `NOT_IN_SOURCE`；不以 DB 列取代 A；**已可核對** trade_type／currency（來源有幣別時）／account↔batch／parse_status／來源列相對序 |
+| 已驗證範圍 | 代號／買賣／日期／價量／費稅息／淨收付；以及上列可立即核對欄（純函式＋合成 SQLite） |
+| 未驗證範圍 | 來源端原生 id 對帳；列序與 raw_row 一對一契約之獨立真實憑證 |
 | 缺少資料 | 券商匯出若未來提供穩定外部 trade id／列指紋欄 |
 | 資料齊全後 | 擴充交叉鍵納入外部 id；缺則維持 NOT_IN_SOURCE 且不得補造 |
 | 未來驗收條件 | 外部 id 存在時 100% 對上；不存在時明確 NOT_IN_SOURCE |
 | 重新啟動條件 | 新來源格式含可追溯外部鍵 |
-| 目前狀態 | PENDING_DATA |
+| 目前狀態 | PENDING_DATA（外部鍵仍缺；可立即核對欄已補強） |
 
 ## GOLD-CR-11：多帳戶／多批次真實情境
 
@@ -40,15 +40,15 @@
 |---|---|
 | CR ID | GOLD-CR-11 |
 | 問題名稱 | 多帳戶、多 broker、批次歧義下的來源鎖定與禁止混配 |
-| 程式位置 | `scripts/_golden_phase01_inventory.py`::`db_inventory`／`cross_check_csv_to_db`（依 `file_sha256` 選 batch） |
-| 目前行為 | 以 `file_sha256` 對應單一 batch；不混帳戶 |
-| 已驗證範圍 | 群益四年度 CSV 各對一批；玉山／群益分案 |
-| 未驗證範圍 | 同檔重匯、多帳戶同代號、批次衝突解析 |
+| 程式位置 | `scripts/_golden_phase01_inventory.py`::`resolve_batches_by_sha256`／`cross_check_csv_to_db` |
+| 目前行為 | 同 `file_sha256` 多批次 → `AMBIGUOUS`／FAIL，**不得** `fetchone` 任意選第一筆 |
+| 已驗證範圍 | 純函式／合成 SQLite：0 筆 NONE、1 筆 OK、多筆 AMBIGUOUS |
+| 未驗證範圍 | 真實多帳戶同代號、同檔重匯端到端驗收 |
 | 缺少資料 | 真實多帳戶／重匯批次樣本（不得自造） |
-| 資料齊全後 | 歧義 batch → FAIL／UNKNOWN，禁止任意挑選 |
+| 資料齊全後 | 以真實歧義樣本重跑盤點；確認零混配 |
 | 未來驗收條件 | 多帳戶案例下零混配；歧義必失敗 |
 | 重新啟動條件 | Owner 提供可重用之多帳戶真實封存 |
-| 目前狀態 | PENDING_DATA |
+| 目前狀態 | PENDING_DATA（歧義偵測已實作；完整多帳戶仍待資料） |
 
 ## 玉山歷史交易缺少期初買進資料
 

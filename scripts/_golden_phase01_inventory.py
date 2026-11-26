@@ -169,8 +169,9 @@ def compare_fingerprint_bundles(
     return {"status": "PASS" if not drifts else "BLOCKER", "drifts": drifts}
 
 
-def git_security_audit() -> dict[str, Any]:
-    """GOLD-CR-04：實際 git ls-files 稽核；不以 .gitignore 文字存在為唯一依據。"""
+def git_security_audit(*, runner: Any | None = None) -> dict[str, Any]:
+    """GOLD-CR-04：實際 git ls-files 稽核；須檢查 returncode，失敗不得因空 stdout 而 PASS。"""
+    run = runner or subprocess.run
     commands = [
         ["git", "ls-files", "--", "input/", "data/", "output/"],
         ["git", "ls-files", "-ci", "--exclude-standard"],
@@ -189,36 +190,61 @@ def git_security_audit() -> dict[str, Any]:
     tracked_sensitive: list[str] = []
     tracked_ignored: list[str] = []
     command_records: list[str] = []
+    command_results: list[dict[str, Any]] = []
+    command_failures: list[dict[str, Any]] = []
     for cmd in commands:
-        command_records.append(" ".join(cmd))
-        proc = subprocess.run(
+        cmd_text = " ".join(cmd)
+        command_records.append(cmd_text)
+        proc = run(
             cmd,
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=False,
         )
-        lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+        stderr = (getattr(proc, "stderr", None) or "").strip()
+        result_rec = {
+            "command": cmd_text,
+            "returncode": int(proc.returncode),
+            "stderr": stderr[:500],
+        }
+        command_results.append(result_rec)
+        if proc.returncode != 0:
+            command_failures.append(
+                {
+                    **result_rec,
+                    "reason": "git_command_nonzero_returncode",
+                }
+            )
+            continue
+        lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
         if "-ci" in cmd:
             tracked_ignored.extend(lines)
         else:
             tracked_sensitive.extend(lines)
-    # 去重保序
     tracked_sensitive = list(dict.fromkeys(tracked_sensitive))
     tracked_ignored = list(dict.fromkeys(tracked_ignored))
     gi = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    status = "PASS" if not tracked_sensitive and not tracked_ignored else "FAIL"
+    status = (
+        "PASS"
+        if not command_failures and not tracked_sensitive and not tracked_ignored
+        else "FAIL"
+    )
+    if command_failures:
+        conclusion = "BLOCKER: git 指令執行失敗（見 command_failures）"
+    elif tracked_sensitive or tracked_ignored:
+        conclusion = "BLOCKER: 敏感路徑已被 Git 追蹤或已追蹤後又被 ignore"
+    else:
+        conclusion = "git ls-files 確認 input/／data/／output/ 及敏感副檔名未被追蹤"
     return {
         "status": status,
         "commands": command_records,
+        "command_results": command_results,
+        "command_failures": command_failures,
         "tracked_sensitive_paths": tracked_sensitive,
         "tracked_ignored": tracked_ignored,
         "gitignore_text_has_data": "data/" in gi,
-        "conclusion": (
-            "git ls-files 確認 input/／data/／output/ 及敏感副檔名未被追蹤"
-            if status == "PASS"
-            else "BLOCKER: 敏感路徑已被 Git 追蹤或已追蹤後又被 ignore"
-        ),
+        "conclusion": conclusion,
     }
 
 
@@ -254,33 +280,30 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
     excluded: list[dict[str, Any]] = []
     blank = 0
     for i, row in enumerate(rows[data_start:], start=data_start + 1):
-        if not any(str(c).strip() for c in row):
+        classified = classify_capital_csv_row(row, physical_line=i)
+        status = classified["status"]
+        if status == "blank":
             blank += 1
             continue
-        first = (row[0] if row else "").strip()
-        if first.startswith("總合"):
-            excluded.append({"physical_line": i, "reason": "total_row", "first_cell": first})
+        if status == "excluded":
+            excluded.append(
+                {
+                    "physical_line": i,
+                    "reason": classified.get("reason", "excluded"),
+                    "first_cell": classified.get("first_cell", ""),
+                }
+            )
             continue
-        # symbol = first token before space
-        symbol = first.split()[0] if first else ""
-        side_raw = row[2].strip() if len(row) > 2 else ""
-        trade_date = row[1].strip() if len(row) > 1 else ""
-        valid.append(
-            {
-                "physical_line": i,
-                "symbol": symbol,
-                "name_cell": first,
-                "trade_date": trade_date,
-                "side_raw": side_raw,
-                "unit_price": row[4].strip() if len(row) > 4 else "",
-                "quantity": row[5].strip() if len(row) > 5 else "",
-                "gross_amount": row[6].strip() if len(row) > 6 else "",
-                "commission": row[7].strip() if len(row) > 7 else "",
-                "tax": row[8].strip() if len(row) > 8 else "",
-                "net_settlement": row[9].strip() if len(row) > 9 else "",
-                "interest": row[12].strip() if len(row) > 12 else "",
-            }
-        )
+        if status == "invalid":
+            excluded.append(
+                {
+                    "physical_line": i,
+                    "reason": classified.get("reason", "invalid"),
+                    "first_cell": (row[0] if row else ""),
+                }
+            )
+            continue
+        valid.append(classified)
 
     # duplicate detection: exact key of business fields
     keys = [
@@ -543,6 +566,172 @@ def side_to_buy_sell(side_raw: str) -> str:
     return "UNKNOWN"
 
 
+# 群益 CSV／HTML 來源可立即對照之語意（對齊 statement_html_v1；現沖另依 SPEC）。
+_CAPITAL_SIDE_MAP: dict[str, str] = {
+    "現股買進": "BUY",
+    "現股賣出": "SELL",
+    "現沖買進": "BUY",
+    "現沖賣出": "SELL",
+}
+_CAPITAL_TRADE_TYPE_MAP: dict[str, str] = {
+    "現股買進": "CASH",
+    "現股賣出": "CASH",
+    "現沖買進": "DAY_TRADE",
+    "現沖賣出": "DAY_TRADE",
+}
+_CAPITAL_CURRENCY_MAP: dict[str, str] = {
+    "臺幣": "TWD",
+    "台幣": "TWD",
+    "TWD": "TWD",
+}
+
+
+def classify_capital_csv_row(
+    row: list[str],
+    *,
+    physical_line: int,
+) -> dict[str, Any]:
+    """GOLD-CR-10：分類群益 CSV 列；非空白≠有效交易。
+
+    重用 ``parse_flexible_date``／``normalize_decimal_text``／股數正整數規則。
+    """
+    from backend.util.date_text import parse_flexible_date
+    from backend.util.decimal_text import normalize_decimal_text
+
+    cells = [str(c).strip() if c is not None else "" for c in row]
+    if not any(cells):
+        return {"status": "blank", "physical_line": physical_line}
+    first = cells[0] if cells else ""
+    if first.startswith("總合"):
+        return {
+            "status": "excluded",
+            "physical_line": physical_line,
+            "reason": "total_row",
+            "first_cell": first,
+        }
+
+    symbol = first.split()[0] if first else ""
+    trade_date = cells[1] if len(cells) > 1 else ""
+    side_raw = cells[2] if len(cells) > 2 else ""
+    currency_raw = cells[3] if len(cells) > 3 else ""
+    unit_price = cells[4] if len(cells) > 4 else ""
+    quantity = cells[5] if len(cells) > 5 else ""
+    gross_amount = cells[6] if len(cells) > 6 else ""
+    commission = cells[7] if len(cells) > 7 else ""
+    tax = cells[8] if len(cells) > 8 else ""
+    net_settlement = cells[9] if len(cells) > 9 else ""
+    interest = cells[12] if len(cells) > 12 else ""
+
+    errors: list[str] = []
+    if not symbol:
+        errors.append("missing_symbol")
+    if parse_flexible_date(trade_date) is None:
+        errors.append("invalid_trade_date")
+    side = _CAPITAL_SIDE_MAP.get(side_raw)
+    trade_type = _CAPITAL_TRADE_TYPE_MAP.get(side_raw)
+    if side is None or trade_type is None:
+        errors.append("invalid_side")
+    currency = _CAPITAL_CURRENCY_MAP.get(currency_raw) if currency_raw else None
+    if currency_raw and currency is None:
+        errors.append("invalid_currency")
+    # 來源無幣別欄值 → 不補造；有值才標準化
+    try:
+        qty_norm = normalize_decimal_text(quantity)
+        if qty_norm == "" or "." in qty_norm or qty_norm.startswith("-") or qty_norm == "0":
+            errors.append("invalid_quantity")
+        else:
+            int(qty_norm)  # 正整數
+    except ValueError:
+        errors.append("invalid_quantity")
+        qty_norm = ""
+    for label, raw in (
+        ("unit_price", unit_price),
+        ("gross_amount", gross_amount),
+        ("commission", commission),
+        ("tax", tax),
+        ("net_settlement", net_settlement),
+    ):
+        try:
+            if raw == "":
+                errors.append(f"missing_{label}")
+            else:
+                normalize_decimal_text(raw)
+        except ValueError:
+            errors.append(f"invalid_{label}")
+    if interest not in ("",):
+        try:
+            normalize_decimal_text(interest)
+        except ValueError:
+            errors.append("invalid_interest")
+
+    if errors:
+        return {
+            "status": "invalid",
+            "physical_line": physical_line,
+            "reason": ",".join(errors),
+            "symbol": symbol,
+            "trade_date": trade_date,
+            "side_raw": side_raw,
+            "currency_raw": currency_raw,
+        }
+
+    return {
+        "status": "valid",
+        "physical_line": physical_line,
+        "symbol": symbol,
+        "name_cell": first,
+        "trade_date": trade_date,
+        "side_raw": side_raw,
+        "side": side,
+        "trade_type": trade_type,
+        "currency_raw": currency_raw,
+        "currency": currency,  # 可能 None（來源無幣別）→ 交叉時 NOT_IN_SOURCE
+        "unit_price": unit_price,
+        "quantity": qty_norm,
+        "gross_amount": gross_amount,
+        "commission": commission,
+        "tax": tax,
+        "net_settlement": net_settlement,
+        "interest": interest,
+    }
+
+
+def resolve_batches_by_sha256(
+    con: sqlite3.Connection,
+    file_sha256: str,
+) -> dict[str, Any]:
+    """GOLD-CR-11：依 file_sha256 解析 import_batches；多筆 → AMBIGUOUS。"""
+    rows = [
+        dict(r)
+        for r in con.execute(
+            "SELECT id, account_id, filename, file_sha256, profile_id, profile_version, "
+            "status FROM import_batches WHERE file_sha256=? ORDER BY id",
+            (file_sha256,),
+        )
+    ]
+    if not rows:
+        return {
+            "status": "NONE",
+            "file_sha256": file_sha256,
+            "batches": [],
+            "batch": None,
+        }
+    if len(rows) > 1:
+        return {
+            "status": "AMBIGUOUS",
+            "file_sha256": file_sha256,
+            "batches": rows,
+            "batch": None,
+            "reason": "multiple_import_batches_for_sha256",
+        }
+    return {
+        "status": "OK",
+        "file_sha256": file_sha256,
+        "batches": rows,
+        "batch": rows[0],
+    }
+
+
 def db_inventory(con: sqlite3.Connection) -> dict[str, Any]:
     brokers = [dict(r) for r in con.execute(
         "SELECT b.id AS broker_id, b.name AS broker_name, a.id AS account_id, "
@@ -616,28 +805,40 @@ def cross_check_csv_to_db(
 ) -> dict[str, Any]:
     """CSV 有效列 ↔ DB trades（依 batch.file_sha256）逐欄交叉。
 
-    TODO(GOLD-CR-05): 來源端外部 trade id 齊全後擴充交叉鍵；缺則維持 NOT_IN_SOURCE。
-    TODO(GOLD-CR-11): 多帳戶／批次歧義樣本齊全後禁止任意選 batch。
+    GOLD-CR-05：可立即核對 trade_type／currency／account／列序／parse_status；
+    來源缺欄維持 NOT_IN_SOURCE，不補造。
+    GOLD-CR-11：多批次 → AMBIGUOUS／FAIL，不得任意選第一筆。
+    TODO(GOLD-CR-05): 來源端外部 trade id 齊全後擴充交叉鍵。
+    TODO(GOLD-CR-11): 完整多帳戶真實樣本齊全後做端到端驗收。
     """
-    batch = con.execute(
-        "SELECT * FROM import_batches WHERE file_sha256=?",
-        (file_sha256,),
-    ).fetchone()
-    if batch is None:
+    resolved = resolve_batches_by_sha256(con, file_sha256)
+    if resolved["status"] == "NONE":
         return {
             "status": "FAIL",
             "reason": "no_import_batch_for_sha256",
             "file_sha256": file_sha256,
             "csv_valid_trade_count": csv_analysis["valid_trade_count"],
         }
+    if resolved["status"] == "AMBIGUOUS":
+        return {
+            "status": "FAIL",
+            "reason": "ambiguous_import_batches_for_sha256",
+            "file_sha256": file_sha256,
+            "batches": resolved["batches"],
+            "csv_valid_trade_count": csv_analysis["valid_trade_count"],
+        }
 
+    batch = resolved["batch"]
+    assert batch is not None
     batch_id = batch["id"]
+    batch_account_id = batch["account_id"]
     db_rows = [
         dict(r)
         for r in con.execute(
-            "SELECT t.id AS trade_id, t.raw_row_id, t.symbol, t.name, t.trade_date, "
-            "t.side, t.quantity, t.unit_price_txt, t.gross_amount_txt, "
-            "t.commission_txt, t.tax_txt, t.interest_txt, t.net_settlement_txt, "
+            "SELECT t.id AS trade_id, t.raw_row_id, t.account_id, t.symbol, t.name, "
+            "t.trade_date, t.side, t.trade_type, t.currency, t.quantity, "
+            "t.unit_price_txt, t.gross_amount_txt, t.commission_txt, t.tax_txt, "
+            "t.interest_txt, t.net_settlement_txt, "
             "rr.row_index, rr.row_sha256, rr.parse_status, rr.error_code "
             "FROM trades t "
             "JOIN raw_rows rr ON rr.id=t.raw_row_id "
@@ -708,18 +909,48 @@ def cross_check_csv_to_db(
         pool = csv_pool.get(k)
         if pool:
             cr = pool.pop(0)
+            csv_side = cr.get("side") or side_to_buy_sell(cr["side_raw"])
+            csv_trade_type = cr.get("trade_type") or _CAPITAL_TRADE_TYPE_MAP.get(
+                cr["side_raw"]
+            )
+            csv_currency = cr.get("currency")
+            if csv_currency is None and cr.get("currency_raw"):
+                csv_currency = _CAPITAL_CURRENCY_MAP.get(cr["currency_raw"])
+            currency_ok: bool | None
+            if csv_currency is None:
+                currency_cmp_csv: str | None = "NOT_IN_SOURCE"
+                currency_ok = None  # 來源無幣別：不補造、不冒充通過
+            else:
+                currency_cmp_csv = csv_currency
+                currency_ok = csv_currency == dr["currency"]
             field_cmp = {
                 "symbol": {"csv": cr["symbol"], "db": dr["symbol"], "ok": cr["symbol"] == dr["symbol"]},
                 "trade_date": {"csv": cr["trade_date"], "db": dr["trade_date"], "ok": True},
                 "side": {
                     "csv": cr["side_raw"],
                     "db": dr["side"],
-                    "ok": side_to_buy_sell(cr["side_raw"]) == dr["side"],
+                    "ok": csv_side == dr["side"],
+                },
+                "trade_type": {
+                    "csv": csv_trade_type,
+                    "db": dr["trade_type"],
+                    "ok": csv_trade_type == dr["trade_type"],
+                },
+                "currency": {
+                    "csv": currency_cmp_csv,
+                    "db": dr["currency"],
+                    "ok": currency_ok,
+                },
+                "account_id": {
+                    "csv": "NOT_IN_SOURCE",
+                    "db": dr["account_id"],
+                    "batch_account_id": batch_account_id,
+                    "ok": dr["account_id"] == batch_account_id,
                 },
                 "quantity": {
                     "csv": cr["quantity"],
                     "db": dr["quantity"],
-                    "ok": normalize_qty(cr["quantity"]) == str(dr["quantity"]),
+                    "ok": normalize_qty(str(cr["quantity"])) == str(dr["quantity"]),
                 },
                 "unit_price": {
                     "csv": cr["unit_price"],
@@ -756,6 +987,17 @@ def cross_check_csv_to_db(
                         cr["net_settlement"],
                         dr["net_settlement_txt"] or "",
                     ),
+                },
+                "parse_status": {
+                    "csv": "NOT_IN_SOURCE",
+                    "db": dr["parse_status"],
+                    "ok": dr["parse_status"] == "ok",
+                },
+                "source_row_order": {
+                    "csv": cr["physical_line"],
+                    "db": dr["row_index"],
+                    # 編號體系可能不同（實體列 vs parser row_index）；僅記錄，相對序另計。
+                    "ok": None,
                 },
                 "raw_row_id": {"csv": "NOT_IN_SOURCE", "db": dr["raw_row_id"], "ok": None},
                 "trade_id": {"csv": "NOT_IN_SOURCE", "db": dr["trade_id"], "ok": None},
@@ -799,6 +1041,11 @@ def cross_check_csv_to_db(
                 }
             )
 
+    order_pairs = [(m["csv_physical_line"], m["db_row_index"]) for m in matches]
+    by_csv = [p[1] for p in sorted(order_pairs, key=lambda p: p[0])]
+    by_db = [p[1] for p in sorted(order_pairs, key=lambda p: p[1])]
+    source_row_order_consistent = by_csv == by_db
+
     status = "PASS"
     if unmatched_csv or unmatched_db or any(not m["match_ok"] for m in matches):
         status = "FAIL"
@@ -809,11 +1056,14 @@ def cross_check_csv_to_db(
         or len(csv_rows) != len(db_rows)
     ):
         status = "FAIL"
+    if matches and not source_row_order_consistent:
+        status = "FAIL"
 
     return {
         "status": status,
         "file_sha256": file_sha256,
         "batch_id": batch_id,
+        "batch_account_id": batch_account_id,
         "batch_filename": batch["filename"],
         "batch_profile_id": batch["profile_id"],
         "batch_profile_version": batch["profile_version"],
@@ -827,11 +1077,14 @@ def cross_check_csv_to_db(
         "unmatched_csv": unmatched_csv,
         "unmatched_db": unmatched_db,
         "matches": matches,
+        "source_row_order_consistent": source_row_order_consistent,
         "field_coverage_notes": {
             "csv_has_raw_row_id": False,
             "csv_has_trade_id": False,
             "csv_has_import_batch": False,
             "csv_has_row_sha256": False,
+            "csv_has_account_id": False,
+            "csv_checks_trade_type_currency_parse_status": True,
             "marked_as": "NOT_IN_SOURCE",
         },
     }
