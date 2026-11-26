@@ -106,3 +106,91 @@ def test_gold_cr09_inventory_exit_code_helper() -> None:
     assert inventory_exit_code(blockers=[], inv_fail=False) == 0
     assert inventory_exit_code(blockers=["x"], inv_fail=False) == 1
     assert inventory_exit_code(blockers=[], inv_fail=True) == 1
+
+
+def test_gold_cr06_invalid_norm_key_unique_and_json_serializable() -> None:
+    """非法鍵不得互撞，且可 JSON 序列化（含原文便於除錯）。"""
+    import json
+
+    from scripts._golden_phase01_inventory import _norm_num_key
+
+    a = _norm_num_key("not-a-number")
+    b = _norm_num_key("not-a-number")
+    assert a != b
+    payload = {"keys": [list(a) if isinstance(a, tuple) else a, list(b) if isinstance(b, tuple) else b]}
+    dumped = json.dumps(payload, ensure_ascii=False)
+    assert "not-a-number" in dumped
+    assert "__INVALID_DECIMAL__" in dumped
+    json.loads(dumped)
+
+
+def test_gold_cr03_fingerprint_drift_includes_wal_shm() -> None:
+    """DB／WAL／SHM 存在、大小、指紋須納入前後漂移比較。"""
+    from scripts._golden_phase01_inventory import compare_fingerprint_bundles
+
+    before = {
+        "files": {
+            "trading_db": {
+                "exists": True,
+                "sha256": "a" * 64,
+                "file_size_bytes": 100,
+                "sidecar-wal": {
+                    "exists": True,
+                    "sha256": "b" * 64,
+                    "file_size_bytes": 10,
+                },
+                "sidecar-shm": None,
+            }
+        }
+    }
+    after_ok = {
+        "files": {
+            "trading_db": {
+                "exists": True,
+                "sha256": "a" * 64,
+                "file_size_bytes": 100,
+                "sidecar-wal": {
+                    "exists": True,
+                    "sha256": "b" * 64,
+                    "file_size_bytes": 10,
+                },
+                "sidecar-shm": None,
+            }
+        }
+    }
+    after_wal_changed = {
+        "files": {
+            "trading_db": {
+                "exists": True,
+                "sha256": "a" * 64,
+                "file_size_bytes": 100,
+                "sidecar-wal": {
+                    "exists": True,
+                    "sha256": "c" * 64,
+                    "file_size_bytes": 11,
+                },
+                "sidecar-shm": None,
+            }
+        }
+    }
+    ok = compare_fingerprint_bundles(before, after_ok)
+    assert ok["status"] == "PASS"
+    assert ok["drifts"] == []
+    bad = compare_fingerprint_bundles(before, after_wal_changed)
+    assert bad["status"] == "BLOCKER"
+    assert any("sidecar-wal" in str(d) or d.get("part") == "sidecar-wal" for d in bad["drifts"])
+
+
+def test_gold_cr04_git_security_audit_uses_git_commands() -> None:
+    """GOLD-CR-04：須實際跑 git ls-files，不得只看 .gitignore 文字。"""
+    from scripts._golden_phase01_inventory import git_security_audit
+
+    result = git_security_audit()
+    assert "tracked_sensitive_paths" in result
+    assert "tracked_ignored" in result
+    assert "commands" in result
+    assert any("git ls-files" in c for c in result["commands"])
+    assert result["status"] in {"PASS", "FAIL"}
+    # 本機乾淨樹：敏感路徑不應被追蹤
+    assert result["tracked_sensitive_paths"] == []
+    assert result["status"] == "PASS"

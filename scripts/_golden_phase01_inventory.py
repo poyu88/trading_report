@@ -10,6 +10,7 @@ import csv
 import hashlib
 import json
 import sqlite3
+import subprocess
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ from typing import Any
 
 from backend.util.date_text import date_bounds, format_manifest_date
 from backend.util.sha256_lock import sha256_lock_mismatches
+
+_INVALID_DECIMAL_SEQ = 0
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "data" / "golden"
@@ -115,14 +118,108 @@ def fingerprint_bundle(label: str) -> dict[str, Any]:
                 if side.is_file():
                     sm = file_meta(side)
                     meta[f"sidecar{suffix}"] = {
+                        "exists": True,
                         "sha256": sm["sha256"],
                         "file_size_bytes": sm["file_size_bytes"],
                         "mtime_utc": sm["mtime_utc"],
                     }
                 else:
-                    meta[f"sidecar{suffix}"] = None
+                    meta[f"sidecar{suffix}"] = {
+                        "exists": False,
+                        "sha256": None,
+                        "file_size_bytes": None,
+                        "mtime_utc": None,
+                    }
         out["files"][key] = meta
     return out
+
+
+def _part_sig(meta: Any) -> tuple[Any, ...]:
+    """正規化主檔／sidecar 指紋為可比對三元組（exists, sha256, size）。"""
+    if meta is None:
+        return (False, None, None)
+    if not isinstance(meta, dict):
+        return (False, None, None)
+    exists = meta.get("exists")
+    if exists is None:
+        exists = meta.get("sha256") is not None
+    return (bool(exists), meta.get("sha256"), meta.get("file_size_bytes"))
+
+
+def compare_fingerprint_bundles(
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    """INV-01／GOLD-CR-03：主檔＋WAL／SHM 存在、大小、指紋前後比較。"""
+    drifts: list[dict[str, Any]] = []
+    b_files = before.get("files", {})
+    a_files = after.get("files", {})
+    for key in sorted(set(b_files) | set(a_files)):
+        b = b_files.get(key) or {}
+        a = a_files.get(key) or {}
+        if _part_sig(b) != _part_sig(a):
+            drifts.append({"key": key, "part": "main", "before": b, "after": a})
+        for part in ("sidecar-wal", "sidecar-shm"):
+            if part not in b and part not in a:
+                continue
+            sb = b.get(part)
+            sa = a.get(part)
+            if _part_sig(sb) != _part_sig(sa):
+                drifts.append({"key": key, "part": part, "before": sb, "after": sa})
+    return {"status": "PASS" if not drifts else "BLOCKER", "drifts": drifts}
+
+
+def git_security_audit() -> dict[str, Any]:
+    """GOLD-CR-04：實際 git ls-files 稽核；不以 .gitignore 文字存在為唯一依據。"""
+    commands = [
+        ["git", "ls-files", "--", "input/", "data/", "output/"],
+        ["git", "ls-files", "-ci", "--exclude-standard"],
+        [
+            "git",
+            "ls-files",
+            "--",
+            "*.csv",
+            "*.xls",
+            "*.xlsx",
+            "*.db",
+            "*.db-wal",
+            "*.db-shm",
+        ],
+    ]
+    tracked_sensitive: list[str] = []
+    tracked_ignored: list[str] = []
+    command_records: list[str] = []
+    for cmd in commands:
+        command_records.append(" ".join(cmd))
+        proc = subprocess.run(
+            cmd,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+        if "-ci" in cmd:
+            tracked_ignored.extend(lines)
+        else:
+            tracked_sensitive.extend(lines)
+    # 去重保序
+    tracked_sensitive = list(dict.fromkeys(tracked_sensitive))
+    tracked_ignored = list(dict.fromkeys(tracked_ignored))
+    gi = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    status = "PASS" if not tracked_sensitive and not tracked_ignored else "FAIL"
+    return {
+        "status": status,
+        "commands": command_records,
+        "tracked_sensitive_paths": tracked_sensitive,
+        "tracked_ignored": tracked_ignored,
+        "gitignore_text_has_data": "data/" in gi,
+        "conclusion": (
+            "git ls-files 確認 input/／data/／output/ 及敏感副檔名未被追蹤"
+            if status == "PASS"
+            else "BLOCKER: 敏感路徑已被 Git 追蹤或已追蹤後又被 ignore"
+        ),
+    }
 
 
 def open_db_ro() -> sqlite3.Connection:
@@ -422,11 +519,13 @@ def nums_equal(left: str, right: str) -> bool:
 
 
 def _norm_num_key(text: str) -> Any:
-    """鍵用正規化；非法值使用唯一物件，避免兩筆非法誤匹配。"""
+    """鍵用正規化；非法值使用唯一可序列化標記，避免兩筆非法誤匹配且可寫入 JSON。"""
+    global _INVALID_DECIMAL_SEQ
     try:
         return normalize_num(text)
     except ValueError:
-        return ("__INVALID_DECIMAL__", object())
+        _INVALID_DECIMAL_SEQ += 1
+        return ("__INVALID_DECIMAL__", _INVALID_DECIMAL_SEQ, text)
 
 
 def inventory_exit_code(*, blockers: list[str], inv_fail: bool) -> int:
@@ -1034,35 +1133,11 @@ def main() -> None:
     fp_after = fingerprint_bundle("phase0_after")
     write_json(EVIDENCE / "inv01_fingerprints_after.json", fp_after)
 
-    drift: dict[str, Any] = {"status": "PASS", "drifts": []}
-    for key in SOURCES:
-        b = fp_before["files"].get(key, {})
-        a = fp_after["files"].get(key, {})
-        if b.get("sha256") != a.get("sha256") or b.get("file_size_bytes") != a.get(
-            "file_size_bytes"
-        ):
-            drift["drifts"].append({"key": key, "before": b, "after": a})
-    if drift["drifts"]:
-        drift["status"] = "BLOCKER"
+    drift = compare_fingerprint_bundles(fp_before, fp_after)
     write_json(EVIDENCE / "inv01_fingerprint_drift.json", drift)
 
-    # gitignore confirmation
-    gi = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    gitignore_check = {
-        "data_ignored": "data/" in gi,
-        "input_ignored": "input/" in gi,
-        "output_ignored": "output/" in gi,
-        "xls_ignored": "*.xls" in gi,
-        "xlsx_ignored": "*.xlsx" in gi,
-        "db_ignored": "*.db" in gi,
-        "conclusion": (
-            "data/ 整目錄已 ignore（含 data/golden/）；"
-            "真實交易 golden 內容不應進入公開 Git。"
-            if "data/" in gi
-            else "BLOCKER: data/ 未在 gitignore"
-        ),
-        "status": "PASS" if "data/" in gi else "FAIL",
-    }
+    # GOLD-CR-04：實際 git ls-files 安全稽核（非僅 .gitignore 文字）
+    gitignore_check = git_security_audit()
     write_json(EVIDENCE / "phase1_gitignore_check.json", gitignore_check)
 
     # source_a index
@@ -1366,7 +1441,7 @@ def main() -> None:
     if not gold004["summary"]["all_pass"]:
         summary["blockers"].append("INV-03 GOLD-004 crosscheck FAIL")
     if gitignore_check["status"] != "PASS":
-        summary["blockers"].append("gitignore data/ missing")
+        summary["blockers"].append("GOLD-CR-04 git_security_audit FAIL")
 
     # GOLD-CR-08：鎖定 SHA256 不一致 → blocker（非僅 open_items）
     actual_sha = {

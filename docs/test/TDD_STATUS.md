@@ -309,6 +309,18 @@
 | 本機 REGRESSION | 相關：`tests/test_uat_fifo_same_day_verdict.py`＋`file_fault` → **43 passed／1 skipped**；全量 `uv run pytest -q` → **211 passed／1 skipped**／83.85s（2026-11-26）；`uv run ruff check scripts/uat_fifo_same_day_2236.py tests/test_uat_fifo_same_day_verdict.py` 通過；正式 DB mtime **2026-11-22**（本輪**未**寫入） |
 | 判定 | **有證據 TDD**（見 §6.2 `cr10a_finance_verify_v1`）；**待複審**；Commit／Push／PR **未**執行 |
 
+### 1.23 GOLD-CR 第二批最小修正（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線 `ba27f30`；僅授權三項） |
+| 變更 | `_norm_num_key` 可序列化唯一非法鍵；`compare_fingerprint_bundles` 納入 WAL／SHM；`git_security_audit` 實際 `git ls-files` |
+| RED | `uv run pytest tests/test_golden_cr_fixes.py::test_gold_cr06_invalid_norm_key_unique_and_json_serializable tests/test_golden_cr_fixes.py::test_gold_cr03_fingerprint_drift_includes_wal_shm tests/test_golden_cr_fixes.py::test_gold_cr04_git_security_audit_uses_git_commands -q` → **3 failed**（`object` 不可 JSON；缺 `compare_fingerprint_bundles`／`git_security_audit`） |
+| GREEN | 序列號標記取代 `object()`；指紋前後比含 sidecar；git 稽核寫入 evidence |
+| REFACTOR | 無 |
+| 本機 REGRESSION | 相關 `test_golden_cr_fixes`＋`test_decimal_text_normalize` → **37 passed**；全量 `uv run pytest -q` → **248 passed／1 skipped**／63.67s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `golden_cr_batch2_v1`）；待獨立複審；Phase 2／Merge／Migration **未**授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -485,6 +497,7 @@
 | `golden_phase01_inventory_v1` | Phase 0／1 黃金驗收：Decimal 文字正規化匿名測＋盤點腳本／非敏感 Manifest 模板與規範文件；真實 Manifest／evidence 本機 gitignored | **非業務 RED**：正規化為盤點交叉核對基礎建設；匿名測首次即對齊實作 | 2026-11-26；`backend/util/decimal_text.py`；`scripts/_golden_phase01_inventory.py`（唯讀）；`docs/test/GOLDEN_ACCEPTANCE_PHASE01.md` | 無獨立 restruct | **222 passed／1 skipped**／66.79s | 正式 DB 未寫入；ruff 通過；**CR-10A 仍未結案**；Phase 2 未授權；Commit／Push 待複審 |
 | `golden_cr_01_06_07_08_09_v1` | GOLD-CR：日期真實排序、非法 Decimal fail-closed、千分位／±0、SHA256 鎖定阻礙、盤點失敗非零結束碼；PENDING_DATA 文件 | 2026-11-26；`tests/test_golden_cr_fixes.py` 收集期缺模組 → ERROR／既有非法數值契約需改 | 2026-11-26；`date_text`／`sha256_lock`／強化 `decimal_text`；inventory 結束碼 | 無獨立 restruct | **231 passed／1 skipped**／74.94s | 正式 DB 未寫；CR-10A 仍開；待資料項見 `PENDING_DATA_VALIDATION.md` |
 | `golden_cr_06_07_r2_v1` | GOLD-CR-06／07 複審：`is_finite` 拒 NaN／Inf；非法不回 sentinel；千分位先驗證再去逗號 | 2026-11-26；擴充 `test_golden_cr_fixes`（非有限／非法千分位／相同非法不得相等） | 2026-11-26；`decimal_text`＋`nums_equal`／`_norm_num_key` | 無 | **245 passed／1 skipped**／66.35s | 01／08／09／PENDING 文件不重開；Phase 2 未授權 |
+| `golden_cr_batch2_v1` | 第二批：非法 Decimal 鍵可 JSON 序列化；GOLD-CR-03 WAL／SHM 指紋前後比；GOLD-CR-04 實際 git ls-files 稽核 | 2026-11-26；3 新測 **failed**（object 不可序列化；缺比較／稽核函式） | 2026-11-26；`_norm_num_key`／`compare_fingerprint_bundles`／`git_security_audit` | 無 | **248 passed／1 skipped**／63.67s | 01／06核心／07／08／09 不重開；PENDING 維持；Phase 2 未授權 |
 
 **記錄欄位最低要求**
 
@@ -562,3 +575,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`pr12_cr_r3_v1` TDD**：PR #12 Round-3；inferred／`tw_sec_tax_v3`／E2E permutation／`build_uat_checks` 反向／REQUIRED_AUDIT_KEYS／migration 財務欄／指紋文件；全量 **180 passed**／64.28s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
 | 2026-11-26 | **`pr12_cr_r4_v1`（事後驗證）**：PR #12 Round-4；真實 Excel 財務驗證＋檔案層故障注入；Owner canonical 列序；MIXED 分類；全量 **205 passed**／78.18s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
 | 2026-11-26 | **`cr10a_finance_verify_v1` TDD**：唯一授權 CR-10A；RED 6 failed（cost／income 同時偏移、qty、單列灌總額、golden 缺鍵）→ GREEN 獨立欄位＋`min_detail_rows`；全量 **211 passed／1 skipped**／83.85s；ruff 通過；正式 DB **未**動；**待複審**；Commit／Push／PR **未**執行。 |
+| 2026-11-26 | **`golden_cr_batch2_v1` TDD**：非法鍵 JSON 序列化＋CR-03 WAL／SHM 指紋比＋CR-04 git ls-files；RED 3 failed → GREEN；全量 **248 passed／1 skipped**／63.67s；ruff 通過；正式 DB **未**動；PENDING 維持；Phase 2／Merge／Migration **未**授權。 |
