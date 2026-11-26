@@ -2,7 +2,7 @@
 
 > **文件性質**：原始 Code Review 銷帳（Class C）。**不得**將 GOLD-CR／GOLDEN Phase 0～5 結案直接等同本表原始 CR 結案。  
 > **基準**：PR #12 歷次 Reviewer 留言、SPEC、`TDD_STATUS.md`、本機測試／UAT；Commit tip 見推送後 SHA。  
-> **Merge Readiness**：本輪**暫停**；完成銷帳後待獨立 Reviewer 最終審查。  
+> **Merge Readiness**：CR-06C 第一片段費用落點收尾後執行實查；**不得**自行 Merge；待 Owner 最終授權。  
 > **禁止**：Merge、正式 Migration、寫入正式 DB、偽造交易／期初／假報表。
 
 ## 0. 狀態語意
@@ -32,7 +32,7 @@
 | CR-06（母項） | PASS_WITH_NOTES | 否（見 06A～C；真實帳戶副本 UAT 未重跑） |
 | CR-06A | RESOLVED | 否 |
 | CR-06B | PASS_WITH_NOTES | 否（Excel 聚合已驗；逐筆成本／收入主要經 Trace↔C／CR-10A） |
-| CR-06C | PASS_WITH_NOTES | 否（Trace 費／稅／息落點已驗；非零利息真實樣本仍薄） |
+| CR-06C | PASS_WITH_NOTES | 否（第一片段 sequence 對位已驗；非零利息真實樣本 PENDING_DATA） |
 | CR-07 | RESOLVED | 否 |
 | CR-08 | RESOLVED | 否 |
 | CR-09 | RESOLVED | 否 |
@@ -144,10 +144,10 @@
 | 欄位 | 內容 |
 |---|---|
 | 原始要求 | 以實際 Trace／輸出證明：買賣手續費、交易稅、適用利息、片段價金、費用第一片段落點；後續片段不重複 |
-| 對應修正 | `_assert_per_trade_fees_from_trace`（含利息／稅非零列恰 1） |
-| 實際驗收 | Trace `sell_trade_id` 費／稅／息＝交易；非零落點列數；BUY 手續費 Excel；579 價金≠單價×股數；Pass1／Pass2 加總 |
+| 對應修正 | `_assert_per_trade_fees_from_trace`＋`_assert_independent_c_fee_on_first_fragment` |
+| 實際驗收範圍 | **(1)** Trace MATCHED 列以 `allocation_id`→`sequence_no` 對位：第一片段手續費／稅／利息＝交易原值；後續片段皆 0。**(2)** 不得僅以非零列數＝1 結案。**(3)** 實際 Excel：買／賣手續費與稅加總＝golden；買方非零列數＝BUY 筆數。**(4)** 獨立 C `allocation_lines`（同源 canonical／permutation fixture，非虛假新資料）：買賣費用只在各 trade 首次出現片段；`gross_conservation_ok`。**(5)** 片段價金重用 `allocate_trade_fragment_amounts`（TRUNC／±1）＋`quantity_conservation`。**(6)** Pass1／Pass2 依第一片段 `match_type` 歸屬加總。**(7)** 579 價金≠單價×股數既有斷言仍保留。 |
 | 最新狀態 | **PASS_WITH_NOTES** |
-| 剩餘問題 | 本 fixture 利息皆 0（斷言已覆蓋落點＝0；**非零利息**依其他合成／HTML 回歸）；片段價金 TRUNC 尾差深度依既有 `test_fragment_gross_trunc`／conservation，非本檔逐片段全列 |
+| 剩餘問題 | 本 fixture **已知利息皆 0**（第一片段明確寫 0 已驗）；**非零利息真實樣本**維持 **PENDING_DATA**（不得宣稱為 PASS） |
 | 阻擋 Merge | 否 |
 
 ### CR-07 — 財務非干涉（Annotation ON／OFF）
@@ -286,7 +286,7 @@
 | GOLD-002／003 | PARTIAL | 資料限制 |
 | GOLD-004 | 本機 PASS（HTML bridge） | 原始 CSV Parser → GOLD-CSV-PARSER PENDING |
 | GOLD-CSV-PARSER | PENDING_DATA | 不得將 bridge 稱 Parser 完整驗收 |
-| Phase 0～5 基礎 | 保留；不重開重做 | Merge Readiness 仍暫停至 Reviewer 最終審查 |
+| Phase 0～5 基礎 | 保留；不重開重做 | Merge Readiness 已實查；**待 Owner 最終授權 Merge** |
 
 ---
 
@@ -296,7 +296,7 @@
 |---|---|
 | CR-02 | 與 SPEC `tw_sec_tax_v3`／AUD-DT-01 **一致**；NOTES＝啟發式與非完整稅引擎 |
 | CR-06B | 原始 Excel 聚合驗收 **已落地**；逐筆成本／收入以 Trace↔獨立 C（GOLD-001）加強 |
-| CR-06C | Trace 費／稅／息第一片段落點 **已斷言**；非零利息真實樣本仍薄 → NOTES |
+| CR-06C | Trace sequence 對位＋Excel＋獨立 C **已證明第一片段落點**；非零利息真實樣本 → PENDING_DATA／NOTES |
 | CR-10A／B／C | 對回 Round-4 原始要求＋Phase 3 收尾後：**10B／10C RESOLVED**；**10A PASS_WITH_NOTES** |
 
 不得僅以「299 passed」宣稱原始 CR 全部結案；本表逐項對應要求與證據。
@@ -319,3 +319,4 @@
 | 日期 | 說明 |
 |---|---|
 | 2026-11-26 | 初版：返回原始 CR 完整銷帳；與 GOLD 分列；優先核對 02／06B／06C／10A–C |
+| 2026-11-26 | CR-06C 收尾：第一片段 sequence 對位＋獨立 C／Excel／價金守恆；更新實際驗收範圍；啟動 Merge Readiness 實查 |

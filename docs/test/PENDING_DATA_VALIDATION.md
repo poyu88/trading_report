@@ -164,6 +164,6 @@
 | CR-10B | 合法副本 → FAIL／非零 exit／failed_checks；觀測自正常 UAT（非固定 True） | **本輪已驗（合併前收尾）** |
 | CR-10C | Conservation 實際守恆狀態＋audit `conservation_ok` 一致性；非法型別不得 PASS | **本輪已驗（合併前收尾）** |
 | GOLD-CSV-PARSER | HTML bridge ≠ 原始 CSV Parser 完整驗收 | **PENDING_DATA**（見上節） |
-| CR-06B／06C | 原始九筆 Excel／Trace 費用落點已驗；非零利息真實樣本仍薄 | 見 `PR12_ORIGINAL_CR_WRITEOFF.md`（PASS_WITH_NOTES） |
+| CR-06B／06C | 原始九筆 Excel／Trace／獨立 C 第一片段費用落點已驗；**非零利息真實樣本**仍缺 | 見 `PR12_ORIGINAL_CR_WRITEOFF.md`（PASS_WITH_NOTES；利息 PENDING_DATA） |
 | 真實帳戶副本 UAT 重跑 | Round-4 checklist；完整帳戶一致性隔離 UAT | **PENDING_DATA**（環境／資料；非原始 CR 程式 OPEN） |
 | Manifest Pydantic／mypy／Hypothesis／Mutation／完整稅務引擎 | 獨立評估 | DEFERRED |

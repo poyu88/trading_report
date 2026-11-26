@@ -418,6 +418,17 @@
 | 本機 REGRESSION | `uv run pytest -q` → **299 passed**／66.52s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
 | 判定 | 原始 CR 銷帳表已交；**等待 Reviewer 最終審查**；不得 Merge／Migration／寫正式 DB |
 
+### 1.32 CR-06C 第一片段收尾＋Merge Readiness 實查
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12 Owner：CR-06C 必要收尾＋合併準備） |
+| 強化 | Trace `allocation_id`→`sequence_no` 對位第一片段費／稅／息；後續片段必須 0；獨立 C `allocation_lines`＋Excel 買賣手續費／稅；重用 TRUNC 價金守恆 |
+| GREEN | `tests/test_fifo_same_day_2236_original_import_e2e.py` **6 passed**；產品碼無變更（行為已正確，驗收強化） |
+| 文件 | `PR12_ORIGINAL_CR_WRITEOFF.md` 更新 CR-06C 實際驗收範圍；非零利息維持 PENDING_DATA |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed**／61.38s；`uv run ruff check .` 通過；正式 DB **未**寫入／**未** migrate |
+| 判定 | 見 Merge Readiness Report；**等待 Owner 最終授權 Merge** |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -687,3 +698,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`golden_phase3_cr10a_r2_v1`**：複審—allocation_lines↔Trace 逐筆；open_cost 觀測；CR-10B／10C；WAL／SHM；GOLD-004 全年 D **PASS**（HTML bridge）；全量 **288 passed**／65.08s；ruff 通過；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_phase3_wrap_v1`**：合併前收尾—GOLD-004 必要失敗不得 PARTIAL；CR-10C 守恆實際值；CR-10A 重複鍵多重集；CR-10B 觀測非固定 True；Excel 未驗證範圍明示；全量 **299 passed**／74.81s；ruff 通過；GOLD-001／004 UAT **PASS**；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |
 | 2026-11-26 | **原始 CR 銷帳**：`PR12_ORIGINAL_CR_WRITEOFF.md`；GOLD≠原始 CR；CR-06C 利息／稅落點強化；暫停 Merge Readiness；正式 DB **未**動；待 Reviewer 最終審查。 |
+| 2026-11-26 | **`pr12_cr06c_merge_ready_v1`**：CR-06C 第一片段 sequence 對位＋獨立 C／Excel；全量 **299 passed**／61.38s；ruff 通過；隔離 DB integrity／FK 實查；隔離 migration upgrade／downgrade 實查；正式 DB **未**寫入／**未** migrate；Merge **待** Owner 授權。 |

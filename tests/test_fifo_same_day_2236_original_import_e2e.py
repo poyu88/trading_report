@@ -24,9 +24,11 @@ from sqlalchemy import select
 from backend.db.models import FifoAllocation, RawRow, TradeRow
 from backend.db.repositories import find_account_by_label
 from backend.domain.models import txt_to_decimal
+from backend.golden.expected_c import build_expected_c_document
 from backend.reports.field_schema import HEADERS
 from backend.services.allocation_service import match_fifo_for_account, quantity_conservation
 from backend.services.import_service import apply_import
+from backend.services.report_finance import allocate_trade_fragment_amounts
 from backend.services.report_service import generate_detail_report
 
 # Owner 提供之原始九筆欄位（匿名名稱；非真實帳戶識別）
@@ -281,6 +283,7 @@ def _run_pipeline(
     db_session.commit()
     return {
         "golden": golden,
+        "rows": rows,
         "import_result": result,
         "account": account,
         "trades": trades,
@@ -374,29 +377,138 @@ def _assert_excel_finance(ctx: dict) -> None:
     assert income_xlsx - cost_xlsx == profit_xlsx
 
 
-def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
-    """CR-06C：以實際 FIFO Trace（含 trade_id）核對逐筆費用落點。
+def _fixture_rows_to_expected_c_input(
+    rows: list[dict[str, str | int]],
+) -> list[dict[str, object]]:
+    """將既有 canonical／permutation fixture 轉為獨立 C 列（不新增虛假交易）。"""
+    out: list[dict[str, object]] = []
+    for i, r in enumerate(rows):
+        out.append(
+            {
+                "source_id": "cr06c_fixture",
+                "symbol": str(r["symbol"]),
+                "trade_date": str(r["date"]),
+                "side": str(r["side"]),
+                "side_raw": "現股買進" if r["side"] == "BUY" else "現股賣出",
+                "quantity": str(r["qty"]),
+                "unit_price": str(r["price"]),
+                "gross_amount": str(r["gross"]),
+                "commission": str(r["commission"]),
+                "tax": str(r["tax"]),
+                "interest": "0",
+                "net_settlement": str(r["net"]),
+                "physical_line": i + 2,
+                "trade_type": "CASH",
+                "currency": "TWD",
+                "account_id": "cr06c",
+            }
+        )
+    return out
 
-    第一片段才認列手續費／稅；後續片段不得重複；跨 Pass1／Pass2 加總＝交易合計。
+
+def _assert_independent_c_fee_on_first_fragment(ctx: dict) -> None:
+    """以獨立 C allocation_lines 驗證買賣手續費／稅／已知利息只落在第一片段。"""
+    golden = ctx["golden"]
+    c_rows = _fixture_rows_to_expected_c_input(ctx["rows"])
+    doc = build_expected_c_document(
+        case_id="CR-06C-fixture",
+        source_sha256="not_locked",
+        source_path="tests/fixture/ORIGINAL_ROWS",
+        source_format="synthetic_html_fixture",
+        applicable_spec=["SPEC§6", "SPEC§7"],
+        rows=c_rows,
+        known_limitations=["interest_all_zero_in_fixture; nonzero_interest_PENDING_DATA"],
+    )
+    lines = sorted(doc["allocation_lines"], key=lambda x: int(x["sequence_no"]))
+    assert lines, "independent C must emit allocation_lines"
+
+    seen_sell: set[str] = set()
+    seen_buy: set[str] = set()
+    buy_fee_c = sell_fee_c = tax_c = interest_c = Decimal(0)
+    for line in lines:
+        sid = str(line["sell_trade_id"])
+        bid = str(line["buy_trade_id"])
+        sell_fee = Decimal(str(line["sell_commission_applied"]))
+        buy_fee = Decimal(str(line["buy_commission_applied"]))
+        tax = Decimal(str(line["sell_tax_applied"]))
+        interest_raw = line["sell_interest_applied"]
+        interest = Decimal(0) if interest_raw == "UNKNOWN" else Decimal(str(interest_raw))
+
+        if sid not in seen_sell:
+            # 第一片段：必須帶入該賣出完整費用（本 fixture 利息皆 0 且 known）
+            seen_sell.add(sid)
+            assert sell_fee >= 0 and tax >= 0
+            sell_fee_c += sell_fee
+            tax_c += tax
+            interest_c += interest
+        else:
+            assert sell_fee == 0
+            assert tax == 0
+            assert interest == 0
+
+        if bid not in seen_buy:
+            seen_buy.add(bid)
+            buy_fee_c += buy_fee
+        else:
+            assert buy_fee == 0
+
+        assert line["gross_conservation_ok"] is True
+
+    assert buy_fee_c == golden["buy_commission"]
+    assert sell_fee_c == golden["sell_commission"]
+    assert tax_c == golden["tax"]
+    assert interest_c == Decimal(0)  # 既有九筆利息皆 0；非零利息 PENDING_DATA
+    assert Decimal(str(doc["aggregates"]["buy_commission"])) == golden["buy_commission"]
+    assert Decimal(str(doc["aggregates"]["sell_commission"])) == golden["sell_commission"]
+    assert Decimal(str(doc["aggregates"]["tax"])) == golden["tax"]
+
+
+def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
+    """CR-06C：Trace／Excel／獨立 C 證明費用落在第一配對片段。
+
+    不得僅以「非零費用列數＝1」結案；須以 allocation sequence 對位第一片段，
+    並確認後續片段不重複認列。片段價金守恆沿用 TRUNC 驗收。
     """
     trades = ctx["trades"]
     golden = ctx["golden"]
     trade_by_id = {t.id: t for t in trades}
     allocs = sorted(ctx["alloc_rows"], key=lambda a: a.sequence_no)
+    alloc_by_id = {a.id: a for a in allocs}
 
-    # 各來源交易已配對／未配對股數
     matched_sell: dict[str, int] = {}
     matched_buy: dict[str, int] = {}
+    sell_allocs: dict[str, list[FifoAllocation]] = {}
+    buy_allocs: dict[str, list[FifoAllocation]] = {}
     for a in allocs:
         if a.sell_trade_id:
             matched_sell[a.sell_trade_id] = matched_sell.get(a.sell_trade_id, 0) + a.allocated_quantity
+            sell_allocs.setdefault(a.sell_trade_id, []).append(a)
         if a.buy_trade_id:
             matched_buy[a.buy_trade_id] = matched_buy.get(a.buy_trade_id, 0) + a.allocated_quantity
+            buy_allocs.setdefault(a.buy_trade_id, []).append(a)
     for t in trades:
         if t.side == "SELL":
             assert matched_sell.get(t.id, 0) == t.quantity
         else:
             assert matched_buy.get(t.id, 0) == t.quantity
+
+    # 片段價金守恆（重用既有 TRUNC／±1 容許）：各賣出配對股數序列
+    for sid, alist in sell_allocs.items():
+        t = trade_by_id[sid]
+        frag = allocate_trade_fragment_amounts(
+            txt_to_decimal(t.unit_price_txt),
+            txt_to_decimal(t.gross_amount_txt),
+            [a.allocated_quantity for a in alist],
+            trade_id=t.id,
+        )
+        assert frag.conservation_ok or abs(frag.difference) <= Decimal(1)
+
+    first_sell_alloc: dict[str, FifoAllocation] = {
+        sid: alist[0] for sid, alist in sell_allocs.items()
+    }
+    first_buy_alloc: dict[str, FifoAllocation] = {
+        bid: alist[0] for bid, alist in buy_allocs.items()
+    }
 
     trace = Path(json.loads(ctx["audit_path"].read_text(encoding="utf-8"))["fifo_trace_file"])
     assert trace.is_file()
@@ -404,57 +516,66 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
     tws = twb.active
     theaders = [c.value for c in next(tws.iter_rows(min_row=1, max_row=1))]
     tidx = {h: i for i, h in enumerate(theaders)}
-    assert "buy_trade_id" in tidx and "sell_trade_id" in tidx
+    assert "buy_trade_id" in tidx and "sell_trade_id" in tidx and "allocation_id" in tidx
 
-    # 逐筆 SELL：Trace 上該 sell_trade_id 的手續費／稅／利息加總＝原始交易（僅第一片段有值）
+    # Trace MATCHED 列：依 allocation sequence 證明第一片段費用落點
+    matched_by_sell: dict[str, list[tuple[int, object]]] = {}
     sell_fee_from_trace: dict[str, Decimal] = {}
     sell_tax_from_trace: dict[str, Decimal] = {}
     sell_interest_from_trace: dict[str, Decimal] = {}
-    buy_fee_from_trace: dict[str, Decimal] = {}
-    fee_rows_by_sell: dict[str, int] = {}
-    tax_rows_by_sell: dict[str, int] = {}
-    interest_rows_by_sell: dict[str, int] = {}
     for row in tws.iter_rows(min_row=2, max_col=len(theaders), values_only=True):
+        if str(row[tidx["列語意"]] or "") != "MATCHED":
+            continue
         sid = row[tidx["sell_trade_id"]]
-        bid = row[tidx["buy_trade_id"]]
-        if sid:
-            if row[tidx["手續費"]] is not None:
-                fee = Decimal(str(row[tidx["手續費"]]))
-                sell_fee_from_trace[sid] = sell_fee_from_trace.get(sid, Decimal(0)) + fee
-                # 後續片段可能寫入 0（非 None）；僅非零列計為費用落點
-                if fee != 0:
-                    fee_rows_by_sell[sid] = fee_rows_by_sell.get(sid, 0) + 1
-            if row[tidx["交易稅"]] is not None:
-                tax = Decimal(str(row[tidx["交易稅"]]))
-                sell_tax_from_trace[sid] = sell_tax_from_trace.get(sid, Decimal(0)) + tax
-                if tax != 0:
-                    tax_rows_by_sell[sid] = tax_rows_by_sell.get(sid, 0) + 1
-            if "利息" in tidx and row[tidx["利息"]] is not None:
-                interest = Decimal(str(row[tidx["利息"]]))
-                sell_interest_from_trace[sid] = (
-                    sell_interest_from_trace.get(sid, Decimal(0)) + interest
-                )
-                if interest != 0:
-                    interest_rows_by_sell[sid] = interest_rows_by_sell.get(sid, 0) + 1
-        if bid and row[tidx["手續費"]] is not None and not sid:
-            # UNSOLD／BUY-only 列；本案例全配平，通常不走此路徑
-            buy_fee_from_trace[bid] = buy_fee_from_trace.get(bid, Decimal(0)) + Decimal(
-                str(row[tidx["手續費"]])
-            )
+        aid = row[tidx["allocation_id"]]
+        assert sid and aid and aid in alloc_by_id
+        seq = int(alloc_by_id[aid].sequence_no)
+        matched_by_sell.setdefault(str(sid), []).append((seq, row))
+
+        fee = Decimal(str(row[tidx["手續費"]] or 0))
+        tax = Decimal(str(row[tidx["交易稅"]] or 0))
+        interest = (
+            Decimal(str(row[tidx["利息"]]))
+            if row[tidx["利息"]] is not None
+            else Decimal(0)
+        )
+        sell_fee_from_trace[str(sid)] = sell_fee_from_trace.get(str(sid), Decimal(0)) + fee
+        sell_tax_from_trace[str(sid)] = sell_tax_from_trace.get(str(sid), Decimal(0)) + tax
+        sell_interest_from_trace[str(sid)] = (
+            sell_interest_from_trace.get(str(sid), Decimal(0)) + interest
+        )
 
     for t in trades:
         if t.side != "SELL":
             continue
-        assert sell_fee_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.commission_txt)
-        assert sell_tax_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.tax_txt)
-        assert sell_interest_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.interest_txt)
-        # 第一片段才有費用：該 sell 有費用的列恰為 1（若佣金／稅／利息>0）
-        if txt_to_decimal(t.commission_txt) != 0:
-            assert fee_rows_by_sell.get(t.id, 0) == 1
-        if txt_to_decimal(t.tax_txt) != 0:
-            assert tax_rows_by_sell.get(t.id, 0) == 1
-        if txt_to_decimal(t.interest_txt) != 0:
-            assert interest_rows_by_sell.get(t.id, 0) == 1
+        sid = t.id
+        rows_for_sell = sorted(matched_by_sell.get(sid, []), key=lambda x: x[0])
+        assert rows_for_sell, f"missing MATCHED trace for sell {sid}"
+        first_aid = first_sell_alloc[sid].id
+        exp_fee = txt_to_decimal(t.commission_txt)
+        exp_tax = txt_to_decimal(t.tax_txt)
+        exp_interest = txt_to_decimal(t.interest_txt)
+
+        for seq, row in rows_for_sell:
+            aid = row[tidx["allocation_id"]]
+            fee = Decimal(str(row[tidx["手續費"]] or 0))
+            tax = Decimal(str(row[tidx["交易稅"]] or 0))
+            interest_cell = row[tidx["利息"]]
+            interest = Decimal(str(interest_cell)) if interest_cell is not None else Decimal(0)
+            if aid == first_aid:
+                assert fee == exp_fee
+                assert tax == exp_tax
+                # 第一片段利息含明確 0；本 fixture 皆 0（非零利息 PENDING_DATA）
+                assert interest == exp_interest
+                assert interest_cell is not None
+            else:
+                assert fee == 0
+                assert tax == 0
+                assert interest == 0
+
+        assert sell_fee_from_trace.get(sid, Decimal(0)) == exp_fee
+        assert sell_tax_from_trace.get(sid, Decimal(0)) == exp_tax
+        assert sell_interest_from_trace.get(sid, Decimal(0)) == exp_interest
 
     assert sum(sell_fee_from_trace.values(), Decimal(0)) == golden["sell_commission"]
     assert sum(sell_tax_from_trace.values(), Decimal(0)) == golden["tax"]
@@ -462,25 +583,38 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
         (txt_to_decimal(t.interest_txt) for t in trades if t.side == "SELL"), Decimal(0)
     )
 
-    # BUY 手續費：由 detail Excel 第一買片段加總（Trace 賣列不帶買方手續費）
+    # 實際 Excel：買賣手續費／稅加總；買方非零列數＝BUY 筆數（各買一次）
     wb = load_workbook(ctx["xlsx"], data_only=True)
     ws = wb.active
     headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     idx = {h: i for i, h in enumerate(headers)}
-    buy_comm_xlsx = Decimal(0)
+    buy_comm_xlsx = sell_comm_xlsx = tax_xlsx = Decimal(0)
+    buy_nonzero_rows = 0
+    sell_nonzero_fee_rows = 0
     for row in ws.iter_rows(min_row=2, max_col=len(headers), values_only=True):
         if row[idx["手續費（買）"]] is not None:
-            buy_comm_xlsx += Decimal(str(row[idx["手續費（買）"]]))
+            bfee = Decimal(str(row[idx["手續費（買）"]]))
+            buy_comm_xlsx += bfee
+            if bfee != 0:
+                buy_nonzero_rows += 1
+        if row[idx["手續費（賣）"]] is not None:
+            sfee = Decimal(str(row[idx["手續費（賣）"]]))
+            sell_comm_xlsx += sfee
+            if sfee != 0:
+                sell_nonzero_fee_rows += 1
+        if row[idx["交易稅"]] is not None:
+            tax_xlsx += Decimal(str(row[idx["交易稅"]]))
     assert buy_comm_xlsx == golden["buy_commission"]
+    assert sell_comm_xlsx == golden["sell_commission"]
+    assert tax_xlsx == golden["tax"]
+    buy_count = sum(1 for t in trades if t.side == "BUY")
+    sell_with_fee = sum(
+        1 for t in trades if t.side == "SELL" and txt_to_decimal(t.commission_txt) != 0
+    )
+    assert buy_nonzero_rows == buy_count
+    assert sell_nonzero_fee_rows == sell_with_fee
 
-    # Pass1／Pass2：依 first allocation match_type 歸屬後加總＝交易合計
-    first_sell_alloc: dict[str, FifoAllocation] = {}
-    first_buy_alloc: dict[str, FifoAllocation] = {}
-    for a in allocs:
-        if a.sell_trade_id and a.sell_trade_id not in first_sell_alloc:
-            first_sell_alloc[a.sell_trade_id] = a
-        if a.buy_trade_id and a.buy_trade_id not in first_buy_alloc:
-            first_buy_alloc[a.buy_trade_id] = a
+    # Pass1／Pass2：費用歸屬第一片段 match_type 後加總＝交易合計
     fee_comm_by_type: dict[str, Decimal] = {}
     fee_tax_by_type: dict[str, Decimal] = {}
     for sid, a in first_sell_alloc.items():
@@ -499,6 +633,11 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
     assert sum(fee_comm_by_type.values(), Decimal(0)) == golden["commission"]
     assert sum(fee_tax_by_type.values(), Decimal(0)) == golden["tax"]
     assert set(fee_comm_by_type) <= {"STANDARD_FIFO", "SAME_DAY_RECONCILED"}
+
+    # 獨立 C allocation_lines 交叉核對（同源 fixture，非虛假新資料）
+    _assert_independent_c_fee_on_first_fragment(ctx)
+
+    assert quantity_conservation(trades, ctx["alloc_rows"])["ok"]
 
 
 def test_cr06_canonical_owner_row_order() -> None:
