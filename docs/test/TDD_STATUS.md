@@ -235,6 +235,20 @@
 > - 第二輪獨立 CR（HEAD `f8b68bf`）：**PASS WITH NOTES**（P1 RESOLVED；P2／P3 文件 NOTES）
 > - Merge／人工 UAT：仍須使用者明確授權
 
+### 1.17 Two-Pass FIFO Same-Day Reconciliation（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（自 `master`＠`474a95b`） |
+| 變更 | CASH Pass2 同日補沖銷；`match_type`；`day_trade_annotation`；Alembic `b2c3d4e5f6a7`；SPEC／PRD／FIFO-05／FIFO-09；Case3／4／7／9／time-ignore 契約改寫 |
+| RED | `uv run pytest tests/test_same_day_reconciliation.py tests/test_day_trade_annotation.py …` → **9 failed／3 passed**（缺 Pass2／`match_type`／annotation／版本仍 v2） |
+| GREEN | `_run_cash_group` Pass2；`Allocation.match_type`；annotation Layer3；`ALGORITHM_VERSION=fifo_v3_two_pass_same_day_reconcile` |
+| REFACTOR | 無獨立 restruct（Pass2 helper 於 GREEN 抽出） |
+| 本機 REGRESSION | `uv run pytest -q` → **128 passed**／66.92s（2026-11-26）；正式 DB **未** apply／migrate／寫入 |
+| RCA | `docs/test/RCA_two_pass_fifo_same_day.md` |
+| 隔離 UAT | 合成 2236：`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；Pass1=3600／Pass2=400／未售0／非 DRAFT；annotation suspected=1000≠reconciled=400；正式 DB mtime 未變；見 `docs/test/UAT_fifo_same_day_2236.md` → **PASS** |
+| 判定 | **有證據 TDD**（見 §6.2 `fifo_v3_two_pass_same_day_v1`）；隔離 UAT **PASS**；Commit／Push／PR／CI **待**使用者授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -402,6 +416,7 @@
 | `capital_html_finance_regression_v1` | 群益 `statement_html_v1` 合成路徑：防 HIST-01 部分配對吃全額、費用一次、利息扣減、早賣 DRAFT／exceptions 守恆欄、A～W | **非 RED**：RCA 確認現況已正確後補測；首次執行即 **4 passed**；不得冒充業務 RED；測試 commit `d8d9578` | 無新業務碼（沿用 `report_finance`／projector） | 無 | **94 passed** | RCA／STATUS doc `453e0e0`；測試 `tests/test_capital_html_finance_regression.py` |
 | `cash_prior_inventory_fifo_v1` | CASH 同日改採開盤前庫存優先沖減；移除缺序 `ORDER_AMBIGUITY`；DAY_TRADE 不變；1589 合成回歸 | 2026-11-22；`uv run pytest tests/test_fifo.py -q`；**12 failed / 5 passed**；`ORDER_AMBIGUITY` 短路／time 解套；commit `adcadf5` | 2026-11-22；`detect_order_ambiguity` 回空；`_run_cash_group` 按日先賣後買；commit `22662be` | GREEN 已抽出 `_cash_day_sort_key`；無獨立 restruct | **106 passed** | 規格／STATUS `8babf7d`；正式 DB 未動 |
 | `pr7_fifo_cr_fixes_v1` | CR-01 版本追溯、CR-02 期初守恆、CR-03 fingerprint、CR-04 SQLite 整合；真實副本 UAT | 2026-11-22；`uv run pytest tests/test_fifo_cr_fixes.py tests/test_fifo_sqlite_integration.py -q`；**9 failed／5 passed**；版本／opening 守恆／fingerprint；commit `33f2222` | 2026-11-22；`ALGORITHM_VERSION`、`quantity_conservation(opening_lots=…)`、`build_audit`、fingerprint 欄位、backup ro；commit `60d3446` | 無獨立 restruct | **120 passed** | UAT／規格 doc `07b5f4b`；正式 DB 未動 |
+| `fifo_v3_two_pass_same_day_v1` | CASH Pass2 同日補沖銷；`match_type`；Independent day-trade annotation；2236 合成配平 | 2026-11-26；目標測 **9 failed／3 passed**（blocking／缺 `match_type`／annotation stub／版本 v2） | 2026-11-26；Pass2＋`match_type`＋annotation＋migration＋版本 v3；工作區尚未 commit | 無獨立 restruct | **128 passed** | RCA `docs/test/RCA_two_pass_fifo_same_day.md`；正式 DB 未動；Commit 待授權 |
 
 **記錄欄位最低要求**
 
@@ -472,3 +487,5 @@ uv run pytest -v --tb=line
 | 2026-11-22 | **`cash_prior_inventory_fifo_v1` TDD**：分支 `feat/cash-prior-inventory-fifo`；RED 12 failed（`ORDER_AMBIGUITY`／time 解套）→ GREEN 按日先賣後買；全量 **106 passed**／76.53s；SPEC／PRD／README／FIFO-05 對齊；正式 DB **未** apply／migrate；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。 |
 | 2026-11-22 | **`pr7_fifo_cr_fixes_v1` TDD**：RED 9 failed → GREEN 版本／守恆／fingerprint／SQLite IT；全量 **120 passed**／65.16s；副本 UAT（基準＠`77f3ed7`）1589 通過、`ORDER_AMBIGUITY` 不再於新 run 出現；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`、`data/uat/`。 |
 | 2026-11-22 | **歷史文件一致性 Phase B**：分支 `docs/history-standardization-phase-b`；修正 SPEC／PRD 過時狀態與欄 E、README UAT 隔離範例、BUGBOT 斷鏈改指針、TDD 導覽、Workflow §8 文件慣例、Class C 橫幅；**未**改業務碼／財務演算法／CI YAML；正式 DB **未**動；未納入 `.cursor/plans/`、`esun_local_changes.patch`、`scripts/`。REGRESSION 見 §1.14。 |
+| 2026-11-26 | **`fifo_v3_two_pass_same_day_v1` TDD**：分支 `feature/fifo-same-day-reconciliation`；Gate2 契約變更（FIFO-05 Pass2）；RED 9 failed → GREEN Pass2／annotation／`match_type` migration；全量 **128 passed**／66.92s；正式 DB **未**動；Commit／Push／PR **待**授權。 |
+| 2026-11-26 | **隔離 UAT `fifo_same_day_2236`**：合成九筆；`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；allocated 4000（3600＋400 Pass2）；非 DRAFT；annotation 1000≠400；正式 DB mtime 2026-11-22 14:49:49 未變；判定 **PASS**（`UAT_fifo_same_day_2236.md`）。 |

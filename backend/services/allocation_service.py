@@ -10,7 +10,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.config import ALGORITHM_VERSION
+from backend.config import ALGORITHM_VERSION, CASH_SAME_DAY_POLICY
 from backend.db.models import (
     AllocationRun,
     FifoAllocation,
@@ -101,7 +101,7 @@ def match_fifo_for_account(session: Session, account_id: str) -> tuple[Allocatio
         config_json=json.dumps(
             {
                 "account_id": account_id,
-                "cash_same_day_policy": "prior_inventory_first",
+                "cash_same_day_policy": CASH_SAME_DAY_POLICY,
                 "algorithm_version": ALGORITHM_VERSION,
             },
             ensure_ascii=False,
@@ -120,6 +120,7 @@ def match_fifo_for_account(session: Session, account_id: str) -> tuple[Allocatio
                 sell_trade_id=alloc.sell_trade_id,
                 allocated_quantity=alloc.quantity,
                 sequence_no=alloc.sequence_no,
+                match_type=alloc.match_type,
             )
         )
 

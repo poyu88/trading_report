@@ -11,8 +11,12 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from backend.config import ALGORITHM_VERSION
+from backend.config import ALGORITHM_VERSION, CASH_SAME_DAY_POLICY
 from backend.domain.models import Allocation, LotRemaining, OpeningLot, ReconciliationIssue, Trade
+
+MATCH_TYPE_STANDARD = "STANDARD_FIFO"
+MATCH_TYPE_SAME_DAY = "SAME_DAY_RECONCILED"
+MATCH_TYPE_DAY_TRADE = "DAY_TRADE_FIFO"
 
 
 @dataclass(frozen=True)
@@ -83,11 +87,23 @@ def _match_sell_against_lots(
     issues: list[ReconciliationIssue],
     seq_counter: int,
     allow_future_buy: bool,
-) -> int:
-    sell_left = trade.quantity
+    match_type: str,
+    max_quantity: int | None = None,
+    only_trade_date: date | None = None,
+    record_issue: bool = True,
+) -> tuple[int, int]:
+    """對單一賣出沖減 lot。
+
+    Returns:
+        ``(seq_counter, remaining_unmatched)``。
+    """
+    sell_left = trade.quantity if max_quantity is None else max_quantity
     while sell_left > 0 and fifo:
         lot = fifo[0]
-        if not allow_future_buy and lot.trade_date > trade.trade_date:
+        if only_trade_date is not None:
+            if lot.trade_date != only_trade_date or lot.buy_trade_id is None:
+                break
+        elif not allow_future_buy and lot.trade_date > trade.trade_date:
             break
         matched = min(lot.available, sell_left)
         seq_counter += 1
@@ -100,6 +116,7 @@ def _match_sell_against_lots(
                 sell_trade_id=trade.trade_id,
                 quantity=matched,
                 sequence_no=seq_counter,
+                match_type=match_type,
             )
         )
         lot.available -= matched
@@ -107,7 +124,7 @@ def _match_sell_against_lots(
         if lot.available == 0:
             fifo.popleft()
 
-    if sell_left > 0:
+    if sell_left > 0 and record_issue:
         issues.append(
             ReconciliationIssue(
                 issue_code="INSUFFICIENT_PRIOR_BUYS",
@@ -120,7 +137,7 @@ def _match_sell_against_lots(
                 },
             )
         )
-    return seq_counter
+    return seq_counter, sell_left
 
 
 def _cash_day_sort_key(trade: MatchInputTrade) -> tuple:
@@ -133,6 +150,79 @@ def _cash_day_sort_key(trade: MatchInputTrade) -> tuple:
     )
 
 
+def _pass2_same_day_reconcile(
+    *,
+    run_id: str,
+    day: date,
+    sells: list[MatchInputTrade],
+    fifo: deque[LotRemaining],
+    allocations: list[Allocation],
+    issues: list[ReconciliationIssue],
+    seq_counter: int,
+) -> int:
+    """Pass 2：以當日尚未消耗之 BUY lot 補沖當日未配 SELL。"""
+    sell_by_id = {s.trade_id: s for s in sells}
+    pending: list[tuple[MatchInputTrade, int, int]] = []
+    for idx, issue in enumerate(issues):
+        if issue.issue_code != "INSUFFICIENT_PRIOR_BUYS":
+            continue
+        if issue.trade_id not in sell_by_id:
+            continue
+        sell = sell_by_id[issue.trade_id]
+        if sell.trade_date != day:
+            continue
+        unmatched = int(issue.detail.get("unmatched_quantity", 0))
+        if unmatched > 0:
+            pending.append((sell, unmatched, idx))
+
+    # 依當日 SELL 穩定序處理
+    pending.sort(key=lambda item: _cash_day_sort_key(item[0]))
+    resolved_indexes: set[int] = set()
+    updated: dict[int, int] = {}
+
+    for sell, unmatched, idx in pending:
+        seq_counter, remaining = _match_sell_against_lots(
+            run_id=run_id,
+            trade=sell,
+            fifo=fifo,
+            allocations=allocations,
+            issues=issues,
+            seq_counter=seq_counter,
+            allow_future_buy=False,
+            match_type=MATCH_TYPE_SAME_DAY,
+            max_quantity=unmatched,
+            only_trade_date=day,
+            record_issue=False,
+        )
+        if remaining == 0:
+            resolved_indexes.add(idx)
+        elif remaining != unmatched:
+            updated[idx] = remaining
+
+    if resolved_indexes or updated:
+        new_issues: list[ReconciliationIssue] = []
+        for idx, issue in enumerate(issues):
+            if idx in resolved_indexes:
+                continue
+            if idx in updated:
+                detail = dict(issue.detail)
+                detail["unmatched_quantity"] = updated[idx]
+                new_issues.append(
+                    ReconciliationIssue(
+                        issue_code=issue.issue_code,
+                        severity=issue.severity,
+                        trade_id=issue.trade_id,
+                        detail=detail,
+                        batch_id=issue.batch_id,
+                    )
+                )
+            else:
+                new_issues.append(issue)
+        issues[:] = new_issues
+
+    return seq_counter
+
+
 def _run_cash_group(
     *,
     run_id: str,
@@ -143,11 +233,7 @@ def _run_cash_group(
     unsold: list[LotRemaining],
     seq_counter: int,
 ) -> int:
-    """CASH：按日先沖開盤前庫存（全部當日 SELL），再入庫當日 BUY。
-
-    當日 BUY 不可供當日 SELL 使用；不足日產生 INSUFFICIENT_PRIOR_BUYS，
-    不短路其他日期的配對迴圈。
-    """
+    """CASH Two-Pass：Pass1 開盤前庫存優先；Pass2 同日未用 BUY 補沖未配 SELL。"""
     fifo: deque[LotRemaining] = deque()
     provenance = 0
     for ol in sorted(opening_lots, key=lambda x: (x.buy_date, x.lot_id)):
@@ -179,7 +265,7 @@ def _run_cash_group(
         )
 
         for sell in sells:
-            seq_counter = _match_sell_against_lots(
+            seq_counter, _ = _match_sell_against_lots(
                 run_id=run_id,
                 trade=sell,
                 fifo=fifo,
@@ -187,10 +273,21 @@ def _run_cash_group(
                 issues=issues,
                 seq_counter=seq_counter,
                 allow_future_buy=False,
+                match_type=MATCH_TYPE_STANDARD,
             )
 
         for buy in buys:
             provenance = _append_buy_lot(fifo, buy, provenance)
+
+        seq_counter = _pass2_same_day_reconcile(
+            run_id=run_id,
+            day=day,
+            sells=sells,
+            fifo=fifo,
+            allocations=allocations,
+            issues=issues,
+            seq_counter=seq_counter,
+        )
 
     unsold.extend([lot for lot in fifo if lot.available > 0])
     return seq_counter
@@ -227,7 +324,7 @@ def _run_day_trade_group(
             provenance = _append_buy_lot(fifo, buy, provenance)
 
         for sell in sells:
-            seq_counter = _match_sell_against_lots(
+            seq_counter, _ = _match_sell_against_lots(
                 run_id=run_id,
                 trade=sell,
                 fifo=fifo,
@@ -235,6 +332,7 @@ def _run_day_trade_group(
                 issues=issues,
                 seq_counter=seq_counter,
                 allow_future_buy=True,  # 同日已先建 BUY lot
+                match_type=MATCH_TYPE_DAY_TRADE,
             )
 
         unsold.extend([lot for lot in fifo if lot.available > 0])
@@ -249,7 +347,7 @@ def run_fifo(
 ) -> MatchResult:
     """對單一帳戶輸入執行 FIFO 配對（純函式，不寫 DB）。
 
-    CASH：開盤前庫存優先沖減後再入庫當日買；DAY_TRADE：同日現沖分組。
+    CASH：Two-Pass（開盤前庫存優先＋同日補沖銷）；DAY_TRADE：同日現沖分組。
     帳戶／標的／幣別／交易類型互不交叉配對。
 
     Args:
@@ -315,7 +413,7 @@ def input_fingerprint(trades: Iterable[MatchInputTrade], opening_lots: Iterable[
     """
     payload = {
         "algorithm_version": ALGORITHM_VERSION,
-        "cash_same_day_policy": "prior_inventory_first",
+        "cash_same_day_policy": CASH_SAME_DAY_POLICY,
         "trades": [
             {
                 "id": t.trade_id,

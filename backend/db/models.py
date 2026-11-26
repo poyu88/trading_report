@@ -153,6 +153,10 @@ class FifoAllocation(Base):
     __tablename__ = "fifo_allocations"
     __table_args__ = (
         CheckConstraint("allocated_quantity > 0", name="ck_alloc_qty"),
+        CheckConstraint(
+            "match_type IN ('STANDARD_FIFO', 'SAME_DAY_RECONCILED', 'DAY_TRADE_FIFO')",
+            name="ck_alloc_match_type",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -162,6 +166,7 @@ class FifoAllocation(Base):
     sell_trade_id: Mapped[str] = mapped_column(ForeignKey("trades.id"), nullable=False)
     allocated_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False, default="STANDARD_FIFO")
 
     run: Mapped[AllocationRun] = relationship(back_populates="allocations")
 

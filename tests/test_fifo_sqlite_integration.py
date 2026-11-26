@@ -122,7 +122,7 @@ def test_sqlite_new_run_old_run_immutable_no_dup_alloc(db_session) -> None:
 
     run1, m1 = match_fifo_for_account(db_session, account.id)
     db_session.commit()
-    assert run1.algorithm_version == "fifo_v2_cash_prior_inventory"
+    assert run1.algorithm_version == "fifo_v3_two_pass_same_day_reconcile"
     assert sum(a.quantity for a in m1.allocations) == 400
 
     run1_alloc_ids = {
