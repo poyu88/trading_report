@@ -1,7 +1,44 @@
 # 真實交易黃金驗收 — Phase 0／1（R1.0）
 
-> **狀態**：Phase 0＋1 盤點完成；**CR-10A 仍未結案**；Phase 2＋未授權。
+> **狀態**：Phase 0／1 **基礎開發收尾**（待 Owner 確認進入 Phase 2）；**CR-10A 仍未結案**；Phase 2＋未授權。
 > **本文件**：非敏感技術規範與公開摘要。**禁止**貼入真實交易明細、帳戶號碼、完整交叉核對列。
+
+## 0. Phase 0／1 收斂摘要
+
+### 已結案
+
+| ID | 說明 |
+|---|---|
+| GOLD-CR-01 | 日期真實排序 |
+| GOLD-CR-03 | DB／WAL／SHM 指紋前後比 |
+| GOLD-CR-04 | 實際 `git ls-files`＋returncode |
+| GOLD-CR-06 | 非法 Decimal／非有限／JSON 可序列化錯誤鍵 |
+| GOLD-CR-07 | 千分位先驗證 |
+| GOLD-CR-08 | SHA256 鎖定與 blocker |
+| GOLD-CR-09 | 失敗非零結束碼 |
+| GOLD-CR-10 | 列合法性；**invalid／excluded 分計**；非法列阻擋完整 PASS |
+| INV-01～05 | 盤點骨架（本機 evidence） |
+
+### 已實作、完整真實資料驗收仍 PENDING_DATA
+
+| ID | 說明 |
+|---|---|
+| GOLD-CR-02 | 獨立 Reviewer 本機覆核 |
+| GOLD-CR-05 | 外部 trade id／列指紋（可立即核對欄已實作） |
+| GOLD-CR-11 | 多帳戶真實樣本（歧義偵測已實作） |
+| GOLD-ESUN-OPENING | 玉山缺買進／期初 |
+| GOLD-SPECIAL-INSTRUMENT | 特殊商品真實樣本 |
+| GOLD-FIN-EDGE | 真實逐筆財務邊界 |
+
+### 延期（DEFERRED）
+
+CR-10A／10B／10C；Manifest Pydantic／mypy／Hypothesis／Mutation／完整稅務引擎。
+
+### 剩餘風險
+
+- 獨立 C（Phase 2）未建；不得以 B／受測 D 反推答案。
+- HTML-xls／玉山路徑尚未套用與 capital CSV 同等之 invalid 分計（已標記 limitation）。
+- 正式 DB／真實 Manifest 僅本機；公開 Git 無真實明細。
 
 ## 1. 授權與停止條件
 
@@ -9,7 +46,7 @@
 |---|---|
 | Phase 0 INV-01～05 | 已完成（本機 evidence） |
 | Phase 1 Manifest／索引／布局 | 已完成（本機 `data/golden/`，gitignored） |
-| Phase 2 獨立 C | **未授權** |
+| Phase 2 獨立 C | **未授權**（待 Owner 確認） |
 | Commit／Push（非敏感碼與文件） | 依 Owner 授權執行；≠ 獨立審查通過 |
 | Merge／正式 Migration／寫入正式 DB | **禁止** |
 
@@ -46,7 +83,9 @@
 
 見模板：[`golden_manifest.template.json`](./golden_manifest.template.json)。
 
-必要欄位：`case_id`, `source_path`, `source_format`, `source_sha256`（64）, `file_size_bytes`, `broker`, `account_alias`（去識別）, `parser_profile`, `parser_version`, `date_from`, `date_to`, `physical_row_count`, `valid_trade_count`, `excluded_row_count`, `duplicate_row_count`, `symbol_count`, `contains_2236`, `source_role`, `validation_status`, `known_limitations`。
+必要欄位：`case_id`, `source_path`, `source_format`, `source_sha256`（64）, `file_size_bytes`, `broker`, `account_alias`（去識別）, `parser_profile`, `parser_version`, `date_from`, `date_to`, `physical_row_count`, `valid_trade_count`, `excluded_row_count`, `invalid_row_count`, `duplicate_row_count`, `symbol_count`, `contains_2236`, `source_role`, `validation_status`, `known_limitations`。
+
+`invalid_row_count`（非法必要交易列）與 `excluded_row_count`（總合等正常排除）**必須分開**；有非法列時不得宣告完整驗收成功。
 
 ## 6. 本機布局（不進公開 Git）
 

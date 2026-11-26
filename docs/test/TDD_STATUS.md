@@ -333,6 +333,18 @@
 | 本機 REGRESSION | `test_golden_cr_fixes` → **28 passed**；全量 `uv run pytest -q` → **252 passed／1 skipped**／64.92s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
 | 判定 | **有證據 TDD**（見 §6.2 `golden_cr_batch3_v1`）；PENDING 外部鍵／多帳戶真實樣本維持；Phase 2／Merge／Migration **未**授權 |
 
+### 1.25 GOLD-CR-10 收尾與 Phase 0／1 收斂（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線 `51895c3`） |
+| 變更 | invalid／excluded 分計；`csv_acceptance_gate`；交叉有非法列不得 PASS；Phase 0／1 收斂摘要 |
+| RED | `test_gold_cr10_invalid_rows_separated_and_block_acceptance` failed（缺分計／gate） |
+| GREEN | `build_capital_csv_analysis_from_rows`／gate／cross_check／summary blockers |
+| REFACTOR | 無 |
+| 本機 REGRESSION | `test_golden_cr_fixes` → **29 passed**；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**寫入 |
+| 判定 | Phase 0／1 基礎開發收尾；待 Owner 確認 Phase 2；Merge／Migration **未**授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -511,6 +523,7 @@
 | `golden_cr_06_07_r2_v1` | GOLD-CR-06／07 複審：`is_finite` 拒 NaN／Inf；非法不回 sentinel；千分位先驗證再去逗號 | 2026-11-26；擴充 `test_golden_cr_fixes`（非有限／非法千分位／相同非法不得相等） | 2026-11-26；`decimal_text`＋`nums_equal`／`_norm_num_key` | 無 | **245 passed／1 skipped**／66.35s | 01／08／09／PENDING 文件不重開；Phase 2 未授權 |
 | `golden_cr_batch2_v1` | 第二批：非法 Decimal 鍵可 JSON 序列化；GOLD-CR-03 WAL／SHM 指紋前後比；GOLD-CR-04 實際 git ls-files 稽核 | 2026-11-26；3 新測 **failed**（object 不可序列化；缺比較／稽核函式） | 2026-11-26；`_norm_num_key`／`compare_fingerprint_bundles`／`git_security_audit` | 無 | **248 passed／1 skipped**／63.67s | 01／06核心／07／08／09 不重開；PENDING 維持；Phase 2 未授權 |
 | `golden_cr_batch3_v1` | CR-04 returncode；CR-10 列合法性；CR-11 批次歧義；CR-05 可立即核對欄 | 2026-11-26；4 新測 **failed** | 2026-11-26；audit／classify／resolve／cross_check 擴充 | 無 | **252 passed／1 skipped**／64.92s | 03／06 結案不重開；PENDING 外部鍵／多帳戶真實樣本 |
+| `golden_cr10_close_v1` | CR-10：invalid／excluded 分計；非法列阻擋完整驗收；Phase 0／1 收斂文件 | 2026-11-26；分計／gate 測 **failed** | 2026-11-26；`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate` | 無 | **253 passed／1 skipped**／63.96s | 04 結案；HTML／玉山 invalid 擴充仍 PENDING |
 
 **記錄欄位最低要求**
 
@@ -590,3 +603,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`cr10a_finance_verify_v1` TDD**：唯一授權 CR-10A；RED 6 failed（cost／income 同時偏移、qty、單列灌總額、golden 缺鍵）→ GREEN 獨立欄位＋`min_detail_rows`；全量 **211 passed／1 skipped**／83.85s；ruff 通過；正式 DB **未**動；**待複審**；Commit／Push／PR **未**執行。 |
 | 2026-11-26 | **`golden_cr_batch2_v1` TDD**：非法鍵 JSON 序列化＋CR-03 WAL／SHM 指紋比＋CR-04 git ls-files；RED 3 failed → GREEN；全量 **248 passed／1 skipped**／63.67s；ruff 通過；正式 DB **未**動；PENDING 維持；Phase 2／Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_cr_batch3_v1` TDD**：CR-04 returncode、CR-10 列合法性、CR-11 歧義、CR-05 可核對欄；RED 4 failed → GREEN；全量 **252 passed／1 skipped**／64.92s；ruff 通過；正式 DB **未**動；PENDING 外部鍵／多帳戶維持。 |
+| 2026-11-26 | **`golden_cr10_close_v1`**：invalid／excluded 分計＋阻擋完整 PASS；Phase 0／1 收斂摘要；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**動；待 Owner 確認 Phase 2。 |

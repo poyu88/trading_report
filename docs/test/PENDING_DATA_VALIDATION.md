@@ -18,6 +18,22 @@
 | 重新啟動條件 | Reviewer 取得 ZIP／本機 golden 並完成覆核 |
 | 目前狀態 | PENDING_DATA |
 
+## GOLD-CR-10：HTML-xls／玉山路徑列級非法分計（擴充範圍）
+
+| 欄位 | 內容 |
+|---|---|
+| CR ID | GOLD-CR-10（擴充） |
+| 問題名稱 | capital CSV 已 invalid／excluded 分計並阻擋 PASS；HTML-xls／玉山尚未同等分類 |
+| 程式位置 | `classify_capital_csv_row`／`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate`；`analyze_html_xls`／玉山分析仍沿用 parser 排除 |
+| 目前行為 | CSV 路徑：非法列保留 source_path／physical_line／reason；交叉與 summary 有非法列 → FAIL |
+| 已驗證範圍 | 純函式＋合成列／合成 SQLite（非法列阻擋完整 PASS） |
+| 未驗證範圍 | HTML-xls／玉山真實來源之同等 invalid 分計與阻擋 |
+| 缺少資料 | 無需新交易測資；待對齊既有 parser 排除語意後擴充 |
+| 資料齊全後 | 三來源統一 invalid≠excluded；有非法列不得 PASS |
+| 未來驗收條件 | 任一來源 invalid_row_count>0 → 盤點／交叉非完整成功 |
+| 重新啟動條件 | Owner 授權擴充非 CSV 路徑分類 |
+| 目前狀態 | PENDING_DATA（CSV 核心已結；其他格式擴充待辦） |
+
 ## GOLD-CR-05：尚缺來源欄位的完整性驗證
 
 | 欄位 | 內容 |

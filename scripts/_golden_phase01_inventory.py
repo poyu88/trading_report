@@ -255,29 +255,18 @@ def open_db_ro() -> sqlite3.Connection:
     return con
 
 
-def analyze_capital_csv(path: Path) -> dict[str, Any]:
-    """群益年度 CSV：第 1 列欄位名、第 2 列延續表頭、其後資料、結尾總合。"""
-    text = path.read_text(encoding="utf-8-sig")
-    physical_lines = text.splitlines()
-    physical_row_count = len(physical_lines)
-
-    with path.open("r", encoding="utf-8-sig", newline="") as fh:
-        rows = list(csv.reader(fh))
-
-    header_row_count = 0
-    data_start = 0
-    if rows:
-        header_row_count = 1
-        data_start = 1
-        # 第二列常為空商品＋延續表頭字樣
-        if len(rows) > 1:
-            first = (rows[1][0] if rows[1] else "").strip()
-            if first == "" or "擔保" in "".join(rows[1]):
-                header_row_count = 2
-                data_start = 2
-
+def build_capital_csv_analysis_from_rows(
+    rows: list[list[str]],
+    *,
+    source_path: str,
+    header_row_count: int,
+    physical_row_count: int | None = None,
+) -> dict[str, Any]:
+    """GOLD-CR-10：將 CSV 列分為 valid／excluded／invalid（分開統計）。"""
+    data_start = header_row_count
     valid: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
     blank = 0
     for i, row in enumerate(rows[data_start:], start=data_start + 1):
         classified = classify_capital_csv_row(row, physical_line=i)
@@ -288,6 +277,7 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
         if status == "excluded":
             excluded.append(
                 {
+                    "source_path": source_path,
                     "physical_line": i,
                     "reason": classified.get("reason", "excluded"),
                     "first_cell": classified.get("first_cell", ""),
@@ -295,17 +285,21 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
             )
             continue
         if status == "invalid":
-            excluded.append(
+            invalid.append(
                 {
+                    "source_path": source_path,
                     "physical_line": i,
                     "reason": classified.get("reason", "invalid"),
+                    "symbol": classified.get("symbol", ""),
+                    "trade_date": classified.get("trade_date", ""),
+                    "side_raw": classified.get("side_raw", ""),
+                    "currency_raw": classified.get("currency_raw", ""),
                     "first_cell": (row[0] if row else ""),
                 }
             )
             continue
         valid.append(classified)
 
-    # duplicate detection: exact key of business fields
     keys = [
         (
             r["symbol"],
@@ -323,19 +317,19 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
     key_counts = Counter(keys)
     duplicate_row_count = sum(c - 1 for c in key_counts.values() if c > 1)
     per_symbol = Counter(r["symbol"] for r in valid)
-
     dates = [r["trade_date"] for r in valid if r["trade_date"]]
     d_from, d_to = date_bounds(dates)
-
     return {
-        "source_path": str(path.relative_to(ROOT)).replace("\\", "/"),
-        "physical_row_count": physical_row_count,
+        "source_path": source_path,
+        "physical_row_count": physical_row_count if physical_row_count is not None else len(rows),
         "csv_reader_row_count": len(rows),
         "header_row_count": header_row_count,
         "blank_data_region_rows": blank,
         "valid_trade_count": len(valid),
         "excluded_row_count": len(excluded),
         "excluded_rows": excluded,
+        "invalid_row_count": len(invalid),
+        "invalid_rows": invalid,
         "duplicate_row_count": duplicate_row_count,
         "symbol_count": len(per_symbol),
         "per_symbol": dict(sorted(per_symbol.items())),
@@ -344,6 +338,51 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
         "date_to": format_manifest_date(d_to),
         "rows": valid,
     }
+
+
+def csv_acceptance_gate(analysis: dict[str, Any]) -> dict[str, Any]:
+    """GOLD-CR-10：非法必要交易列存在 → 不得宣告完整驗收成功。"""
+    invalid_count = int(analysis.get("invalid_row_count") or 0)
+    if invalid_count > 0:
+        return {
+            "status": "FAIL",
+            "reason": "invalid_trade_rows_present",
+            "invalid_row_count": invalid_count,
+            "invalid_rows": analysis.get("invalid_rows", []),
+        }
+    return {
+        "status": "PASS",
+        "reason": None,
+        "invalid_row_count": 0,
+        "invalid_rows": [],
+    }
+
+
+def analyze_capital_csv(path: Path) -> dict[str, Any]:
+    """群益年度 CSV：第 1 列欄位名、第 2 列延續表頭、其後資料、結尾總合。"""
+    text = path.read_text(encoding="utf-8-sig")
+    physical_lines = text.splitlines()
+    physical_row_count = len(physical_lines)
+
+    with path.open("r", encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.reader(fh))
+
+    header_row_count = 0
+    if rows:
+        header_row_count = 1
+        # 第二列常為空商品＋延續表頭字樣
+        if len(rows) > 1:
+            first = (rows[1][0] if rows[1] else "").strip()
+            if first == "" or "擔保" in "".join(rows[1]):
+                header_row_count = 2
+
+    source_path = str(path.relative_to(ROOT)).replace("\\", "/")
+    return build_capital_csv_analysis_from_rows(
+        rows,
+        source_path=source_path,
+        header_row_count=header_row_count,
+        physical_row_count=physical_row_count,
+    )
 
 
 def analyze_html_xls(path: Path) -> dict[str, Any]:
@@ -1047,8 +1086,10 @@ def cross_check_csv_to_db(
     source_row_order_consistent = by_csv == by_db
 
     status = "PASS"
+    reason: str | None = None
     if unmatched_csv or unmatched_db or any(not m["match_ok"] for m in matches):
         status = "FAIL"
+        reason = "match_or_field_mismatch"
     # count mismatch may already be FAIL via unmatched
     if status == "PASS" and (
         len(matches) != len(csv_rows)
@@ -1056,11 +1097,21 @@ def cross_check_csv_to_db(
         or len(csv_rows) != len(db_rows)
     ):
         status = "FAIL"
+        reason = "count_mismatch"
     if matches and not source_row_order_consistent:
         status = "FAIL"
+        reason = "source_row_order_inconsistent"
+
+    # GOLD-CR-10：非法列與有效列分開；有非法列不得因剩餘有效列對上而 PASS
+    gate = csv_acceptance_gate(csv_analysis)
+    invalid_row_count = int(gate["invalid_row_count"])
+    if gate["status"] != "PASS":
+        status = "FAIL"
+        reason = gate["reason"]
 
     return {
         "status": status,
+        "reason": reason,
         "file_sha256": file_sha256,
         "batch_id": batch_id,
         "batch_account_id": batch_account_id,
@@ -1078,6 +1129,8 @@ def cross_check_csv_to_db(
         "unmatched_db": unmatched_db,
         "matches": matches,
         "source_row_order_consistent": source_row_order_consistent,
+        "invalid_row_count": invalid_row_count,
+        "invalid_rows": gate.get("invalid_rows", []),
         "field_coverage_notes": {
             "csv_has_raw_row_id": False,
             "csv_has_trade_id": False,
@@ -1119,6 +1172,7 @@ def build_manifest(case_id: str, **fields: Any) -> dict[str, Any]:
         "physical_row_count",
         "valid_trade_count",
         "excluded_row_count",
+        "invalid_row_count",
         "duplicate_row_count",
         "symbol_count",
         "contains_2236",
@@ -1443,18 +1497,24 @@ def main() -> None:
         header_row_count=csv_analyses["csv_2024"]["header_row_count"],
         valid_trade_count=csv_analyses["csv_2024"]["valid_trade_count"],
         excluded_row_count=csv_analyses["csv_2024"]["excluded_row_count"],
+        invalid_row_count=csv_analyses["csv_2024"]["invalid_row_count"],
         duplicate_row_count=csv_analyses["csv_2024"]["duplicate_row_count"],
         symbol_count=csv_analyses["csv_2024"]["symbol_count"],
         contains_2236=csv_analyses["csv_2024"]["contains_2236"],
         per_symbol=csv_analyses["csv_2024"]["per_symbol"],
         source_role="A",
-        validation_status="INVENTORIED_PHASE1",
+        validation_status=(
+            "INVENTORIED_PHASE1_BLOCKED_INVALID"
+            if csv_analyses["csv_2024"]["invalid_row_count"]
+            else "INVENTORIED_PHASE1"
+        ),
         crosscheck_status=cc_2024["status"],
         crosscheck_2236_status=cc_2236["status"],
         known_limitations=[
             "CSV 為 A 層來源；不得以 DB 正規化列取代 A",
             "raw_row_id／trade_id／batch 僅存在於 DB（標 NOT_IN_SOURCE）",
             "獨立 C 財務預期尚未建立（Phase 2 未授權）",
+            "非法列（invalid）與排除列（excluded）分開統計；有非法列不得完整 PASS",
         ],
         db_batch_id=cc_2024.get("batch_id"),
         evidence_paths=[
@@ -1481,6 +1541,7 @@ def main() -> None:
         physical_row_count_note=capital_xls["physical_row_count_note"],
         valid_trade_count=capital_xls["valid_trade_count"],
         excluded_row_count=capital_xls["excluded_row_count"],
+        invalid_row_count=capital_xls.get("invalid_row_count", 0),
         duplicate_row_count=capital_xls["duplicate_row_count"],
         symbol_count=capital_xls["symbol_count"],
         contains_2236=capital_xls["contains_2236"],
@@ -1491,6 +1552,7 @@ def main() -> None:
             "預期 65／7 舊約數作廢；以本 Manifest 精確計數為準",
             "physical_row_count 採 HTML <tr> 數，非純文字列",
             "獨立 C 未建立",
+            "GOLD-CR-10 列級非法分類目前以 capital CSV 路徑為主；HTML-xls 沿用 parser 排除",
         ],
     )
     write_json(MANIFEST_DIR / "GOLD-002.json", m002)
@@ -1518,6 +1580,7 @@ def main() -> None:
         header_row_count=esun["header_row_count"],
         valid_trade_count=esun["valid_trade_count"],
         excluded_row_count=esun["excluded_row_count"],
+        invalid_row_count=esun.get("invalid_row_count", 0),
         duplicate_row_count=esun["duplicate_row_count"],
         symbol_count=esun["symbol_count"],
         contains_2236=esun["contains_2236"],
@@ -1551,6 +1614,7 @@ def main() -> None:
                 "header_row_count": csv_analyses[key]["header_row_count"],
                 "valid_trade_count": csv_analyses[key]["valid_trade_count"],
                 "excluded_row_count": csv_analyses[key]["excluded_row_count"],
+                "invalid_row_count": csv_analyses[key]["invalid_row_count"],
                 "duplicate_row_count": csv_analyses[key]["duplicate_row_count"],
                 "symbol_count": csv_analyses[key]["symbol_count"],
                 "contains_2236": csv_analyses[key]["contains_2236"],
@@ -1560,6 +1624,7 @@ def main() -> None:
             }
         )
 
+    m004_invalid_total = sum(s["invalid_row_count"] for s in m004_sources)
     m004 = build_manifest(
         "GOLD-004",
         source_path="MULTIPLE(see sources[])",
@@ -1583,11 +1648,16 @@ def main() -> None:
         physical_row_count=sum(s["physical_row_count"] for s in m004_sources),
         valid_trade_count=sum(s["valid_trade_count"] for s in m004_sources),
         excluded_row_count=sum(s["excluded_row_count"] for s in m004_sources),
+        invalid_row_count=m004_invalid_total,
         duplicate_row_count=sum(s["duplicate_row_count"] for s in m004_sources),
         symbol_count="SEE_PER_YEAR",
         contains_2236=any(s["contains_2236"] for s in m004_sources),
         source_role="A",
-        validation_status="INVENTORIED_PHASE1",
+        validation_status=(
+            "INVENTORIED_PHASE1_BLOCKED_INVALID"
+            if m004_invalid_total
+            else "INVENTORIED_PHASE1"
+        ),
         sources=m004_sources,
         db_trade_total=db_inv["trade_total"],
         db_mapping_note=(
@@ -1600,6 +1670,7 @@ def main() -> None:
             "多檔來源；單一 source_sha256 不適用 → 見 sources[]",
             "獨立 C 未建立",
             "DB 可能含非四 CSV 之其他 batch（若 trade_total 不等於四檔 valid 合計須標明）",
+            "非法列與排除列分開；有非法列不得宣告完整驗收成功",
         ],
         evidence_paths=[
             "data/golden/evidence/inv03_gold004_summary.json",
@@ -1630,6 +1701,7 @@ def main() -> None:
                 "header_row_count": csv_analyses["csv_2024"]["header_row_count"],
                 "valid_trade_count": csv_analyses["csv_2024"]["valid_trade_count"],
                 "excluded_row_count": csv_analyses["csv_2024"]["excluded_row_count"],
+                "invalid_row_count": csv_analyses["csv_2024"]["invalid_row_count"],
                 "duplicate_row_count": csv_analyses["csv_2024"]["duplicate_row_count"],
                 "symbol_count": csv_analyses["csv_2024"]["symbol_count"],
                 "contains_2236": csv_analyses["csv_2024"]["contains_2236"],
@@ -1639,6 +1711,7 @@ def main() -> None:
                 "physical_row_count": capital_xls["physical_row_count"],
                 "valid_trade_count": capital_xls["valid_trade_count"],
                 "excluded_row_count": capital_xls["excluded_row_count"],
+                "invalid_row_count": capital_xls.get("invalid_row_count", 0),
                 "duplicate_row_count": capital_xls["duplicate_row_count"],
                 "symbol_count": capital_xls["symbol_count"],
                 "contains_2236": capital_xls["contains_2236"],
@@ -1647,6 +1720,7 @@ def main() -> None:
                 "physical_row_count": esun["physical_row_count"],
                 "valid_trade_count": esun["valid_trade_count"],
                 "excluded_row_count": esun["excluded_row_count"],
+                "invalid_row_count": esun.get("invalid_row_count", 0),
                 "duplicate_row_count": esun["duplicate_row_count"],
                 "symbol_count": esun["symbol_count"],
                 "contains_2236": esun["contains_2236"],
@@ -1654,8 +1728,12 @@ def main() -> None:
             "GOLD-004": {
                 "csv_valid_sum": gold004["summary"]["csv_valid_sum"],
                 "db_trade_total": gold004["summary"]["db_trade_total"],
+                "invalid_row_sum": m004_invalid_total,
                 "per_year_valid": {
                     k: csv_analyses[k]["valid_trade_count"] for k in csv_keys
+                },
+                "per_year_invalid": {
+                    k: csv_analyses[k]["invalid_row_count"] for k in csv_keys
                 },
                 "per_year_physical": {
                     k: csv_analyses[k]["physical_row_count"] for k in csv_keys
@@ -1680,9 +1758,9 @@ def main() -> None:
         },
         "blockers": [],
         "open_items": [
-            "Phase 2 獨立 C 未授權",
-            "CR-10A 仍未結案",
-            "不 Commit／Push／Merge",
+            "Phase 2 獨立 C 未授權（待 Owner 確認）",
+            "CR-10A 仍未結案（DEFERRED）",
+            "PENDING_DATA：CR-02／CR-05 外部鍵／CR-11 多帳戶真實樣本／玉山期初等",
         ],
     }
     if drift["status"] != "PASS":
@@ -1695,6 +1773,12 @@ def main() -> None:
         summary["blockers"].append("INV-03 GOLD-004 crosscheck FAIL")
     if gitignore_check["status"] != "PASS":
         summary["blockers"].append("GOLD-CR-04 git_security_audit FAIL")
+    for csv_key, csv_an in csv_analyses.items():
+        gate = csv_acceptance_gate(csv_an)
+        if gate["status"] != "PASS":
+            summary["blockers"].append(
+                f"GOLD-CR-10 {csv_key} invalid_trade_rows:{gate['invalid_row_count']}"
+            )
 
     # GOLD-CR-08：鎖定 SHA256 不一致 → blocker（非僅 open_items）
     actual_sha = {

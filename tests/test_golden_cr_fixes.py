@@ -247,6 +247,94 @@ def test_gold_cr10_non_blank_row_not_automatically_valid() -> None:
     assert ok["quantity"] == "1000"
 
 
+def test_gold_cr10_invalid_rows_separated_and_block_acceptance() -> None:
+    """非法列與排除列分計；有非法列時即使有效列對上 DB 也不得完整 PASS。"""
+    import sqlite3
+
+    from scripts._golden_phase01_inventory import (
+        build_capital_csv_analysis_from_rows,
+        cross_check_csv_to_db,
+        csv_acceptance_gate,
+    )
+
+    rows = [
+        ["商品", "成交日", "買賣別", "幣別", "成交價", "成交股數", "成交金額", "手續費", "交易稅", "淨收付"],
+        ["", "", "", "", "", "", "", "", "", ""],
+        ["2330 台積電", "2024/1/2", "現股買進", "臺幣", "100", "1,000", "100,000", "50", "0", "-100,050"],
+        ["2330 台積電", "2024/1/3", "未知別", "臺幣", "100", "1,000", "100,000", "50", "0", "-100,050"],
+        ["總合(1)", "", "", "", "", "", "", "", "", ""],
+    ]
+    analysis = build_capital_csv_analysis_from_rows(
+        rows, source_path="synthetic/capital.csv", header_row_count=2
+    )
+    assert analysis["valid_trade_count"] == 1
+    assert analysis["excluded_row_count"] == 1
+    assert analysis["invalid_row_count"] == 1
+    inv = analysis["invalid_rows"][0]
+    assert inv["physical_line"] == 4
+    assert inv["source_path"] == "synthetic/capital.csv"
+    assert "invalid_side" in inv["reason"]
+    gate = csv_acceptance_gate(analysis)
+    assert gate["status"] == "FAIL"
+    assert gate["reason"] == "invalid_trade_rows_present"
+
+    sha = "c" * 64
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(
+        """
+        CREATE TABLE import_batches (
+            id TEXT, account_id TEXT, file_sha256 TEXT, filename TEXT,
+            profile_id TEXT, profile_version INT, status TEXT
+        );
+        CREATE TABLE raw_rows (
+            id TEXT, batch_id TEXT, row_index INT, row_sha256 TEXT,
+            parse_status TEXT, error_code TEXT
+        );
+        CREATE TABLE trades (
+            id TEXT, raw_row_id TEXT, account_id TEXT, symbol TEXT, name TEXT,
+            trade_date TEXT, side TEXT, trade_type TEXT, currency TEXT, quantity INT,
+            unit_price_txt TEXT, gross_amount_txt TEXT, commission_txt TEXT,
+            tax_txt TEXT, interest_txt TEXT, net_settlement_txt TEXT
+        );
+        """
+    )
+    con.execute(
+        "INSERT INTO import_batches VALUES (?,?,?,?,?,?,?)",
+        ("batch1", "acc1", sha, "y.csv", "statement_html_v1", 1, "completed"),
+    )
+    con.execute(
+        "INSERT INTO raw_rows VALUES (?,?,?,?,?,?)",
+        ("raw1", "batch1", 3, "d" * 64, "ok", None),
+    )
+    con.execute(
+        "INSERT INTO trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "t1",
+            "raw1",
+            "acc1",
+            "2330",
+            "台積電",
+            "2024-01-02",
+            "BUY",
+            "CASH",
+            "TWD",
+            1000,
+            "100",
+            "100000",
+            "50",
+            "0",
+            "0",
+            "-100050",
+        ),
+    )
+    result = cross_check_csv_to_db(analysis, con, file_sha256=sha)
+    assert result["matched_count"] == 1
+    assert result["status"] == "FAIL"
+    assert result["reason"] == "invalid_trade_rows_present"
+    assert result["invalid_row_count"] == 1
+
+
 def test_gold_cr11_ambiguous_batches_must_not_pick_first() -> None:
     """GOLD-CR-11：同 file_sha256 多批次 → AMBIGUOUS，不得 fetchone 偷選。"""
     import sqlite3
