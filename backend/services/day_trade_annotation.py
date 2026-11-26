@@ -1,6 +1,7 @@
 """Independent Day-Trade Annotation（Layer 3）。
 
 僅讀 trades／allocations 產出稽核註記；不得寫回配對或改寫財務結果。
+啟發式商品分類 ≠ 商品主檔驗證；本層不影響 Matching Engine。
 """
 
 from __future__ import annotations
@@ -14,21 +15,28 @@ from decimal import ROUND_HALF_UP, Decimal
 from backend.domain.models import Allocation, Trade
 from backend.services.fifo_matcher import MATCH_TYPE_SAME_DAY
 
-TAX_RULES_VERSION = "tw_sec_tax_v2"
+TAX_RULES_VERSION = "tw_sec_tax_v3"
 
 # 台股證交稅規則表（版本化；禁止呼叫端硬編碼）
 # 來源：證交稅條例一般股票稅率；現股當沖半稅自 2017-04-28 起適用於一般股票。
-# 本層為最小可驗證適用範圍，非完整稅務引擎；ETF／未知商品／生效日前 → INSUFFICIENT。
+# 取整：ROUND_HALF_UP；容差：1 元（券商列印／取整差異）。
+# 本層為最小可驗證適用範圍，非完整稅務引擎；
+# ETF／未知商品／生效日前／規則有效窗外 → INSUFFICIENT。
+# 四碼啟發式僅推論 INFERRED_TW_COMMON_STOCK，不得宣稱已確認普通股。
 _TAX_RULES: dict[str, Decimal] = {
     "STANDARD_RATE": Decimal("0.003"),
     "DAY_TRADE_HALF_RATE": Decimal("0.0015"),
 }
-_TAX_TOLERANCE = Decimal(1)  # 元；容許取整差異
+_TAX_TOLERANCE = Decimal(1)  # 元；容許取整差異（tax_tolerance_twd=1）
+_TAX_ROUNDING = "ROUND_HALF_UP"
 _HALF_RATE_EFFECTIVE_FROM = date(2017, 4, 28)
-_ELIGIBLE_INSTRUMENT_CLASSES = frozenset({"TW_COMMON_STOCK"})
+# tw_sec_tax_v3 規則表有效窗末日（含當日）；次日視為未來未知規則
+_TAX_RULES_VALID_THROUGH = date(2026, 12, 31)
+_ELIGIBLE_INSTRUMENT_CLASSES = frozenset({"INFERRED_TW_COMMON_STOCK"})
 _TAX_RULE_SOURCE = (
     "TWSE/TPEx securities transaction tax; day-trade half-rate for common stock "
-    f"effective {_HALF_RATE_EFFECTIVE_FROM.isoformat()}"
+    f"effective {_HALF_RATE_EFFECTIVE_FROM.isoformat()} "
+    f"through {_TAX_RULES_VALID_THROUGH.isoformat()} (inferred instrument class only)"
 )
 
 
@@ -45,6 +53,8 @@ class DayTradeCandidate:
         half_rate_sell_trade_ids: 僅 HALF_RATE 證據之 SELL trade_id。
         candidate_sell_trade_ids: 與 ``half_rate_sell_trade_ids`` 同義（候選賣出）。
         sell_tax_evidences: 逐筆賣出稅證據（含 source_row_id）。
+        instrument_class: 啟發式推論類別（非商品主檔驗證結果）。
+        classification_basis: ``symbol_heuristic_4digit``｜``name_keyword``｜``unknown``。
     """
 
     account_id: str
@@ -67,6 +77,8 @@ class DayTradeCandidate:
     reconciled_quantity: int = 0
     uncertainty_reason: str = ""
     tax_rule_version: str = TAX_RULES_VERSION
+    instrument_class: str = "UNKNOWN"
+    classification_basis: str = "unknown"
 
 
 @dataclass
@@ -81,36 +93,65 @@ class DayTradeAnnotationResult:
 
 
 def _expected_tax(gross: Decimal, rate: Decimal) -> Decimal:
-    """依規則表計算期望證交稅（元；``ROUND_HALF_UP``）。"""
+    """依規則表計算期望證交稅（元；``ROUND_HALF_UP``）。
+
+    Args:
+        gross: 成交金額。
+        rate: 稅率（規則表常數）。
+
+    Returns:
+        取整至元之期望稅額。
+    """
     return (gross * rate).quantize(Decimal(1), rounding=ROUND_HALF_UP)
 
 
-def _classify_instrument(symbol: str, name: str | None) -> str:
-    """最小商品分類（可驗證；非完整商品主檔）。
+def _classify_instrument(symbol: str, name: str | None) -> tuple[str, str]:
+    """最小商品分類（啟發式推論；非完整商品主檔驗證）。
+
+    Args:
+        symbol: 股票代號。
+        name: 商品名稱（可為 None）。
 
     Returns:
-        ``TW_COMMON_STOCK``｜``TW_ETF``｜``UNKNOWN``。
+        ``(instrument_class, classification_basis)``：
+        - ``INFERRED_TW_COMMON_STOCK`` + ``symbol_heuristic_4digit``
+        - ``TW_ETF`` + ``name_keyword`` 或 ``symbol_heuristic_4digit``
+        - ``UNKNOWN`` + ``unknown``
+
+    Note:
+        啟發式 ≠ 已確認普通股；僅供稅證據適用範圍保守過濾，不影響 Matching Engine。
     """
     s = (symbol or "").strip().upper()
     n = (name or "").upper()
     if "ETF" in n:
-        return "TW_ETF"
+        return "TW_ETF", "name_keyword"
     if len(s) == 4 and s.isdigit():
         if s.startswith("00"):
-            return "TW_ETF"
-        return "TW_COMMON_STOCK"
-    return "UNKNOWN"
+            return "TW_ETF", "symbol_heuristic_4digit"
+        return "INFERRED_TW_COMMON_STOCK", "symbol_heuristic_4digit"
+    return "UNKNOWN", "unknown"
 
 
 def _sell_tax_evidence(sell: Trade) -> str:
     """對單一賣出判定稅證據。
 
-    適用條件（全部滿足才比對規則表）：
-    - ``currency=TWD``、``trade_type=CASH``、``gross_amount > 0``
-    - 商品分類 ∈ ``TW_COMMON_STOCK``
-    - 交易日 ≥ 減半稅生效日才可比對 HALF_RATE；否則僅能比對 STANDARD_RATE
+    Args:
+        sell: 賣出成交（唯讀）。
 
-    若同時落入半稅與全稅容差 → ``AMBIGUOUS_TAX_EVIDENCE``（優先於 HALF_RATE）。
+    Returns:
+        ``HALF_RATE``｜``STANDARD_RATE``｜``AMBIGUOUS_TAX_EVIDENCE``｜
+        ``INSUFFICIENT_EVIDENCE``。
+
+    Tax applicability（全部滿足才比對規則表）:
+        - ``currency=TWD``、``trade_type=CASH``、``gross_amount > 0``
+        - 商品分類 ∈ ``INFERRED_TW_COMMON_STOCK``（啟發式；非主檔驗證）
+        - 交易日 ∈ ``[_HALF_RATE_EFFECTIVE_FROM, _TAX_RULES_VALID_THROUGH]``
+          才可比對 HALF_RATE；有效窗外 → ``INSUFFICIENT_EVIDENCE``
+        - 生效日前僅能比對 STANDARD_RATE（仍須落在有效窗內）
+
+    Uncertainty:
+        若同時落入半稅與全稅容差 → ``AMBIGUOUS_TAX_EVIDENCE``（優先於 HALF_RATE）。
+        取整 ``ROUND_HALF_UP``、容差 1 元。
     """
     if sell.side != "SELL":
         return "INSUFFICIENT_EVIDENCE"
@@ -118,8 +159,11 @@ def _sell_tax_evidence(sell: Trade) -> str:
         return "INSUFFICIENT_EVIDENCE"
     if sell.gross_amount <= 0:
         return "INSUFFICIENT_EVIDENCE"
+    # 規則有效窗外（含未來未知規則）不得套用本版稅表
+    if sell.trade_date > _TAX_RULES_VALID_THROUGH:
+        return "INSUFFICIENT_EVIDENCE"
 
-    instrument = _classify_instrument(sell.symbol, sell.name)
+    instrument, _basis = _classify_instrument(sell.symbol, sell.name)
     if instrument not in _ELIGIBLE_INSTRUMENT_CLASSES:
         return "INSUFFICIENT_EVIDENCE"
 
@@ -181,6 +225,21 @@ def _annotate_day_trades_impl(
     trades: Iterable[Trade],
     allocations: Iterable[Allocation],
 ) -> DayTradeAnnotationResult:
+    """實作 annotation 分組與稅證據彙總（僅由 ``annotate_day_trades`` 呼叫）。
+
+    Args:
+        trades: 領域成交（唯讀）。
+        allocations: FIFO 配對結果（唯讀）。
+
+    Returns:
+        完整 ``DayTradeAnnotationResult``（可能含零候選）。
+
+    Side Effects:
+        無。
+
+    Tax applicability / uncertainty:
+        見 ``_sell_tax_evidence``；組級 AMBIGUOUS 優先於 HALF_RATE。
+    """
     trade_list = list(trades)
     alloc_list = list(allocations)
     warnings: list[str] = []
@@ -208,6 +267,12 @@ def _annotate_day_trades_impl(
         sell_qty = sum(t.quantity for t in sells)
         if min(buy_qty, sell_qty) <= 0:
             continue
+
+        # 組級分類：以第一筆賣出名稱／代號啟發式（組內同 symbol）
+        sample = sells[0]
+        instrument_class, classification_basis = _classify_instrument(
+            sample.symbol, sample.name
+        )
 
         sell_evidence = [(s, _sell_tax_evidence(s)) for s in sells]
         evidence_flags = {ev for _, ev in sell_evidence}
@@ -248,16 +313,20 @@ def _annotate_day_trades_impl(
         source_rows = tuple(
             sorted({t.source_row_id for t in buys + sells if t.source_row_id})
         )
-        sell_ev_payload = tuple(
-            {
-                "trade_id": s.trade_id,
-                "tax_evidence": ev,
-                "quantity": s.quantity,
-                "source_row_id": s.source_row_id,
-                "instrument_class": _classify_instrument(s.symbol, s.name),
-            }
-            for s, ev in sorted(sell_evidence, key=lambda x: x[0].trade_id)
-        )
+        sell_ev_items: list[dict] = []
+        for s, ev in sorted(sell_evidence, key=lambda x: x[0].trade_id):
+            iclass, ibasis = _classify_instrument(s.symbol, s.name)
+            sell_ev_items.append(
+                {
+                    "trade_id": s.trade_id,
+                    "tax_evidence": ev,
+                    "quantity": s.quantity,
+                    "source_row_id": s.source_row_id,
+                    "instrument_class": iclass,
+                    "classification_basis": ibasis,
+                }
+            )
+        sell_ev_payload = tuple(sell_ev_items)
 
         # 手續費不得驅動判定（刻意不讀 commission）
         candidates.append(
@@ -282,6 +351,8 @@ def _annotate_day_trades_impl(
                 reconciled_quantity=day_recon,
                 uncertainty_reason=uncertainty,
                 tax_rule_version=TAX_RULES_VERSION,
+                instrument_class=instrument_class,
+                classification_basis=classification_basis,
             )
         )
         if tax_evidence == "HALF_RATE":
@@ -303,7 +374,8 @@ def annotation_to_audit_dict(result: DayTradeAnnotationResult) -> dict:
         result: ``annotate_day_trades`` 產出。
 
     Returns:
-        含 ``day_trade_annotation`` 鍵之 dict；候選含 CR-12 可追溯欄位。
+        含 ``day_trade_annotation`` 鍵之 dict；候選含 CR-12 可追溯欄位與
+        CR-02 ``instrument_class``／``classification_basis``／有效窗／取整依據。
 
     Side Effects:
         無。
@@ -315,6 +387,9 @@ def annotation_to_audit_dict(result: DayTradeAnnotationResult) -> dict:
             "status": "FAILED" if failed else "OK",
             "tax_rule_source": _TAX_RULE_SOURCE,
             "half_rate_effective_from": _HALF_RATE_EFFECTIVE_FROM.isoformat(),
+            "tax_rules_valid_through": _TAX_RULES_VALID_THROUGH.isoformat(),
+            "tax_rounding": _TAX_ROUNDING,
+            "tax_tolerance_twd": int(_TAX_TOLERANCE),
             "eligible_instrument_classes": sorted(_ELIGIBLE_INSTRUMENT_CLASSES),
             "suspected_day_trade_qty": result.suspected_day_trade_qty,
             "same_day_reconciled_qty": result.same_day_reconciled_qty,
@@ -340,6 +415,8 @@ def annotation_to_audit_dict(result: DayTradeAnnotationResult) -> dict:
                     "reconciled_quantity": c.reconciled_quantity,
                     "uncertainty_reason": c.uncertainty_reason,
                     "tax_rule_version": c.tax_rule_version,
+                    "instrument_class": c.instrument_class,
+                    "classification_basis": c.classification_basis,
                 }
                 for c in result.candidates
             ],

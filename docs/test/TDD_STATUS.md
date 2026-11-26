@@ -273,6 +273,18 @@
 | 本機 REGRESSION | `uv run pytest -q` → **153 passed**／71.67s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
 | 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_r2_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
 
+### 1.20 PR #12 Round-3 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（基線審查 `ddc7530`） |
+| 變更 | Round-3：CR-02 `INFERRED_TW_COMMON_STOCK`＋`tw_sec_tax_v3` 有效窗；CR-06 原始序／permutation／Excel／費用守恆；CR-10 `build_uat_checks`＋反向測；CR-07 `REQUIRED_AUDIT_KEYS`＋未平倉／未配對；CR-05 migration 全財務欄；CR-11 指紋限制文件；CR-13 docstring |
+| RED | 先擴充 `test_day_trade_annotation`／`test_uat_fifo_same_day_verdict`／`test_annotation_report_noninterfere`／original import E2E／migration 斷言（針對尚未滿足之 inferred／有效窗／verdict 假性通過／嚴格 audit keys） |
+| GREEN | annotation v3；UAT `build_uat_checks`；非干涉嚴格化；E2E／migration／UAT 文件 |
+| REFACTOR | touched API／UAT helpers Google docstring（無行為變更） |
+| 本機 REGRESSION | `uv run pytest -q` → **180 passed**／64.28s（2026-11-26）；`git diff --check` 通過；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_r3_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -443,6 +455,7 @@
 | `fifo_v3_two_pass_same_day_v1` | CASH Pass2 同日補沖銷；`match_type`；Independent day-trade annotation；2236 合成配平 | 2026-11-26；目標測 **9 failed／3 passed**（blocking／缺 `match_type`／annotation stub／版本 v2） | 2026-11-26；Pass2＋`match_type`＋annotation＋migration＋版本 v3；工作區尚未 commit | 無獨立 restruct | **128 passed** | RCA `docs/test/RCA_two_pass_fifo_same_day.md`；正式 DB 未動；Commit 待授權 |
 | `pr12_cr_fixes_v1` | PR #12 CR：annotation 稅證據／支持股數／AMBIGUOUS／例外隔離；migration backfill；report ON／OFF；2236 E2E；UAT 目錄／verdict | 2026-11-26；`tests/test_day_trade_annotation.py` **5 failed／7 passed**（業務缺口） | 2026-11-26；annotation／migration／report／UAT／E2E／matcher 邊界；工作區尚未 commit | docstring（無行為變更） | **145 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
 | `pr12_cr_r2_v1` | PR #12 Round-2：稅適用範圍／annotation prep 邊界／原始九筆 import E2E／migration FK／Excel ON-OFF／UAT WAL＋獨立 out／CR-12 ids | 2026-11-26；目標測 **7 failed／15 passed**（ETF／未知／生效日前仍 HALF；缺欄；prep 未隔離） | 2026-11-26；`tw_sec_tax_v2`；report prep 邊界；original import E2E；UAT／migration 強化；工作區尚未 commit | 無獨立 restruct | **153 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
+| `pr12_cr_r3_v1` | PR #12 Round-3：inferred 分類＋稅有效窗 v3／原始 E2E 強化／`build_uat_checks` 反向／非干涉嚴格／migration 財務欄／指紋文件 | 2026-11-26；先寫 RED 契約測（inferred／valid_through／verdict 反向／REQUIRED_AUDIT_KEYS／permutation） | 2026-11-26；`tw_sec_tax_v3`；`build_uat_checks`；E2E／非干涉／migration；工作區尚未 commit | docstring（無行為變更） | **180 passed**／64.28s | 正式 DB 未動；ruff 通過；Commit／PR 回覆待授權 |
 
 **記錄欄位最低要求**
 
@@ -517,3 +530,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **隔離 UAT `fifo_same_day_2236`**：合成九筆；`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；allocated 4000（3600＋400 Pass2）；非 DRAFT；annotation 1000≠400；正式 DB mtime 2026-11-22 14:49:49 未變；判定 **PASS**（`UAT_fifo_same_day_2236.md`）。 |
 | 2026-11-26 | **`pr12_cr_fixes_v1` TDD**：PR #12 CR-01～13；RED 5 failed → GREEN annotation／migration／report／E2E／UAT；全量 **145 passed**／57.98s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
 | 2026-11-26 | **`pr12_cr_r2_v1` TDD**：PR #12 Round-2；RED 7 failed → GREEN 稅適用／prep 邊界／原始九筆 import E2E／migration／Excel／UAT；全量 **153 passed**／71.67s；隔離 UAT **PASS**；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
+| 2026-11-26 | **`pr12_cr_r3_v1` TDD**：PR #12 Round-3；inferred／`tw_sec_tax_v3`／E2E permutation／`build_uat_checks` 反向／REQUIRED_AUDIT_KEYS／migration 財務欄／指紋文件；全量 **180 passed**／64.28s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |

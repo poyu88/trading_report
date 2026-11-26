@@ -1,4 +1,10 @@
-"""隔離 UAT：2236 Two-Pass FIFO（合成資料；禁止寫正式 DB）。"""
+"""隔離 UAT：2236 Two-Pass FIFO（合成資料；禁止寫正式 DB）。
+
+Fingerprint 限制（CR-11）：
+- UAT 期間禁止其他程序寫入正式 ``data/trading.db``（含 -wal／-shm）。
+- 指紋比對僅適用「無並發寫入」前提；指紋變 → verdict FAIL。
+- 不宣稱涵蓋所有並發／OS 快取／外部備份工具等情境。
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from alembic.config import Config
 from sqlalchemy import create_engine, func, inspect, select, text
@@ -52,6 +59,17 @@ TRADES: list[tuple[str, str, str, int, str, str, str]] = [
 
 
 def _sha256_file(path: Path) -> str | None:
+    """計算檔案 SHA-256（唯讀）。
+
+    Args:
+        path: 目標檔路徑。
+
+    Returns:
+        hex digest；檔不存在時 ``None``。
+
+    Side Effects:
+        僅讀取檔案內容；不寫入。
+    """
     if not path.exists():
         return None
     h = hashlib.sha256()
@@ -62,7 +80,17 @@ def _sha256_file(path: Path) -> str | None:
 
 
 def _formal_fingerprint() -> dict:
-    """正式 DB 指紋（含 WAL／SHM；不開啟寫入）。"""
+    """正式 DB 指紋（含 WAL／SHM；不開啟寫入）。
+
+    Returns:
+        含 exists／mtime／size／sha256 之 dict。
+
+    Side Effects:
+        僅 ``stat``／讀取；**不**開 SQLite 連線、不寫入。
+
+    Note:
+        適用「UAT 期間無其他程序寫正式 DB」前提；不涵蓋並發寫入。
+    """
     paths = {
         "db": FORMAL_DB,
         "wal": Path(str(FORMAL_DB) + "-wal"),
@@ -84,7 +112,21 @@ def _formal_fingerprint() -> dict:
 
 
 def _assert_uat_path(path: Path, *, root: Path) -> Path:
-    """解析路徑必須落在指定 UAT 根之下。"""
+    """解析路徑必須落在指定 UAT 根之下。
+
+    Args:
+        path: 候選路徑。
+        root: 允許的 UAT 根目錄。
+
+    Returns:
+        ``path.resolve()``。
+
+    Raises:
+        RuntimeError: 路徑逸出 ``root``。
+
+    Side Effects:
+        無。
+    """
     resolved = path.resolve()
     root_r = root.resolve()
     if root_r not in resolved.parents and resolved != root_r:
@@ -93,6 +135,17 @@ def _assert_uat_path(path: Path, *, root: Path) -> Path:
 
 
 def _seed(session) -> Account:
+    """植入合成 2236 九筆 CASH（買＝賣＝4000）。
+
+    Args:
+        session: SQLAlchemy session（UAT 隔離 DB）。
+
+    Returns:
+        新建 ``Account``。
+
+    Side Effects:
+        寫入 brokers／accounts／import_batches／raw_rows／trades（僅 UAT DB）。
+    """
     broker = Broker(id=str(uuid.uuid4()), name="uat-synthetic-broker")
     account = Account(id=str(uuid.uuid4()), broker_id=broker.id, account_label=ACCOUNT_LABEL)
     batch = ImportBatch(
@@ -143,6 +196,19 @@ def _seed(session) -> Account:
 
 
 def _domain_views(session, account_id: str, run_id: str) -> tuple[list[Trade], list[Allocation]]:
+    """將 ORM 列轉為 annotation 用領域物件（唯讀）。
+
+    Args:
+        session: SQLAlchemy session。
+        account_id: 帳戶 id。
+        run_id: allocation run id。
+
+    Returns:
+        ``(domain trades, domain allocations)``。
+
+    Side Effects:
+        無寫入；不改 ORM 財務欄。
+    """
     trades = list(session.scalars(select(TradeRow).where(TradeRow.account_id == account_id)))
     alloc_rows = list(
         session.scalars(select(FifoAllocation).where(FifoAllocation.run_id == run_id))
@@ -187,6 +253,18 @@ def _domain_views(session, account_id: str, run_id: str) -> tuple[list[Trade], l
 
 
 def _alloc_business_keys(session, run_id: str) -> list[tuple]:
+    """讀取配對業務鍵（冪等比對用）。
+
+    Args:
+        session: SQLAlchemy session。
+        run_id: allocation run id。
+
+    Returns:
+        排序後 ``(buy, opening, sell, qty, seq, match_type)`` 清單。
+
+    Side Effects:
+        無。
+    """
     rows = list(
         session.scalars(select(FifoAllocation).where(FifoAllocation.run_id == run_id))
     )
@@ -203,8 +281,110 @@ def _alloc_business_keys(session, run_id: str) -> list[tuple]:
     )
 
 
+def build_uat_checks(
+    *,
+    required_outputs: dict[str, bool],
+    migration_probe: dict[str, Any],
+    fresh_schema_has_match_type: bool,
+    allocated_qty: int,
+    qty_by_match_type: dict[str, int],
+    unsold_qty: int,
+    blocking: bool,
+    conservation_ok: bool,
+    audit_json: dict[str, Any],
+    integrity_check_result: str,
+    h_annotation_non_interference: bool,
+    detail_is_draft: bool,
+    idempotent: dict[str, Any],
+    formal_db_untouched: bool,
+    run_dir_under_data_uat: bool,
+    out_dir_under_output_uat: bool,
+    detail_xlsx_finance_ok: bool = True,
+) -> dict[str, bool]:
+    """組裝 UAT ``checks``（純函式；全部步驟後呼叫）。
+
+    Args:
+        required_outputs: 必要產出存在旗標（須含 detail／audit／exceptions／
+            fifo_trace／conservation）。
+        migration_probe: 實際 alembic upgrade 探針結果。
+        fresh_schema_has_match_type: create_all 新 DB 是否含 ``match_type``。
+        allocated_qty: 配對股數合計。
+        qty_by_match_type: 各 ``match_type`` 股數。
+        unsold_qty: 未售股數。
+        blocking: 是否 blocking。
+        conservation_ok: 數量守恆（DB 計算）。
+        audit_json: **序列化後** audit.json 內容（含 day_trade_annotation）。
+        integrity_check_result: ``PRAGMA integrity_check`` 結果字串。
+        h_annotation_non_interference: annotation 前後財務鍵全等。
+        detail_is_draft: 明細是否 DRAFT。
+        idempotent: 冪等重跑結果。
+        formal_db_untouched: 正式 DB 指紋未變。
+        run_dir_under_data_uat: run 目錄落在 data/uat 根。
+        out_dir_under_output_uat: out 目錄落在 output/uat 根。
+        detail_xlsx_finance_ok: 可選明細財務加總核對。
+
+    Returns:
+        ``dict[str, bool]``；``all(values)`` 為 True 才可判 PASS。
+
+    Side Effects:
+        無。
+
+    Note:
+        Annotation 數量／狀態以 ``audit_json["day_trade_annotation"]`` 為準，
+        不得僅用記憶體 annotation 物件當最終判定。
+    """
+    ann = audit_json.get("day_trade_annotation") or {}
+    return {
+        "fresh_schema_has_match_type": bool(fresh_schema_has_match_type),
+        "actual_migration_day_trade_backfill": bool(
+            migration_probe.get("day_trade_backfill_ok")
+        ),
+        "actual_migration_cash_standard_ok": bool(migration_probe.get("cash_standard_ok")),
+        "actual_migration_fk_ok": bool(migration_probe.get("foreign_key_check_empty")),
+        "actual_migration_integrity_ok": bool(migration_probe.get("integrity_ok")),
+        "allocated_4000": allocated_qty == 4000,
+        "standard_3600": qty_by_match_type.get("STANDARD_FIFO", 0) == 3600,
+        "pass2_400": qty_by_match_type.get("SAME_DAY_RECONCILED", 0) == 400,
+        "unsold_0": unsold_qty == 0,
+        "not_blocking": not blocking,
+        "conservation_ok": bool(conservation_ok),
+        "audit_json_conservation_ok": bool(audit_json.get("conservation_ok")),
+        "integrity_ok": integrity_check_result == "ok",
+        "h_ok": bool(h_annotation_non_interference),
+        "required_outputs_all": all(required_outputs.values()) and bool(required_outputs),
+        "required_fifo_trace": bool(required_outputs.get("fifo_trace")),
+        "required_conservation": bool(required_outputs.get("conservation")),
+        "required_detail_xlsx": bool(required_outputs.get("detail_xlsx")),
+        "required_audit_json": bool(required_outputs.get("audit_json")),
+        "required_exceptions_csv": bool(required_outputs.get("exceptions_csv")),
+        "not_draft": not detail_is_draft,
+        "annotation_status_ok": ann.get("status") == "OK",
+        "annotation_suspected_exact_1000": ann.get("suspected_day_trade_qty") == 1000,
+        "annotation_reconciled_exact_400": ann.get("same_day_reconciled_qty") == 400,
+        "annotation_warnings_empty": list(ann.get("warnings") or []) == [],
+        "idempotent_old_preserved": bool(idempotent.get("old_run_preserved")),
+        "idempotent_old_keys_unchanged": bool(idempotent.get("old_run_keys_unchanged")),
+        "idempotent_new_keys_equal": bool(idempotent.get("new_run_keys_equal_old")),
+        "idempotent_qty_same": bool(idempotent.get("allocated_qty_same")),
+        "formal_db_untouched": bool(formal_db_untouched),
+        "run_dir_under_data_uat": bool(run_dir_under_data_uat),
+        "out_dir_under_output_uat": bool(out_dir_under_output_uat),
+        "detail_xlsx_finance_ok": bool(detail_xlsx_finance_ok),
+    }
+
+
 def _run_actual_migration_check(run_dir: Path) -> dict:
-    """獨立 tmp DB：PREV → seed → HEAD，驗證實際 migration（非 fresh schema）。"""
+    """獨立 tmp DB：PREV → seed → HEAD，驗證實際 migration（非 fresh schema）。
+
+    Args:
+        run_dir: 本次 UAT run 目錄（須在 ``UAT_ROOT`` 下）。
+
+    Returns:
+        含 ``day_trade_backfill_ok``／``cash_standard_ok``／FK／integrity 之 dict。
+
+    Side Effects:
+        於 ``run_dir/migration_probe.db`` 寫入探針 DB；**不**觸碰正式 DB。
+    """
     mig_db = _assert_uat_path(run_dir / "migration_probe.db", root=UAT_ROOT)
     cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{mig_db.as_posix()}")
@@ -436,9 +616,10 @@ def main() -> int:
             "detail_xlsx": xlsx_path.exists() and "DRAFT" not in xlsx_path.name,
             "audit_json": audit_path.exists(),
             "exceptions_csv": exc_path.exists(),
-            "fifo_trace": any(out_dir.glob("*fifo*trace*.xlsx"))
-            or any(out_dir.glob("*FIFO*")),
-            "conservation": any(out_dir.glob("*conservation*")),
+            "fifo_trace": any(out_dir.glob("*FIFO*"))
+            or any(out_dir.glob("*fifo*trace*.xlsx")),
+            "conservation": any(out_dir.glob("*守恆*"))
+            or any(out_dir.glob("*conservation*")),
         }
 
         summary.update(
@@ -496,38 +677,32 @@ def main() -> int:
         summary["formal_db_untouched"] = before_fp == after_fp
         summary["finished_at_utc"] = datetime.now(UTC).isoformat()
 
-        checks = {
-            "fresh_schema_has_match_type": fresh_schema_has_match_type,
-            "actual_migration_day_trade_backfill": bool(
-                migration_probe.get("day_trade_backfill_ok")
-            ),
-            "actual_migration_fk_ok": bool(migration_probe.get("foreign_key_check_empty")),
-            "actual_migration_integrity_ok": bool(migration_probe.get("integrity_ok")),
-            "allocated_4000": summary["allocated_qty"] == 4000,
-            "standard_3600": by_type.get("STANDARD_FIFO", 0) == 3600,
-            "pass2_400": by_type.get("SAME_DAY_RECONCILED", 0) == 400,
-            "unsold_0": summary["unsold_qty"] == 0,
-            "not_blocking": not result.blocking,
-            "conservation_ok": bool(cons["ok"]),
-            "audit_conservation_ok": bool(audit.conservation_ok),
-            "integrity_ok": summary["integrity_check"] == "ok",
-            "h_ok": h_ok,
-            "report_exists": bool(summary["outputs"]["detail_exists"]),
-            "audit_exists": bool(summary["outputs"]["audit_exists"]),
-            "exceptions_exists": bool(required_outputs["exceptions_csv"]),
-            "not_draft": not summary["outputs"]["detail_is_draft"],
-            "annotation_status_ok": ann_audit.get("status") == "OK",
-            "annotation_suspected_exact_1000": annotation.suspected_day_trade_qty == 1000,
-            "annotation_reconciled_exact_400": annotation.same_day_reconciled_qty == 400,
-            "annotation_warnings_empty": annotation.warnings == [],
-            "idempotent_old_preserved": bool(idempotent["old_run_preserved"]),
-            "idempotent_old_keys_unchanged": bool(idempotent["old_run_keys_unchanged"]),
-            "idempotent_new_keys_equal": bool(idempotent["new_run_keys_equal_old"]),
-            "idempotent_qty_same": bool(idempotent["allocated_qty_same"]),
-            "formal_db_untouched": summary["formal_db_untouched"],
-            "run_dir_under_data_uat": str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
-            "out_dir_under_output_uat": str(OUT_ROOT.resolve()) in str(out_dir.resolve()),
-        }
+        # 最終判定以序列化 audit.json 為準（ann_audit），非僅記憶體 annotation
+        checks = build_uat_checks(
+            required_outputs=required_outputs,
+            migration_probe=migration_probe,
+            fresh_schema_has_match_type=fresh_schema_has_match_type,
+            allocated_qty=int(summary["allocated_qty"]),
+            qty_by_match_type=by_type,
+            unsold_qty=int(summary["unsold_qty"]),
+            blocking=bool(result.blocking),
+            conservation_ok=bool(cons["ok"]),
+            audit_json=audit_payload,
+            integrity_check_result=str(summary["integrity_check"]),
+            h_annotation_non_interference=h_ok,
+            detail_is_draft=bool(summary["outputs"]["detail_is_draft"]),
+            idempotent=idempotent,
+            formal_db_untouched=bool(summary["formal_db_untouched"]),
+            run_dir_under_data_uat=str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
+            out_dir_under_output_uat=str(OUT_ROOT.resolve()) in str(out_dir.resolve()),
+            detail_xlsx_finance_ok=xlsx_path.exists() and "DRAFT" not in xlsx_path.name,
+        )
+        # 與序列化 ann 交叉核對（偵測記憶體／落盤不一致）
+        checks["annotation_serialized_matches_memory"] = (
+            ann_audit.get("suspected_day_trade_qty") == annotation.suspected_day_trade_qty
+            and ann_audit.get("same_day_reconciled_qty") == annotation.same_day_reconciled_qty
+            and list(ann_audit.get("warnings") or []) == list(annotation.warnings)
+        )
         summary["checks"] = checks
         summary["uat_verdict"] = "PASS" if all(checks.values()) else "FAIL"
 

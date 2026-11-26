@@ -22,12 +22,19 @@
 
 解析後路徑必須落在對應 UAT 根之下；否則腳本拒絕執行。
 
+### 正式 DB 指紋限制（CR-11）
+
+- UAT **期間禁止**其他程序寫入正式 `data/trading.db`（含 `-wal`／`-shm`）。
+- 指紋比對僅適用「**無並發寫入**」前提；指紋變 → `uat_verdict=FAIL`。
+- **不**宣稱涵蓋所有並發、OS 快取、防毒／備份工具等情境。
+- Verdict 以 `build_uat_checks`（`scripts/uat_fifo_same_day_2236.py`）組裝之 **全部** `checks` 為準；反向失敗見 `tests/test_uat_fifo_same_day_verdict.py`。
+
 ## 2. 產出清單（人工可查）
 
 1. `交易明細_*.xlsx` — 成本／收入／已實現損益（非 DRAFT）
 2. `FIFO配對及未配對明細_*.xlsx` — 含 `match_type`
 3. `價金費用守恆核對_*.csv` — 數量／價金守恆
-4. `*_audit.json` — 含 `day_trade_annotation`（含 CR-12 可追溯欄）
+4. `*_audit.json` — 含 `day_trade_annotation`（含 CR-12 可追溯欄；`tw_sec_tax_v3`）
 5. `*_exceptions.csv` — 例外清單
 6. `run_<stamp>/summary.json` — 含全部步驟後之 `uat_verdict`／`checks`
 7. `run_<stamp>/migration_probe.db` — 實際 alembic upgrade 探針（≠ fresh schema）
@@ -37,17 +44,18 @@
 | 檢查項 | 預期 |
 |---|---|
 | `fresh_schema_has_match_type` | create_all 新 DB 含 `match_type`（與 actual migration 分開） |
-| `actual_migration_*` | PREV→seed→HEAD backfill／FK／integrity |
+| `actual_migration_*` | PREV→seed→HEAD backfill／`cash_standard_ok`／FK／integrity |
+| `required_outputs_all` | detail／audit／exceptions／fifo_trace／conservation **全部**存在 |
 | allocated／STANDARD／Pass2 | 4000／3600／400 |
 | unsold／blocking／conservation／integrity | 0／false／true／ok |
 | report／audit／exceptions 存在且非 DRAFT | true |
-| annotation `status=OK`、suspected=1000、reconciled=400、warnings 空 | true |
+| **序列化** `audit.json` annotation `status=OK`、suspected=1000、reconciled=400、warnings 空 | true |
 | 冪等（舊 run 保留、業務鍵不變、新 run 鍵相等） | true |
 | H 非干涉（財務鍵 snapshot） | true |
-| 正式 DB 指紋未變（含 WAL／SHM） | true |
+| 正式 DB 指紋未變（含 WAL／SHM；無並發寫入前提） | true |
 | run／out 目錄落在對應 UAT 根 | true |
 
-必要條件失敗 → `uat_verdict=FAIL`。
+必要條件失敗 → `uat_verdict=FAIL`。不得以記憶體 annotation 物件單獨作為最終判定。
 
 ## 4. Annotation（獨立於配對）
 
@@ -56,18 +64,19 @@
 | `suspected_support_qty` | `min(buy_qty, half_rate_sell_qty)`（非整組 sell） |
 | `same_day_reconciled_qty` | Pass2 實際補沖（≠ suspected） |
 | `same_day_sell_trade_ids`／`half_rate_sell_trade_ids` | 區分全部同日賣 vs 半稅候選 |
-| `sell_tax_evidences` | 逐筆稅證據＋`source_row_id` |
+| `sell_tax_evidences` | 逐筆稅證據＋`source_row_id`＋`instrument_class`／`classification_basis` |
 | `AMBIGUOUS_TAX_EVIDENCE` | 同時近半稅／全稅 → 不標 SUSPECTED |
-| 稅規則適用 | TWD＋CASH＋有效 gross＋`TW_COMMON_STOCK`＋交易日≥2017-04-28 |
+| 稅規則適用 | TWD＋CASH＋有效 gross＋`INFERRED_TW_COMMON_STOCK`（啟發式≠主檔驗證）＋有效窗 2017-04-28～2026-12-31（`tw_sec_tax_v3`） |
 | H 非干涉 | 註記前後 allocations 業務鍵全等 |
 
 ## 5. 財務合計（合成價；非正式 Owner 真實數字）
 
 由 fixture `Decimal` 獨立重算（見 `tests/test_fifo_same_day_2236_e2e.py`）。  
-原始九筆欄位 Parser／Import 回歸見 `tests/test_fifo_same_day_2236_original_import_e2e.py`（匿名名稱）。
+原始九筆欄位 Parser／Import 回歸見 `tests/test_fifo_same_day_2236_original_import_e2e.py`（匿名名稱；含同日列序 permutation／Excel／費用守恆）。
 
 ## 6. 剩餘風險
 
 - 真實群益／完整帳戶副本 UAT 未在本輪重跑。
-- 歷史 v2 run 無法還原 Pass2 `SAME_DAY_RECONCILED`（migration 不猜測；downgrade 為 lossy）。
-- 稅規則表僅涵蓋一般股票最小適用範圍（非完整稅務引擎）。
+- 歷史 v2 run 無法還原 Pass2 `SAME_DAY_RECONCILED`（migration 不猜測；downgrade 為 lossy；正式回滾靠備份）。
+- 稅規則表僅涵蓋一般股票最小適用範圍（啟發式推論；非完整稅務引擎／商品主檔）。
+- 正式 DB 指紋不涵蓋並發寫入情境（見 §1 CR-11）。

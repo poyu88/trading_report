@@ -165,13 +165,19 @@ def test_cr02_invalid_gross_insufficient_evidence() -> None:
 
 
 def test_cr02_eligible_common_stock_half_rate() -> None:
-    """CR-02：已知適用一般股票（四碼非 00xx）可判 HALF_RATE。"""
+    """CR-02：四碼啟發式推論一般股票可判 HALF_RATE（非已驗證普通股）。"""
     buy = _trade("b1", "2025-04-10", "BUY", 1000, "100", tax="0", symbol="2330")
     sell = _trade("s1", "2025-04-10", "SELL", 1000, "100", tax="150", symbol="2330")
     result = annotate_day_trades([buy, sell], allocations=[])
     assert result.candidates[0].tax_evidence == "HALF_RATE"
     assert result.suspected_day_trade_qty == 1000
     assert result.candidates[0].tax_rule_version == TAX_RULES_VERSION
+    assert result.rules_version == "tw_sec_tax_v3"
+    assert result.candidates[0].instrument_class == "INFERRED_TW_COMMON_STOCK"
+    assert result.candidates[0].classification_basis == "symbol_heuristic_4digit"
+    # 啟發式不得自稱已確認普通股
+    assert result.candidates[0].instrument_class != "TW_COMMON_STOCK"
+    assert "verified" not in result.candidates[0].classification_basis.lower()
 
 
 def test_cr02_etf_symbol_insufficient_evidence() -> None:
@@ -184,6 +190,24 @@ def test_cr02_etf_symbol_insufficient_evidence() -> None:
     result = annotate_day_trades([buy, sell], allocations=[])
     assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
     assert result.suspected_day_trade_qty == 0
+    assert result.candidates[0].instrument_class == "TW_ETF"
+    assert result.candidates[0].classification_basis in {
+        "symbol_heuristic_4digit",
+        "name_keyword",
+    }
+
+
+def test_cr02_etf_name_keyword_insufficient_evidence() -> None:
+    """CR-02：名稱含 ETF 關鍵字 → INSUFFICIENT；basis=name_keyword。"""
+    buy = _trade("b1", "2025-04-13", "BUY", 1000, "100", tax="0", symbol="1234", name="合成ETF基金")
+    sell = _trade(
+        "s1", "2025-04-13", "SELL", 1000, "100", tax="150", symbol="1234", name="合成ETF基金"
+    )
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.candidates[0].instrument_class == "TW_ETF"
+    assert result.candidates[0].classification_basis == "name_keyword"
+    assert result.suspected_day_trade_qty == 0
 
 
 def test_cr02_unknown_instrument_insufficient_evidence() -> None:
@@ -193,6 +217,8 @@ def test_cr02_unknown_instrument_insufficient_evidence() -> None:
     result = annotate_day_trades([buy, sell], allocations=[])
     assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
     assert result.suspected_day_trade_qty == 0
+    assert result.candidates[0].instrument_class == "UNKNOWN"
+    assert result.candidates[0].classification_basis == "unknown"
 
 
 def test_cr02_before_half_rate_effective_date_insufficient() -> None:
@@ -212,6 +238,45 @@ def test_cr02_on_half_rate_effective_date_allows_half() -> None:
     result = annotate_day_trades([buy, sell], allocations=[])
     assert result.candidates[0].tax_evidence == "HALF_RATE"
     assert result.suspected_day_trade_qty == 1000
+
+
+def test_cr02_on_tax_rules_valid_through_allows_half() -> None:
+    """CR-02：規則有效窗末日仍可 HALF_RATE。"""
+    buy = _trade("b1", "2026-12-31", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2026-12-31", "SELL", 1000, "100", tax="150", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "HALF_RATE"
+    assert result.suspected_day_trade_qty == 1000
+
+
+def test_cr02_after_tax_rules_valid_through_insufficient() -> None:
+    """CR-02：規則有效窗次日／未來未知規則 → INSUFFICIENT_EVIDENCE。"""
+    buy = _trade("b1", "2027-01-01", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2027-01-01", "SELL", 1000, "100", tax="150", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.candidates[0].annotation_status == "INSUFFICIENT_EVIDENCE"
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr02_audit_records_classification_and_rounding() -> None:
+    """CR-02：audit 記錄 classification_basis／有效窗／取整與容差依據。"""
+    buy = _trade("b1", "2025-04-14", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2025-04-14", "SELL", 1000, "100", tax="150", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    payload = annotation_to_audit_dict(result)["day_trade_annotation"]
+    assert payload["rules_version"] == "tw_sec_tax_v3"
+    assert payload["tax_rounding"] == "ROUND_HALF_UP"
+    assert payload["tax_tolerance_twd"] == 1
+    assert payload["tax_rules_valid_through"] == "2026-12-31"
+    assert "INFERRED_TW_COMMON_STOCK" in payload["eligible_instrument_classes"]
+    assert "TW_COMMON_STOCK" not in payload["eligible_instrument_classes"]
+    cand = payload["candidates"][0]
+    assert cand["instrument_class"] == "INFERRED_TW_COMMON_STOCK"
+    assert cand["classification_basis"] == "symbol_heuristic_4digit"
+    ev = cand["sell_tax_evidences"][0]
+    assert ev["instrument_class"] == "INFERRED_TW_COMMON_STOCK"
+    assert ev["classification_basis"] == "symbol_heuristic_4digit"
 
 
 def test_cr03_ambiguous_when_both_rates_within_tolerance() -> None:

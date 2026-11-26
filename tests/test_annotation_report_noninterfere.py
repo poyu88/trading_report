@@ -23,8 +23,26 @@ from backend.reports.field_schema import HEADERS
 from backend.services.allocation_service import match_fifo_for_account
 from backend.services.report_service import generate_detail_report
 
+# 與 backend/reports/audit_writer.py payload 對齊；缺任一鍵 → fail（禁止 if key in）
+REQUIRED_AUDIT_KEYS = (
+    "conservation_ok",
+    "blocking_issue_count",
+    "commission_total",
+    "tax_total",
+    "trade_count",
+    "allocation_count",
+    "buy_count",
+    "sell_count",
+    "detail_row_count",
+)
 
-def _seed(session, *, label: str = "ann-rpt") -> Account:
+
+def _seed(
+    session,
+    *,
+    label: str = "ann-rpt",
+    rows: list[tuple[str, str, int, str, str, str]] | None = None,
+) -> Account:
     broker = Broker(id=str(uuid.uuid4()), name=f"ann-{uuid.uuid4().hex[:8]}")
     account = Account(id=str(uuid.uuid4()), broker_id=broker.id, account_label=label)
     batch = ImportBatch(
@@ -39,10 +57,11 @@ def _seed(session, *, label: str = "ann-rpt") -> Account:
     session.add_all([broker, account, batch])
     session.flush()
 
-    rows = [
-        ("2025-03-20", "BUY", 1000, "72", "20", "0"),
-        ("2025-03-20", "SELL", 1000, "70", "20", "105"),
-    ]
+    if rows is None:
+        rows = [
+            ("2025-03-20", "BUY", 1000, "72", "20", "0"),
+            ("2025-03-20", "SELL", 1000, "70", "20", "105"),
+        ]
     for idx, (day, side, qty, price, commission, tax) in enumerate(rows, start=1):
         raw = RawRow(
             id=str(uuid.uuid4()),
@@ -104,24 +123,26 @@ def _xlsx_finance_matrix(path: Path) -> list[tuple]:
     return rows
 
 
-def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> None:
-    """CR-07／09：ON／OFF 財務鍵與 Excel A–W 儲存格全等。"""
-    account = _seed(db_session)
-    db_session.commit()
+def _assert_on_off_equal(
+    db_session,
+    tmp_path: Path,
+    account: Account,
+    *,
+    allow_partial: bool = False,
+):
     run, result = match_fifo_for_account(db_session, account.id)
     db_session.commit()
-    assert not result.blocking
-
     snap_before = _finance_snapshot(db_session, run.id, account.id)
 
-    out_off = tmp_path / "off"
-    out_on = tmp_path / "on"
+    out_off = tmp_path / f"off_{account.account_label}"
+    out_on = tmp_path / f"on_{account.account_label}"
     xlsx_off, audit_off, exc_off = generate_detail_report(
         db_session,
         account.id,
         out_off,
         run_id=run.id,
         include_day_trade_annotation=False,
+        allow_partial=allow_partial,
     )
     db_session.commit()
     xlsx_on, audit_on, exc_on = generate_detail_report(
@@ -130,32 +151,89 @@ def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> N
         out_on,
         run_id=run.id,
         include_day_trade_annotation=True,
+        allow_partial=allow_partial,
     )
     db_session.commit()
 
     assert snap_before == _finance_snapshot(db_session, run.id, account.id)
     assert xlsx_off.exists() and xlsx_on.exists()
     assert _xlsx_finance_matrix(xlsx_off) == _xlsx_finance_matrix(xlsx_on)
+    assert exc_off.exists() and exc_on.exists()
     assert exc_off.read_bytes() == exc_on.read_bytes()
+
+    cons_off = next(out_off.glob("*守恆*"), None) or next(out_off.glob("*conservation*"), None)
+    cons_on = next(out_on.glob("*守恆*"), None) or next(out_on.glob("*conservation*"), None)
+    assert cons_off is not None and cons_on is not None, "conservation CSV 必須存在"
+    assert cons_off.read_bytes() == cons_on.read_bytes()
 
     off_audit = json.loads(audit_off.read_text(encoding="utf-8"))
     on_audit = json.loads(audit_on.read_text(encoding="utf-8"))
     assert "day_trade_annotation" not in off_audit
     assert "day_trade_annotation" in on_audit
-    for key in (
-        "conservation_ok",
-        "blocking_issue_count",
-        "matched_quantity",
-        "unmatched_quantity",
-        "unsold_quantity",
-    ):
-        if key in off_audit and key in on_audit:
-            assert off_audit[key] == on_audit[key]
-    # conservation csv 應與 annotation 無關
-    cons_off = next(out_off.glob("*conservation*"), None)
-    cons_on = next(out_on.glob("*conservation*"), None)
-    if cons_off and cons_on:
-        assert cons_off.read_bytes() == cons_on.read_bytes()
+    for key in REQUIRED_AUDIT_KEYS:
+        assert key in off_audit, f"OFF audit 缺必要鍵 {key}"
+        assert key in on_audit, f"ON audit 缺必要鍵 {key}"
+        assert off_audit[key] == on_audit[key], f"audit[{key}] ON/OFF 不一致"
+
+    return result
+
+
+def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> None:
+    """CR-07／09：ON／OFF 財務鍵與 Excel A–W／conservation／exceptions 全等。"""
+    account = _seed(db_session)
+    db_session.commit()
+    result = _assert_on_off_equal(db_session, tmp_path, account)
+    assert not result.blocking
+
+
+def test_cr07_unsold_remainder_on_off_equal(db_session, tmp_path: Path) -> None:
+    """CR-07：未平倉剩餘（僅買／賣少）ON／OFF 財務仍全等。"""
+    account = _seed(
+        db_session,
+        label="ann-unsold",
+        rows=[
+            ("2025-03-21", "BUY", 1000, "72", "20", "0"),
+            ("2025-03-21", "SELL", 400, "70", "20", "42"),
+        ],
+    )
+    db_session.commit()
+    result = _assert_on_off_equal(db_session, tmp_path, account)
+    assert not result.blocking
+    assert sum(u.available for u in result.unsold) == 600
+
+
+def test_cr07_partial_match_on_off_equal(db_session, tmp_path: Path) -> None:
+    """CR-07：部分配對（跨日庫存＋當日）ON／OFF 財務仍全等。"""
+    account = _seed(
+        db_session,
+        label="ann-partial",
+        rows=[
+            ("2025-03-18", "BUY", 500, "70", "15", "0"),
+            ("2025-03-20", "BUY", 500, "72", "15", "0"),
+            ("2025-03-20", "SELL", 800, "75", "20", "90"),
+        ],
+    )
+    db_session.commit()
+    result = _assert_on_off_equal(db_session, tmp_path, account)
+    assert not result.blocking
+    assert sum(a.quantity for a in result.allocations) == 800
+    assert sum(u.available for u in result.unsold) == 200
+
+
+def test_cr07_unmatched_sell_draft_on_off_equal(db_session, tmp_path: Path) -> None:
+    """CR-07：未配對賣出（DRAFT／allow_partial）ON／OFF 財務仍全等。"""
+    account = _seed(
+        db_session,
+        label="ann-unmatched",
+        rows=[
+            ("2025-03-22", "BUY", 100, "72", "10", "0"),
+            ("2025-03-22", "SELL", 500, "70", "20", "53"),
+        ],
+    )
+    db_session.commit()
+    result = _assert_on_off_equal(db_session, tmp_path, account, allow_partial=True)
+    assert result.blocking
+    assert any(i.issue_code == "INSUFFICIENT_PRIOR_BUYS" for i in result.issues)
 
 
 def test_report_annotation_fault_still_writes_detail(
@@ -234,7 +312,9 @@ def test_cr04_annotation_prep_fault_isolated(
     monkeypatch.setattr(rpt, "Trade", real_trade)
 
 
-def test_cr04_annotation_off_skips_prep(monkeypatch: pytest.MonkeyPatch, db_session, tmp_path: Path) -> None:
+def test_cr04_annotation_off_skips_prep(
+    monkeypatch: pytest.MonkeyPatch, db_session, tmp_path: Path
+) -> None:
     """CR-04：Annotation OFF 不得執行 annotation 專用資料準備。"""
     from backend.services import report_service as rpt
 

@@ -184,20 +184,54 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         assert "match_type" not in cols
         assert conn.execute(text("SELECT COUNT(*) FROM fifo_allocations")).scalar() == 3
         before_keys = {
-            (r[0], r[1], r[2], r[3], r[4])
+            (r[0], r[1], r[2], r[3], r[4], r[5])
             for r in conn.execute(
                 text(
                     """
-                    SELECT id, buy_trade_id, opening_lot_id, sell_trade_id, allocated_quantity
+                    SELECT id, buy_trade_id, opening_lot_id, sell_trade_id,
+                           allocated_quantity, sequence_no
                     FROM fifo_allocations
                     """
                 )
             ).all()
         }
+        # CR-05：trades 全財務欄 before／after 必須全等
         before_fin = {
+            (
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                r[4],
+                r[5],
+                r[6],
+                r[7],
+            )
+            for r in conn.execute(
+                text(
+                    """
+                    SELECT id, quantity, unit_price_txt, gross_amount_txt, commission_txt,
+                           tax_txt, interest_txt, net_settlement_txt
+                    FROM trades
+                    """
+                )
+            ).all()
+        }
+        before_runs = {
+            (r[0], r[1], r[2], r[3])
+            for r in conn.execute(
+                text(
+                    """
+                    SELECT id, algorithm_version, input_fingerprint, config_json
+                    FROM allocation_runs
+                    """
+                )
+            ).all()
+        }
+        before_lots = {
             (r[0], r[1], r[2])
             for r in conn.execute(
-                text("SELECT id, quantity, unit_price_txt FROM trades")
+                text("SELECT id, quantity, unit_cost_txt FROM opening_lots")
             ).all()
         }
         assert conn.execute(text("PRAGMA integrity_check")).scalar() == "ok"
@@ -218,11 +252,12 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         assert rows["a_dt"] == "DAY_TRADE_FIFO"
         assert rows["a_open"] == "STANDARD_FIFO"  # opening lot 維持 STANDARD
         after_keys = {
-            (r[0], r[1], r[2], r[3], r[4])
+            (r[0], r[1], r[2], r[3], r[4], r[5])
             for r in conn.execute(
                 text(
                     """
-                    SELECT id, buy_trade_id, opening_lot_id, sell_trade_id, allocated_quantity
+                    SELECT id, buy_trade_id, opening_lot_id, sell_trade_id,
+                           allocated_quantity, sequence_no
                     FROM fifo_allocations
                     """
                 )
@@ -230,12 +265,46 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         }
         assert before_keys == after_keys
         after_fin = {
-            (r[0], r[1], r[2])
+            (
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                r[4],
+                r[5],
+                r[6],
+                r[7],
+            )
             for r in conn.execute(
-                text("SELECT id, quantity, unit_price_txt FROM trades")
+                text(
+                    """
+                    SELECT id, quantity, unit_price_txt, gross_amount_txt, commission_txt,
+                           tax_txt, interest_txt, net_settlement_txt
+                    FROM trades
+                    """
+                )
             ).all()
         }
         assert before_fin == after_fin
+        after_runs = {
+            (r[0], r[1], r[2], r[3])
+            for r in conn.execute(
+                text(
+                    """
+                    SELECT id, algorithm_version, input_fingerprint, config_json
+                    FROM allocation_runs
+                    """
+                )
+            ).all()
+        }
+        assert before_runs == after_runs
+        after_lots = {
+            (r[0], r[1], r[2])
+            for r in conn.execute(
+                text("SELECT id, quantity, unit_cost_txt FROM opening_lots")
+            ).all()
+        }
+        assert before_lots == after_lots
         assert conn.execute(text("SELECT COUNT(*) FROM allocation_runs")).scalar() == 1
         assert conn.execute(text("PRAGMA integrity_check")).scalar() == "ok"
         assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
@@ -250,7 +319,8 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         ).scalar()
         assert join_n == 1
 
-    # Lossy downgrade：v3 SAME_DAY_RECONCILED 標籤會隨欄位移除而遺失（不可恢復為 SAME_DAY）
+    # Lossy downgrade：v3 SAME_DAY_RECONCILED 標籤會隨欄位移除而遺失（不可恢復為 SAME_DAY）。
+    # 正式環境回滾須靠備份；本測試僅證明 re-upgrade 無法還原 SAME_DAY 標籤。
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -264,6 +334,29 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         assert "match_type" not in cols
         assert conn.execute(text("SELECT COUNT(*) FROM fifo_allocations")).scalar() == 3
         assert conn.execute(text("PRAGMA integrity_check")).scalar() == "ok"
+        # downgrade 後財務欄仍在
+        down_fin = {
+            (
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                r[4],
+                r[5],
+                r[6],
+                r[7],
+            )
+            for r in conn.execute(
+                text(
+                    """
+                    SELECT id, quantity, unit_price_txt, gross_amount_txt, commission_txt,
+                           tax_txt, interest_txt, net_settlement_txt
+                    FROM trades
+                    """
+                )
+            ).all()
+        }
+        assert down_fin == before_fin
 
     command.upgrade(cfg, HEAD_REV)
     with engine.connect() as conn:
@@ -273,7 +366,7 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
                 text("SELECT id, match_type FROM fifo_allocations ORDER BY id")
             ).all()
         }
-        # re-upgrade 依賣出 trade_type backfill；無法恢復 SAME_DAY_RECONCILED
+        # re-upgrade 依賣出 trade_type backfill；無法恢復 SAME_DAY_RECONCILED（lossy）
         assert rows["a_cash"] == "STANDARD_FIFO"
         assert rows["a_dt"] == "DAY_TRADE_FIFO"
         assert rows["a_open"] == "STANDARD_FIFO"
