@@ -5,7 +5,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 from backend.golden.compare_c_d import (
+    allocation_line_finance_rows,
     build_actual_d_from_pipeline,
+    compare_allocation_lines_to_trace_rows,
     compare_expected_c_to_actual_d,
     golden_finance_from_expected_c,
     trade_source_fingerprint,
@@ -279,3 +281,74 @@ def test_golden_finance_from_expected_c_maps_verify_keys() -> None:
     assert g["income"] == Decimal(1096)
     assert g["expected_report_profit"] == Decimal(95)
     assert g["min_detail_rows"] == Decimal(1)
+    assert g["per_row_costs"] == [Decimal(1001)]
+    assert g["per_row_incomes"] == [Decimal(1096)]
+    assert len(g["per_row_lines"]) == 1
+    assert g["per_row_lines"][0]["match_type"] == "STANDARD_FIFO"
+
+
+def test_compare_allocation_lines_to_trace_rows_by_fingerprint() -> None:
+    c = _sample_c()
+    buy_fp = trade_source_fingerprint(
+        symbol="2236",
+        trade_date="2024-08-05",
+        side="BUY",
+        quantity=100,
+        unit_price="10",
+        gross_amount="1000",
+        commission="1",
+        tax="0",
+        interest="0",
+    )
+    sell_fp = trade_source_fingerprint(
+        symbol="2236",
+        trade_date="2024-08-08",
+        side="SELL",
+        quantity=100,
+        unit_price="11",
+        gross_amount="1100",
+        commission="1",
+        tax="3",
+        interest="0",
+    )
+    trade_id_to_fp = {"db-buy": buy_fp, "db-sell": sell_fp}
+    trace_rows = [
+        {
+            "row_kind": "MATCHED",
+            "match_type": "STANDARD_FIFO",
+            "quantity": 100,
+            "buy_trade_id": "db-buy",
+            "sell_trade_id": "db-sell",
+            "cost": Decimal(1001),
+            "income": Decimal(1096),
+            "profit": Decimal(95),
+            "commission": Decimal(1),
+            "tax": Decimal(3),
+            "interest": Decimal(0),
+        }
+    ]
+    ok = compare_allocation_lines_to_trace_rows(
+        c, trace_rows, trade_id_to_fp=trade_id_to_fp
+    )
+    assert ok["ok"] is True
+    # 逐筆互抵：成本＋1／另一筆概念上以同列偏移 → diffs
+    bad_rows = [
+        {
+            **trace_rows[0],
+            "cost": Decimal(1002),
+            "income": Decimal(1097),
+            "profit": Decimal(95),
+        }
+    ]
+    bad = compare_allocation_lines_to_trace_rows(
+        c, bad_rows, trade_id_to_fp=trade_id_to_fp
+    )
+    assert bad["ok"] is False
+    assert any("cost" in k or "income" in k for k in bad["diffs"])
+
+
+def test_allocation_line_finance_rows_not_from_excel_order() -> None:
+    rows = allocation_line_finance_rows(_sample_c())
+    assert rows[0]["buy_fp"]
+    assert rows[0]["sell_fp"]
+    assert rows[0]["cost"] == Decimal(1001)

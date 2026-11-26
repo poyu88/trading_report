@@ -379,7 +379,20 @@
 | GREEN | 上列最小實作；合成 C↔D；真實 GOLD-001-2236 隔離 UAT **PASS**（證據本機 gitignored） |
 | REFACTOR | 無大型重構 |
 | 本機 REGRESSION | `uv run pytest -q` → **285 passed**／66.31s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
-| 判定 | CR-10A 2236 本機已驗；GOLD-002／003 PARTIAL；GOLD-004 C 就緒／全年 D DEFERRED；Merge／Migration **未**授權 |
+| 判定 | 初版接回；後續複審見 §1.29 |
+
+### 1.29 Phase 3 複審修正（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12 Phase 3 複審） |
+| 變更 | C `allocation_lines`→Trace 逐筆指紋核對；`open_cost` 觀測／禁填 expected；CR-10B 故障 summary／exit；CR-10C 產物內容；WAL／SHM 指紋；GOLD-004 全年 D |
+| RED | per_row 未接 C；open_cost 無條件 0；CR-10B 僅 helper |
+| GREEN | `allocation_line_finance_rows`／`compare_allocation_lines_to_trace_rows`；`observe_open_cost_from_detail_xlsx`；UAT／004 腳本 |
+| REFACTOR | 無大型重構 |
+| 本機 UAT | GOLD-001-2236 **PASS**；GOLD-004 **PASS**（HTML bridge；CSV Parser 仍 PENDING）；正式 DB 指紋 PASS |
+| 本機 REGRESSION | `uv run pytest -q` → **288 passed**／65.08s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | 可驗證財務項已收斂；Merge／Migration **未**授權 |
 
 ---
 
@@ -646,3 +659,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`golden_phase2_expected_c_v1`**：Owner 授權 Phase 2；獨立 C 模組＋合成測；本機 expected_c GOLD-001～004；HTML／玉山 invalid→UNKNOWN；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**動；真實答案未入 Git；待獨立 Reviewer／CR-10A；Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_phase2_r2_v1`**：複審修正—唯一 trade_id、負數 TRUNC 朝零、帳戶／幣別分池、來源閘門、逐筆 allocation_lines、GOLD-001-2236；RED 9 failed → GREEN；全量 **269 passed／1 skipped**／81.41s；ruff 通過；正式 DB **未**動；真實答案未入 Git；受測 trunc 負數見 PENDING；Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_phase3_cr10a_v1`**：Owner 授權 Phase 3；Phase2 FAIL／BLOCKED 非零結束碼；GOLD-TRUNC-NEG 受測朝零；C↔D 比對＋本機 GOLD-001-2236 UAT **PASS**；RED-07 逐筆互抵；CR-10B `uat_exit_code`；GOLD-002／003 PARTIAL、004 C 就緒；全量 **285 passed**／66.31s；ruff 通過；正式 DB **未**動；真實證據未入 Git；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase3_cr10a_r2_v1`**：複審—allocation_lines↔Trace 逐筆；open_cost 觀測；CR-10B／10C；WAL／SHM；GOLD-004 全年 D **PASS**（HTML bridge）；全量 **288 passed**／65.08s；ruff 通過；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |

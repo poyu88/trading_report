@@ -49,8 +49,49 @@ def trade_source_fingerprint(
     return "|".join(parts)
 
 
-def golden_finance_from_expected_c(expected_c: dict[str, Any]) -> dict[str, Decimal]:
-    """將 C 層 aggregates／realized 對映為 ``verify_detail_xlsx_finance`` golden。"""
+def allocation_line_finance_rows(expected_c: dict[str, Any]) -> list[dict[str, Any]]:
+    """由獨立 C ``allocation_lines``＋來源指紋組出逐筆 expected（禁從 Excel 反推）。"""
+    id_to_fp = _c_trade_fp_map(expected_c)
+    id_to_meta = {
+        str(t["source_trade_id"]): t for t in (expected_c.get("trade_fingerprints") or [])
+    }
+    rows: list[dict[str, Any]] = []
+    for line in expected_c.get("allocation_lines") or []:
+        buy_id = str(line.get("buy_trade_id") or "")
+        sell_id = str(line.get("sell_trade_id") or "")
+        buy = id_to_meta.get(buy_id) or {}
+        sell = id_to_meta.get(sell_id) or {}
+        buy_fp = id_to_fp.get(buy_id, buy_id)
+        sell_fp = id_to_fp.get(sell_id, sell_id)
+        qty = int(line.get("quantity") or 0)
+        match_type = str(line.get("match_type") or "")
+        identity = f"{match_type}|{buy_fp}|{sell_fp}|{qty}"
+        rows.append(
+            {
+                "identity_key": identity,
+                "match_type": match_type,
+                "quantity": qty,
+                "buy_fp": buy_fp,
+                "sell_fp": sell_fp,
+                "symbol": str(line.get("symbol") or buy.get("symbol") or ""),
+                "buy_date": str(buy.get("trade_date") or "").replace("/", "-"),
+                "sell_date": str(sell.get("trade_date") or "").replace("/", "-"),
+                "buy_unit_price": str(buy.get("unit_price") or ""),
+                "sell_unit_price": str(sell.get("unit_price") or ""),
+                "cost": _d(line.get("cost")),
+                "income": _d(line.get("income")),
+                "realized_pnl": _d(line.get("realized_pnl")),
+                "buy_commission_applied": _d(line.get("buy_commission_applied")),
+                "sell_commission_applied": _d(line.get("sell_commission_applied")),
+                "sell_tax_applied": _d(line.get("sell_tax_applied")),
+                "sell_interest_applied": _d(line.get("sell_interest_applied")),
+            }
+        )
+    return sorted(rows, key=lambda r: r["identity_key"])
+
+
+def golden_finance_from_expected_c(expected_c: dict[str, Any]) -> dict[str, Any]:
+    """將 C 層 aggregates／allocation_lines 對映為財務 golden（含逐筆）。"""
     agg = expected_c.get("aggregates") or {}
     realized = expected_c.get("realized_and_open") or {}
     buy_gross = _d(agg.get("buy_gross_amount"))
@@ -59,17 +100,25 @@ def golden_finance_from_expected_c(expected_c: dict[str, Any]) -> dict[str, Deci
     sell_commission = _d(agg.get("sell_commission"))
     tax = _d(agg.get("tax"))
     interest = _d(agg.get("interest"))
-    lines = expected_c.get("allocation_lines") or []
-    if lines:
-        cost = sum((_d(x.get("cost")) for x in lines), Decimal(0))
-        income = sum((_d(x.get("income")) for x in lines), Decimal(0))
+    per_rows = allocation_line_finance_rows(expected_c)
+    open_cost = (
+        _d(realized.get("open_cost"))
+        if realized.get("status") == "COMPUTED"
+        else Decimal(0)
+    )
+    if per_rows:
+        matched_cost = sum((r["cost"] for r in per_rows), Decimal(0))
+        income = sum((r["income"] for r in per_rows), Decimal(0))
+        # 明細 Excel 成本加總含未售列；與 C matched＋open_cost 對齊
+        cost = matched_cost + open_cost
     else:
-        cost = buy_gross + buy_commission
+        matched_cost = buy_gross + buy_commission
         income = sell_gross - sell_commission - tax - interest
+        cost = matched_cost + open_cost
     if realized.get("status") == "COMPUTED" and realized.get("realized_pnl") is not None:
         profit = _d(realized["realized_pnl"])
     else:
-        profit = income - cost
+        profit = income - matched_cost
     sell_count = int(agg.get("sell_trade_count") or 0)
     return {
         "buy_qty": _d(agg.get("buy_quantity")),
@@ -84,9 +133,70 @@ def golden_finance_from_expected_c(expected_c: dict[str, Any]) -> dict[str, Deci
         "cost": cost,
         "income": income,
         "unsold_qty": _d((expected_c.get("fifo_expected") or {}).get("unsold_buy_qty")),
-        "remaining_inventory_cost": _d(realized.get("open_cost")),
-        "min_detail_rows": Decimal(max(sell_count, 1)),
+        "remaining_inventory_cost": open_cost,
+        "min_detail_rows": Decimal(max(len(per_rows), sell_count, 1)),
         "expected_report_profit": profit,
+        # 逐筆：直接來自 C allocation_lines（依 identity 排序，非 Excel 反推）
+        "per_row_costs": [r["cost"] for r in per_rows],
+        "per_row_incomes": [r["income"] for r in per_rows],
+        "per_row_lines": per_rows,
+    }
+
+
+def compare_allocation_lines_to_trace_rows(
+    expected_c: dict[str, Any],
+    trace_rows: list[dict[str, Any]],
+    *,
+    trade_id_to_fp: dict[str, str],
+) -> dict[str, Any]:
+    """以來源指紋對應 Trace MATCHED 列與 C allocation_lines（逐筆財務）。"""
+    expected = allocation_line_finance_rows(expected_c)
+    actual_map: dict[str, dict[str, Any]] = {}
+    for row in trace_rows:
+        if str(row.get("row_kind") or "") != "MATCHED":
+            continue
+        buy_fp = trade_id_to_fp.get(str(row.get("buy_trade_id") or ""), "")
+        sell_fp = trade_id_to_fp.get(str(row.get("sell_trade_id") or ""), "")
+        qty = int(row.get("quantity") or 0)
+        match_type = str(row.get("match_type") or "")
+        key = f"{match_type}|{buy_fp}|{sell_fp}|{qty}"
+        actual_map[key] = row
+
+    diffs: dict[str, dict[str, str]] = {}
+    errors: list[str] = []
+    if not expected:
+        errors.append("no_expected_allocation_lines")
+    exp_keys = {r["identity_key"] for r in expected}
+    act_keys = set(actual_map)
+    if exp_keys != act_keys:
+        diffs["line_identity_set"] = {
+            "expected_only": str(sorted(exp_keys - act_keys)),
+            "actual_only": str(sorted(act_keys - exp_keys)),
+        }
+    field_pairs = (
+        ("cost", "cost"),
+        ("income", "income"),
+        ("realized_pnl", "profit"),
+        ("sell_commission_applied", "commission"),
+        ("sell_tax_applied", "tax"),
+        ("sell_interest_applied", "interest"),
+    )
+    for exp in expected:
+        key = exp["identity_key"]
+        act = actual_map.get(key)
+        if act is None:
+            continue
+        for exp_field, act_field in field_pairs:
+            ev = _d(exp[exp_field])
+            av = _d(act.get(act_field))
+            if ev != av:
+                diffs[f"{key}:{exp_field}"] = {"expected": str(ev), "actual": str(av)}
+    return {
+        "ok": not diffs and not errors,
+        "diffs": diffs,
+        "errors": errors,
+        "expected_line_count": len(expected),
+        "actual_matched_count": len(actual_map),
     }
 
 
@@ -219,13 +329,18 @@ def compare_expected_c_to_actual_d(
     if realized.get("status") == "COMPUTED":
         _check("realized_pnl", realized.get("realized_pnl"), actual_d.get("realized_pnl"))
         _check("open_quantity", realized.get("open_quantity"), actual_d.get("open_quantity"))
-        _check("open_cost", realized.get("open_cost"), actual_d.get("open_cost"))
-        _check("cost", golden_finance_from_expected_c(expected_c)["cost"], actual_d.get("cost"))
-        _check(
-            "income",
-            golden_finance_from_expected_c(expected_c)["income"],
-            actual_d.get("income"),
-        )
+        open_status = str(actual_d.get("open_cost_status") or "VERIFIED")
+        compared.append("open_cost")
+        if open_status in {"NOT_VERIFIED", "PENDING_DATA"}:
+            errors.append(f"open_cost_{open_status.lower()}")
+        else:
+            ev = _d(realized.get("open_cost"))
+            av = _d(actual_d.get("open_cost"))
+            if ev != av:
+                diffs["open_cost"] = {"expected": str(ev), "actual": str(av)}
+        gfin = golden_finance_from_expected_c(expected_c)
+        _check("cost", gfin["cost"], actual_d.get("cost"))
+        _check("income", gfin["income"], actual_d.get("income"))
 
     # 來源交易指紋集合（不要求內部 ID 字串相同）
     c_fps = set(_c_trade_fp_map(expected_c).values())

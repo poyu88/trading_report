@@ -21,12 +21,21 @@ from openpyxl import load_workbook
 
 from backend.db.session import init_db, make_session_factory
 from backend.golden.compare_c_d import (
+    compare_allocation_lines_to_trace_rows,
     compare_expected_c_to_actual_d,
     golden_finance_from_expected_c,
 )
 from backend.golden.expected_c import rows_to_expected_trades
-from backend.golden.phase3_pipeline import run_import_match_report
-from scripts.uat_fifo_same_day_2236 import verify_detail_xlsx_finance
+from backend.golden.phase3_pipeline import (
+    read_fifo_trace_rows,
+    run_import_match_report,
+)
+from scripts.uat_fifo_same_day_2236 import (
+    build_uat_checks,
+    resolve_required_outputs,
+    uat_exit_code,
+    verify_detail_xlsx_finance,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "data" / "golden"
@@ -155,6 +164,51 @@ def _fault_inject_copy(src_xlsx: Path, dest_xlsx: Path) -> Path:
     return dest_xlsx
 
 
+def _fault_inject_per_row_offset(src_xlsx: Path, dest_xlsx: Path) -> Path:
+    """複製合法報表：列0成本／收入+1、列1−1（總額不變之互抵）。"""
+    shutil.copy2(src_xlsx, dest_xlsx)
+    wb = load_workbook(dest_xlsx)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i + 1 for i, h in enumerate(headers)}
+    data_rows = [
+        r
+        for r in range(2, (ws.max_row or 1) + 1)
+        if any(ws.cell(r, c).value is not None for c in range(1, len(headers) + 1))
+    ]
+    if len(data_rows) < 2:
+        raise RuntimeError("need_at_least_two_detail_rows_for_per_row_offset")
+    r0, r1 = data_rows[0], data_rows[1]
+    for col in ("成本", "收入"):
+        c0 = ws.cell(r0, idx[col])
+        c1 = ws.cell(r1, idx[col])
+        c0.value = float(Decimal(str(c0.value or 0)) + Decimal(1))
+        c1.value = float(Decimal(str(c1.value or 0)) - Decimal(1))
+    wb.save(dest_xlsx)
+    return dest_xlsx
+
+
+def _fault_inject_trace_line(src_trace: Path, dest_trace: Path) -> Path:
+    """複製 Trace：第一筆 MATCHED 成本／收入同向 +1。"""
+    shutil.copy2(src_trace, dest_trace)
+    wb = load_workbook(dest_trace)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        if row[idx["列語意"]].value != "MATCHED":
+            continue
+        for col in ("成本", "收入"):
+            cell = row[idx[col]]
+            if cell.value is not None:
+                cell.value = float(Decimal(str(cell.value)) + Decimal(1))
+        break
+    wb.save(dest_trace)
+    return dest_trace
+
+
 def main() -> int:
     if not EXPECTED_C_PATH.is_file():
         print("MISSING expected_c GOLD-001-2236.json")
@@ -200,24 +254,31 @@ def main() -> int:
     bridge = run_dir / "gold001_2236_bridge.xls"
     _capital_rows_to_html(bridge, rows)
 
-    formal_db = ROOT / "data" / "trading.db"
-    formal_before = _sha256(formal_db) if formal_db.is_file() else None
+    fp_before = inv.fingerprint_bundle("phase3_cr10a_before")
+    _write_json(run_dir / "formal_fp_before.json", fp_before)
 
     db_path = run_dir / "uat.db"
     engine = init_db(db_path)
     Session = make_session_factory(engine)
     summary: dict[str, Any] = {
         "case_id": "GOLD-001-2236",
-        "phase": "3_cr10a",
+        "phase": "3_cr10a_r2",
         "started_at_utc": datetime.now(UTC).isoformat(),
         "source_key": source_key,
         "source_sha256": actual_sha,
         "source_lock_ok": True,
         "expected_c_path": str(EXPECTED_C_PATH.relative_to(ROOT)).replace("\\", "/"),
         "expected_c_validation_status": expected_c.get("validation_status"),
-        "bridge_note": "capital CSV 2236 列→HTML bridge；數值來自 A；正式 statement_html_v1 Parser",
-        "run_dir": str(run_dir.relative_to(ROOT)).replace("\\", "/"),
-        "output_dir": str(out_dir.relative_to(ROOT)).replace("\\", "/"),
+        "bridge_note": (
+            "HTML bridge＝轉換後 HTML 匯入及後續 FIFO／Report 驗收；"
+            "不得宣稱原始 CSV Parser 已獨立驗收"
+        ),
+        "isolation": {
+            "db_under_data_uat": True,
+            "out_under_output_uat": True,
+            "run_dir": str(run_dir.relative_to(ROOT)).replace("\\", "/"),
+            "output_dir": str(out_dir.relative_to(ROOT)).replace("\\", "/"),
+        },
         "runs_d": str(runs_case.relative_to(ROOT)).replace("\\", "/"),
     }
 
@@ -232,27 +293,127 @@ def main() -> int:
         )
         session.commit()
         actual = pipe["actual_d"]
-        # 全配平時 open_cost 對齊 C
-        if int(actual.get("open_quantity") or 0) == 0:
-            actual["open_cost"] = Decimal(0)
-
+        # 不得用 expected_c 填補 actual open_cost
         compare = compare_expected_c_to_actual_d(expected_c, actual)
         golden = golden_finance_from_expected_c(expected_c)
-        # 聚合 Excel vs C；逐筆對應由 compare allocation_fingerprints 負責
-        finance = verify_detail_xlsx_finance(pipe["xlsx"], golden)
+        # 聚合驗收：不含順序相依 per_row（逐筆改由 Trace 指紋對應）
+        golden_agg = {
+            k: v
+            for k, v in golden.items()
+            if k not in {"per_row_costs", "per_row_incomes", "per_row_lines"}
+        }
+        finance = verify_detail_xlsx_finance(pipe["xlsx"], golden_agg)
 
-        # 反向：複製合法報表故障注入
+        audit = json.loads(pipe["audit_path"].read_text(encoding="utf-8"))
+        trace_path = Path(str(audit["fifo_trace_file"]))
+        trade_id_to_fp = actual.get("trade_id_to_fp") or {}
+        trace_rows = read_fifo_trace_rows(trace_path)
+        per_line = compare_allocation_lines_to_trace_rows(
+            expected_c,
+            trace_rows,
+            trade_id_to_fp=trade_id_to_fp,
+        )
+
+        # CR-10B：合法副本故障注入 → 走 UAT checks／exit／summary
         fault_path = runs_case / "fault_cost_income_both_up.xlsx"
         _fault_inject_copy(pipe["xlsx"], fault_path)
-        fault_finance = verify_detail_xlsx_finance(fault_path, golden)
+        fault_finance = verify_detail_xlsx_finance(fault_path, golden_agg)
+        required = resolve_required_outputs(
+            audit_json=audit,
+            out_dir=out_dir,
+            detail_xlsx=fault_path,
+            audit_path=pipe["audit_path"],
+            exceptions_path=pipe["exc_path"],
+        )
+        # detail 被換成 fault 檔名未必含 DRAFT；以 finance_ok 驅動 FAIL
+        by_type: dict[str, int] = {}
+        for a in pipe["match"].allocations:
+            by_type[a.match_type] = by_type.get(a.match_type, 0) + a.quantity
+        fault_checks = build_uat_checks(
+            required_outputs=required,
+            migration_probe={
+                "day_trade_backfill_ok": True,
+                "cash_standard_ok": True,
+                "foreign_key_check_empty": True,
+                "integrity_ok": True,
+            },
+            fresh_schema_has_match_type=True,
+            allocated_qty=sum(a.quantity for a in pipe["match"].allocations),
+            qty_by_match_type=by_type,
+            unsold_qty=sum(u.available for u in pipe["match"].unsold),
+            blocking=bool(pipe["match"].blocking),
+            conservation_ok=True,
+            audit_json=audit,
+            integrity_check_result="ok",
+            h_annotation_non_interference=True,
+            detail_is_draft="DRAFT" in fault_path.name,
+            idempotent={
+                "old_run_preserved": True,
+                "old_run_keys_unchanged": True,
+                "new_run_keys_equal_old": True,
+                "allocated_qty_same": True,
+            },
+            formal_db_untouched=True,
+            run_dir_under_data_uat=str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
+            out_dir_under_output_uat=str(OUT_ROOT.resolve()) in str(out_dir.resolve()),
+            detail_xlsx_finance_ok=bool(fault_finance.get("ok")),
+        )
+        fault_verdict = "PASS" if all(fault_checks.values()) else "FAIL"
+        fault_exit = uat_exit_code(fault_verdict)
+        fault_summary = {
+            "uat_verdict": fault_verdict,
+            "exit_code": fault_exit,
+            "failed_checks": [k for k, v in fault_checks.items() if not v],
+            "finance_diffs": fault_finance.get("diffs"),
+            "detail_xlsx_finance_ok": fault_finance.get("ok"),
+        }
+        _write_json(runs_case / "fault_uat_summary.json", fault_summary)
 
-    formal_after = _sha256(formal_db) if formal_db.is_file() else None
+        # RED-07：以合法報表列序為基線（偵測竄改；非以 D 反推 C 正向答案）
+        wb_legit = load_workbook(pipe["xlsx"], data_only=True)
+        ws_legit = wb_legit.active
+        assert ws_legit is not None
+        hdrs = [c.value for c in next(ws_legit.iter_rows(min_row=1, max_row=1))]
+        hidx = {h: i for i, h in enumerate(hdrs)}
+        legit_costs: list[Decimal] = []
+        legit_incomes: list[Decimal] = []
+        for row in ws_legit.iter_rows(min_row=2, max_col=len(hdrs), values_only=True):
+            if all(v is None for v in row):
+                continue
+            legit_costs.append(Decimal(str(row[hidx["成本"]] or 0)))
+            legit_incomes.append(Decimal(str(row[hidx["收入"]] or 0)))
+        golden_rev = {
+            **golden_agg,
+            "per_row_costs": legit_costs,
+            "per_row_incomes": legit_incomes,
+        }
+        assert verify_detail_xlsx_finance(pipe["xlsx"], golden_rev)["ok"] is True
+        per_row_fault = runs_case / "fault_per_row_offset.xlsx"
+        _fault_inject_per_row_offset(pipe["xlsx"], per_row_fault)
+        per_row_finance = verify_detail_xlsx_finance(per_row_fault, golden_rev)
+
+        # Trace 逐筆故障
+        fault_trace = runs_case / "fault_trace_line.xlsx"
+        _fault_inject_trace_line(trace_path, fault_trace)
+        fault_trace_cmp = compare_allocation_lines_to_trace_rows(
+            expected_c,
+            read_fifo_trace_rows(fault_trace),
+            trade_id_to_fp=trade_id_to_fp,
+        )
+
+    fp_after = inv.fingerprint_bundle("phase3_cr10a_after")
+    _write_json(run_dir / "formal_fp_after.json", fp_after)
+    drift = inv.compare_fingerprint_bundles(fp_before, fp_after)
+    _write_json(run_dir / "formal_fp_drift.json", drift)
+
+    artifacts = pipe["artifacts"]
     summary.update(
         {
             "finished_at_utc": datetime.now(UTC).isoformat(),
             "import_trade_count": pipe["import_result"].trade_count,
             "detail_xlsx": str(Path(pipe["xlsx"]).relative_to(ROOT)).replace("\\", "/"),
             "detail_is_draft": pipe["detail_is_draft"],
+            "open_cost_status": actual.get("open_cost_status"),
             "compare_c_d": {
                 "ok": compare["ok"],
                 "diffs": compare["diffs"],
@@ -263,27 +424,60 @@ def main() -> int:
                 "ok": finance["ok"],
                 "diffs": finance["diffs"],
                 "errors": finance["errors"],
+                "per_row_line_count": len(golden.get("per_row_lines") or []),
             },
-            "fault_injection": {
+            "per_line_trace_vs_c": {
+                "ok": per_line["ok"],
+                "diffs": per_line["diffs"],
+                "errors": per_line["errors"],
+                "expected_line_count": per_line["expected_line_count"],
+                "actual_matched_count": per_line["actual_matched_count"],
+            },
+            "cr10c_artifacts": {
+                "ok": artifacts["ok"],
+                "checks": artifacts["checks"],
+                "errors": artifacts["errors"],
+            },
+            "fault_injection_cr10b": {
                 "path": str(fault_path.relative_to(ROOT)).replace("\\", "/"),
-                "ok_should_be_false": fault_finance["ok"] is False,
-                "diffs": fault_finance["diffs"],
+                "uat_verdict": fault_verdict,
+                "exit_code": fault_exit,
+                "failed_checks": fault_summary["failed_checks"],
+                "finance_ok": fault_finance.get("ok"),
             },
-            "formal_db_untouched": formal_before == formal_after,
-            "formal_db_before": formal_before,
-            "formal_db_after": formal_after,
+            "fault_injection_per_row": {
+                "path": str(per_row_fault.relative_to(ROOT)).replace("\\", "/"),
+                "finance_ok": per_row_finance.get("ok"),
+                "diffs": per_row_finance.get("diffs"),
+            },
+            "fault_injection_trace_line": {
+                "path": str(fault_trace.relative_to(ROOT)).replace("\\", "/"),
+                "ok": fault_trace_cmp.get("ok"),
+                "diffs": fault_trace_cmp.get("diffs"),
+            },
+            "formal_db_fingerprint": {
+                "drift_status": drift.get("status"),
+                "untouched": drift.get("status") == "PASS",
+            },
         }
     )
     verdict_ok = (
         compare["ok"]
         and finance["ok"]
-        and fault_finance["ok"] is False
-        and summary["formal_db_untouched"]
+        and per_line["ok"]
+        and artifacts["ok"]
+        and fault_verdict == "FAIL"
+        and fault_exit != 0
+        and per_row_finance.get("ok") is False
+        and fault_trace_cmp.get("ok") is False
+        and drift.get("status") == "PASS"
         and not pipe["detail_is_draft"]
+        and str(run_dir.resolve()).startswith(str(UAT_ROOT.resolve()))
+        and str(out_dir.resolve()).startswith(str(OUT_ROOT.resolve()))
     )
     summary["uat_verdict"] = "PASS" if verdict_ok else "FAIL"
+    summary["exit_code"] = uat_exit_code(summary["uat_verdict"])
 
-    # 保存 expected／actual／difference（本機；含財務數字）
     _write_json(runs_case / "expected_c_snapshot_meta.json", {
         "case_id": expected_c.get("case_id"),
         "validation_status": expected_c.get("validation_status"),
@@ -292,17 +486,21 @@ def main() -> int:
         "fifo_expected": expected_c.get("fifo_expected"),
         "realized_status": (expected_c.get("realized_and_open") or {}).get("status"),
         "allocation_count": len(expected_c.get("allocations") or []),
+        "allocation_line_count": len(expected_c.get("allocation_lines") or []),
         "note": "完整金額見同目錄 difference／勿 commit",
     })
     _write_json(runs_case / "actual_d.json", {
         k: (str(v) if isinstance(v, Decimal) else v)
         for k, v in actual.items()
-        if k not in {"allocation_fingerprints", "trade_fingerprints"}
+        if k not in {"allocation_fingerprints", "trade_fingerprints", "trade_id_to_fp"}
     })
     _write_json(runs_case / "difference.json", {
         "compare_diffs": compare["diffs"],
         "finance_diffs": finance["diffs"],
-        "fault_caught": fault_finance["ok"] is False,
+        "per_line_diffs": per_line["diffs"],
+        "fault_cr10b": fault_summary,
+        "fault_per_row_caught": per_row_finance.get("ok") is False,
+        "fault_trace_caught": fault_trace_cmp.get("ok") is False,
     })
     _write_json(run_dir / "summary.json", summary)
     _write_json(EVIDENCE / "phase03_cr10a_2236_summary.json", {
@@ -311,23 +509,27 @@ def main() -> int:
             "case_id",
             "phase",
             "uat_verdict",
+            "exit_code",
             "source_lock_ok",
             "compare_c_d",
             "xlsx_finance_vs_c",
-            "fault_injection",
-            "formal_db_untouched",
+            "per_line_trace_vs_c",
+            "cr10c_artifacts",
+            "fault_injection_cr10b",
+            "fault_injection_per_row",
+            "formal_db_fingerprint",
             "started_at_utc",
             "finished_at_utc",
             "runs_d",
         )
         if k in summary
     })
-    # 複製合法報表到 runs_d
     shutil.copy2(pipe["xlsx"], runs_case / pipe["xlsx"].name)
     shutil.copy2(pipe["audit_path"], runs_case / pipe["audit_path"].name)
+    shutil.copy2(trace_path, runs_case / trace_path.name)
 
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0 if summary["uat_verdict"] == "PASS" else 1
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    return int(summary["exit_code"])
 
 
 if __name__ == "__main__":

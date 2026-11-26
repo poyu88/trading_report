@@ -261,6 +261,54 @@ def test_cr10b_uat_exit_code_nonzero_on_fail() -> None:
     assert uat_exit_code("DRAFT") == 1
 
 
+def test_cr10b_fault_copy_produces_fail_exit_and_summary(tmp_path: Path) -> None:
+    """CR-10B：合法報表副本竄改後經 checks → FAIL、非零 exit、可追溯失敗項。"""
+    ctx = _run_synthetic_report(tmp_path)
+    golden = compute_finance_golden_from_uat_trades(TRADES)
+    assert verify_detail_xlsx_finance(ctx["xlsx"], golden)["ok"] is True
+
+    fault = tmp_path / "fault.xlsx"
+    shutil_copy = __import__("shutil").copy2
+    shutil_copy(ctx["xlsx"], fault)
+    wb = load_workbook(fault)
+    ws = wb.active
+    assert ws is not None
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {h: i for i, h in enumerate(headers)}
+    for row in ws.iter_rows(min_row=2, max_col=len(headers)):
+        cell = row[idx["成本"]]
+        if cell.value is not None:
+            cell.value = float(Decimal(str(cell.value)) + Decimal(1))
+            break
+    wb.save(fault)
+
+    finance = verify_detail_xlsx_finance(fault, golden)
+    assert finance["ok"] is False
+    required = resolve_required_outputs(
+        audit_json=ctx["audit"],
+        out_dir=ctx["out"],
+        detail_xlsx=fault,
+        audit_path=ctx["audit_path"],
+        exceptions_path=ctx["exc_path"],
+    )
+    checks = build_uat_checks(
+        **_base_checks_kwargs(ctx, finance_ok=bool(finance["ok"]), required=required)
+    )
+    verdict = "PASS" if all(checks.values()) else "FAIL"
+    exit_code = uat_exit_code(verdict)
+    summary = {
+        "uat_verdict": verdict,
+        "exit_code": exit_code,
+        "failed_checks": [k for k, v in checks.items() if not v],
+        "finance_diffs": finance["diffs"],
+    }
+    assert verdict == "FAIL"
+    assert exit_code != 0
+    assert "detail_xlsx_finance_ok" in summary["failed_checks"]
+    assert summary["finance_diffs"]
+    ctx["session"].close()
+
+
 def test_cr10c_resolve_required_outputs_rejects_directory_named_like_file(
     tmp_path: Path,
 ) -> None:

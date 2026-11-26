@@ -136,16 +136,32 @@
 |---|---|---|
 | GOLD-002 | PARTIAL：來源 PARTIAL、可算 FIFO／aggregates；不得完整成功 | HTML `invalid_row_count=UNKNOWN`；realized 因未配賣出不完全 |
 | GOLD-003 | PARTIAL：已確認缺買進／未知幣別／非 CASH 類型欄 | 期初、DAY_TRADE pool、幣別；**不得補造期初／預設 0** |
-| GOLD-004 | C 層 `INDEPENDENTLY_COMPUTED`＋來源 PASS（本機） | 全年 D 端到端 UAT 尚未跑（504 筆）；非阻擋 CR-10A 2236 |
+| GOLD-004 | 本機全年 D 回歸 **PASS**（HTML bridge＋正式 FIFO／Report；逐筆 Trace↔C） | **原始 CSV Parser 尚未獨立驗收**（僅 bridge 後流程）；無跨年期初限制仍列 known_limitations |
 
-本機摘要：`data/golden/evidence/phase03_partial_cases_summary.json`（gitignored）。
+本機摘要：`data/golden/evidence/phase03_partial_cases_summary.json`、`phase03_gold004_summary.json`（gitignored）。
+
+## 原始 capital CSV Parser 獨立驗收
+
+| 欄位 | 內容 |
+|---|---|
+| CR ID | GOLD-CSV-PARSER |
+| 問題名稱 | Phase 3 UAT 以 HTML bridge 匯入；不得宣稱 `parse_csv`／capital CSV profile 已獨立驗收 |
+| 程式位置 | `scripts/_golden_phase3_cr10a_uat.py`；`scripts/_golden_phase3_gold004_uat.py`；`backend/ingest/csv_parser.py` |
+| 目前行為 | 真實 CSV 列轉 HTML → `statement_html_v1` Import；來源 SHA 仍鎖定原始 CSV |
+| 已驗證範圍 | 轉換後匯入／FIFO／Report／C↔D（001-2236、004） |
+| 未驗證範圍 | 雙表頭 capital CSV 直接經正式 CSV Parser 端到端 |
+| 缺少資料 | 無需新交易；待 capital_csv profile／skip 第二表頭列 |
+| 資料齊全後 | 新增 profile＋直接 CSV Import 回歸；bridge 僅作相容路徑 |
+| 未來驗收條件 | 原始 CSV Parser 路徑 PASS 且與 bridge 財務結果一致 |
+| 重新啟動條件 | Owner 授權新增 CSV profile（非大型重構前提下） |
+| 目前狀態 | PENDING_DATA |
 
 ## 延期（DEFERRED；本輪非阻擋）
 
 | ID | 說明 | 狀態 |
 |---|---|---|
-| CR-10A GOLD-001-2236 | 本機隔離 UAT C↔D **PASS**；證據本機 `runs_d` | **本輪已驗**（真實數字不入 Git） |
-| CR-10B／10C | 合成檔案層故障注入＋`uat_exit_code`；真實報表反向見 2236 UAT | 部分完成；擴充案例非阻擋 |
+| CR-10A GOLD-001-2236 | 逐筆 Trace↔C＋聚合＋故障注入本機 **PASS** | **本輪已驗** |
+| CR-10B | 合法副本 → FAIL／非零 exit／failed_checks／summary | **本輪已驗** |
+| CR-10C | Audit／Trace／Conservation／Exceptions 內容欄位核對 | **本輪已驗**（內容深度可再擴） |
 | CR-06B／06C | 既有合成九筆 E2E 維持 | 既有通過 |
-| GOLD-004 全年 D UAT | C 已就緒；正式管線全年比對 | DEFERRED（資料量大；非 2236 阻擋） |
 | Manifest Pydantic／mypy／Hypothesis／Mutation／完整稅務引擎 | 獨立評估 | DEFERRED |

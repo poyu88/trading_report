@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -14,10 +16,22 @@ from backend.db.models import FifoAllocation, TradeRow
 from backend.domain.models import txt_to_decimal
 from backend.golden.compare_c_d import trade_source_fingerprint
 from backend.reports.field_schema import HEADERS
+from backend.reports.fifo_trace_writer import HEADERS as TRACE_HEADERS
 from backend.services.allocation_service import match_fifo_for_account
 from backend.services.fifo_matcher import MATCH_TYPE_SAME_DAY, MATCH_TYPE_STANDARD
 from backend.services.import_service import apply_import
 from backend.services.report_service import generate_detail_report
+
+CONSERVATION_REQUIRED_COLS = {
+    "trade_id",
+    "side",
+    "source_qty",
+    "A_original_gross",
+    "F_conservation_ok",
+    "commission",
+    "tax",
+    "interest",
+}
 
 
 def trade_row_fingerprint(trade: TradeRow) -> str:
@@ -76,6 +90,189 @@ def sum_detail_xlsx_finance(xlsx_path: Path) -> dict[str, Decimal]:
     return out
 
 
+def observe_open_cost_from_detail_xlsx(xlsx_path: Path) -> dict[str, Any]:
+    """由明細 Excel 觀測未平倉成本（賣出股數空且買進股數>0 之成本加總）。
+
+    Returns:
+        ``open_quantity`` 觀測列股數合計、``open_cost``、``open_cost_status``。
+        有未平倉列但無法讀成本 → ``NOT_VERIFIED``。
+    """
+    wb = load_workbook(xlsx_path, data_only=True)
+    ws = wb.active
+    if ws is None:
+        return {
+            "open_quantity": 0,
+            "open_cost": None,
+            "open_cost_status": "NOT_VERIFIED",
+        }
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    if headers != HEADERS:
+        return {
+            "open_quantity": 0,
+            "open_cost": None,
+            "open_cost_status": "NOT_VERIFIED",
+        }
+    idx = {h: i for i, h in enumerate(HEADERS)}
+    open_qty = 0
+    open_cost = Decimal(0)
+    saw_open = False
+    for row in ws.iter_rows(min_row=2, max_col=len(HEADERS), values_only=True):
+        if all(v is None for v in row):
+            continue
+        sell_qty = row[idx["股數（賣）"]]
+        buy_qty = row[idx["股數（買）"]]
+        sell_empty = sell_qty is None or Decimal(str(sell_qty)) == 0
+        buy_n = int(buy_qty or 0)
+        if sell_empty and buy_n > 0:
+            saw_open = True
+            open_qty += buy_n
+            cost_val = row[idx["成本"]]
+            if cost_val is None:
+                return {
+                    "open_quantity": open_qty,
+                    "open_cost": None,
+                    "open_cost_status": "NOT_VERIFIED",
+                }
+            open_cost += Decimal(str(cost_val))
+    if not saw_open and open_qty == 0:
+        return {
+            "open_quantity": 0,
+            "open_cost": Decimal(0),
+            "open_cost_status": "VERIFIED_ZERO",
+        }
+    return {
+        "open_quantity": open_qty,
+        "open_cost": open_cost,
+        "open_cost_status": "VERIFIED",
+    }
+
+
+def read_fifo_trace_rows(trace_path: Path) -> list[dict[str, Any]]:
+    """讀取 FIFO Trace 列為 dict（內容驗證用）。"""
+    wb = load_workbook(trace_path, data_only=True)
+    ws = wb.active
+    if ws is None:
+        raise ValueError("trace_no_active_sheet")
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    if headers != TRACE_HEADERS:
+        raise ValueError("trace_header_mismatch")
+    idx = {h: i for i, h in enumerate(headers)}
+    rows: list[dict[str, Any]] = []
+    for row in ws.iter_rows(min_row=2, max_col=len(headers), values_only=True):
+        if all(v is None for v in row):
+            continue
+        rows.append(
+            {
+                "row_kind": row[idx["列語意"]],
+                "symbol": row[idx["股票代號"]],
+                "quantity": row[idx["股數"]],
+                "commission": row[idx["手續費"]],
+                "tax": row[idx["交易稅"]],
+                "interest": row[idx["利息"]],
+                "cost": row[idx["成本"]],
+                "income": row[idx["收入"]],
+                "profit": row[idx["損益"]],
+                "buy_trade_id": row[idx["buy_trade_id"]],
+                "sell_trade_id": row[idx["sell_trade_id"]],
+                "match_type": row[idx["match_type"]],
+            }
+        )
+    return rows
+
+
+def verify_audit_artifacts_content(
+    *,
+    audit_path: Path,
+    exceptions_path: Path,
+    out_dir: Path,
+) -> dict[str, Any]:
+    """CR-10C：核對 Audit／Trace／Conservation／Exceptions 必要格式與欄位（非僅存在）。"""
+    errors: list[str] = []
+    checks: dict[str, bool] = {}
+    if not audit_path.is_file():
+        return {"ok": False, "checks": {}, "errors": ["audit_missing"]}
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    required_audit = {
+        "conservation_ok",
+        "fifo_trace_file",
+        "conservation_file",
+        "trade_count",
+        "allocation_count",
+        "draft",
+    }
+    missing_audit = sorted(required_audit - set(audit))
+    checks["audit_required_keys"] = not missing_audit
+    if missing_audit:
+        errors.append(f"audit_missing_keys:{','.join(missing_audit)}")
+
+    trace_raw = audit.get("fifo_trace_file")
+    cons_raw = audit.get("conservation_file")
+    trace_path = Path(str(trace_raw)) if trace_raw else None
+    cons_path = Path(str(cons_raw)) if cons_raw else None
+    out_r = out_dir.resolve()
+
+    def _under_out(p: Path | None) -> bool:
+        if p is None or not p.is_file():
+            return False
+        try:
+            resolved = p.resolve()
+        except OSError:
+            return False
+        return out_r in resolved.parents or resolved == out_r
+
+    checks["trace_under_out"] = _under_out(trace_path)
+    checks["conservation_under_out"] = _under_out(cons_path)
+    if not checks["trace_under_out"]:
+        errors.append("trace_path_invalid")
+    if not checks["conservation_under_out"]:
+        errors.append("conservation_path_invalid")
+
+    if checks["trace_under_out"] and trace_path is not None:
+        try:
+            trows = read_fifo_trace_rows(trace_path)
+            checks["trace_has_rows"] = len(trows) > 0
+            checks["trace_has_matched_or_unsold"] = any(
+                r.get("row_kind") in {"MATCHED", "UNSOLD_BUY", "UNMATCHED_SELL"} for r in trows
+            )
+            if not checks["trace_has_rows"]:
+                errors.append("trace_empty")
+        except ValueError as exc:
+            checks["trace_headers_ok"] = False
+            errors.append(f"trace_read:{exc}")
+        else:
+            checks["trace_headers_ok"] = True
+
+    if checks["conservation_under_out"] and cons_path is not None:
+        with cons_path.open("r", encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh)
+            cols = set(reader.fieldnames or [])
+            missing = sorted(CONSERVATION_REQUIRED_COLS - cols)
+            checks["conservation_required_cols"] = not missing
+            if missing:
+                errors.append(f"conservation_missing_cols:{','.join(missing)}")
+            body = list(reader)
+            checks["conservation_has_rows"] = len(body) > 0
+            if body:
+                ok_vals = {str(r.get("F_conservation_ok", "")).lower() for r in body}
+                checks["conservation_ok_column_populated"] = bool(ok_vals & {"true", "false"})
+            else:
+                errors.append("conservation_empty")
+
+    if not exceptions_path.is_file():
+        checks["exceptions_exists"] = False
+        errors.append("exceptions_missing")
+    else:
+        checks["exceptions_exists"] = True
+        exc_text = exceptions_path.read_text(encoding="utf-8-sig")
+        header = exc_text.splitlines()[0].lower() if exc_text else ""
+        # 現行 exceptions 表頭含 issue_id／code／severity
+        checks["exceptions_has_header"] = "code" in header and "severity" in header
+        if not checks["exceptions_has_header"]:
+            errors.append("exceptions_header_mismatch")
+
+    return {"ok": all(checks.values()) and not errors, "checks": checks, "errors": errors, "audit": audit}
+
+
 def collect_actual_d(
     session: Session,
     *,
@@ -84,7 +281,7 @@ def collect_actual_d(
     xlsx_path: Path,
     match_result: Any,
 ) -> dict[str, Any]:
-    """自正式管線觀測值組裝 D 層摘要。"""
+    """自正式管線觀測值組裝 D 層摘要（不得用 expected 填補）。"""
     trades = list(session.scalars(select(TradeRow).where(TradeRow.account_id == account_id)))
     allocs = list(
         session.scalars(select(FifoAllocation).where(FifoAllocation.run_id == run_id))
@@ -109,6 +306,17 @@ def collect_actual_d(
     tax = sum((txt_to_decimal(t.tax_txt) for t in trades), Decimal(0))
     interest = sum((txt_to_decimal(t.interest_txt) for t in trades), Decimal(0))
     xlsx = sum_detail_xlsx_finance(xlsx_path)
+    unsold_qty = sum(u.available for u in match_result.unsold)
+    open_obs = observe_open_cost_from_detail_xlsx(xlsx_path)
+    # 未平倉股數以 match 結果為準；成本僅來自報表觀測
+    if unsold_qty == 0:
+        open_cost: Decimal | None = Decimal(0)
+        open_cost_status = "VERIFIED_ZERO"
+    else:
+        open_cost = open_obs.get("open_cost")
+        open_cost_status = str(open_obs.get("open_cost_status") or "NOT_VERIFIED")
+        if open_cost is None:
+            open_cost_status = "NOT_VERIFIED"
 
     standard = same_day = 0
     for a in allocs:
@@ -139,8 +347,9 @@ def collect_actual_d(
         "cost": xlsx["cost"],
         "income": xlsx["income"],
         "realized_pnl": xlsx["profit"],
-        "open_quantity": sum(u.available for u in match_result.unsold),
-        "open_cost": Decimal(0),  # 報表未售成本由 realized 對照；此處以 unsold 股數為主
+        "open_quantity": unsold_qty,
+        "open_cost": open_cost,
+        "open_cost_status": open_cost_status,
         "standard_fifo_allocated_qty": standard,
         "same_day_reconciled_qty": same_day,
         "unmatched_sell_qty": sum(
@@ -148,9 +357,10 @@ def collect_actual_d(
             for i in match_result.issues
             if i.issue_code == "INSUFFICIENT_PRIOR_BUYS"
         ),
-        "unsold_buy_qty": sum(u.available for u in match_result.unsold),
+        "unsold_buy_qty": unsold_qty,
         "allocation_fingerprints": allocation_fingerprints,
         "trade_fingerprints": [trade_row_fingerprint(t) for t in trades],
+        "trade_id_to_fp": id_to_fp,
         "xlsx_finance": {k: str(v) for k, v in xlsx.items()},
     }
 
@@ -189,6 +399,11 @@ def run_import_match_report(
         xlsx_path=xlsx,
         match_result=match,
     )
+    artifacts = verify_audit_artifacts_content(
+        audit_path=audit_path,
+        exceptions_path=exc_path,
+        out_dir=out_dir,
+    )
     return {
         "import_result": imp,
         "account_id": account.id,
@@ -199,4 +414,5 @@ def run_import_match_report(
         "exc_path": exc_path,
         "actual_d": actual,
         "detail_is_draft": "DRAFT" in xlsx.name,
+        "artifacts": artifacts,
     }

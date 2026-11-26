@@ -153,12 +153,13 @@ def test_phase3_synthetic_c_matches_d_pipeline(tmp_path: Path) -> None:
             out_dir=tmp_path / "out",
         )
         session.commit()
-        # open_cost：全配平時 C／D 皆 0
-        pipe["actual_d"]["open_cost"] = Decimal(
-            str((expected_c.get("realized_and_open") or {}).get("open_cost") or 0)
-        )
-        result = compare_expected_c_to_actual_d(expected_c, pipe["actual_d"])
+        actual = pipe["actual_d"]
+        assert actual.get("open_cost_status") in {"VERIFIED_ZERO", "VERIFIED"}
+        # 禁止把 expected_c open_cost 寫入 actual_d
+        assert "open_cost_status" in actual
+        result = compare_expected_c_to_actual_d(expected_c, actual)
         assert result["ok"] is True, result
+        assert pipe["artifacts"]["ok"] is True, pipe["artifacts"]
         # 不得改寫 C
         assert expected_c["case_id"] == "GOLD-SYN-PHASE3"
 
@@ -191,7 +192,6 @@ def test_phase3_fault_injection_on_copy_fails_compare(tmp_path: Path) -> None:
         )
         session.commit()
         actual = dict(pipe["actual_d"])
-        actual["open_cost"] = Decimal(0)
         assert compare_expected_c_to_actual_d(expected_c, actual)["ok"] is True
 
         mutated = dict(actual)

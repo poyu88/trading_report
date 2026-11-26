@@ -471,10 +471,14 @@ def verify_detail_xlsx_finance(
             got = actual[key]
             if got != expected:
                 diffs[key] = {"expected": str(expected), "actual": str(got)}
-        if actual["income_minus_cost"] != actual["profit"]:
+        # 未售列成本計入成本加總但不計損益；允許 remaining_inventory_cost 調整
+        remaining = Decimal(str(golden.get("remaining_inventory_cost") or 0))
+        adjusted = actual["income"] - (actual["cost"] - remaining)
+        if adjusted != actual["profit"]:
             diffs["income_minus_cost_vs_profit"] = {
                 "expected": str(actual["profit"]),
-                "actual": str(actual["income_minus_cost"]),
+                "actual": str(adjusted),
+                "remaining_inventory_cost": str(remaining),
             }
         # RED-07：逐筆成本／收入（互抵但總額不變仍須抓到）
         per_costs = golden.get("per_row_costs")
