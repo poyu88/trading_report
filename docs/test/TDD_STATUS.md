@@ -357,6 +357,18 @@
 | 本機 REGRESSION | `test_golden_expected_c` → **8 passed**；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**寫入 |
 | 判定 | Phase 2 C 層本機完成；待獨立 Reviewer；CR-10A／Merge／Migration **未**授權 |
 
+### 1.27 Phase 2 複審修正（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | trade_id 來源+列號；負數 TRUNC 朝零；帳戶／幣別分池；來源完整性閘門；逐筆 allocation_lines；GOLD-001-2236 |
+| RED | 擴充 `test_golden_expected_c` → **9 failed／7 passed**（缺唯一 ID／trunc 公開／integrity／逐筆等） |
+| GREEN | 上列契約最小實作；本機 expected_c 重產 |
+| REFACTOR | 無大型重構 |
+| 本機 REGRESSION | `test_golden_expected_c` → **16 passed**；全量 **269 passed／1 skipped**／81.41s；ruff 通過；正式 DB **未**寫入 |
+| 判定 | 複審項已修；待獨立 Reviewer 接 CR-10A；Merge／Migration **未**授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -537,6 +549,7 @@
 | `golden_cr_batch3_v1` | CR-04 returncode；CR-10 列合法性；CR-11 批次歧義；CR-05 可立即核對欄 | 2026-11-26；4 新測 **failed** | 2026-11-26；audit／classify／resolve／cross_check 擴充 | 無 | **252 passed／1 skipped**／64.92s | 03／06 結案不重開；PENDING 外部鍵／多帳戶真實樣本 |
 | `golden_cr10_close_v1` | CR-10：invalid／excluded 分計；非法列阻擋完整驗收；Phase 0／1 收斂文件 | 2026-11-26；分計／gate 測 **failed** | 2026-11-26；`build_capital_csv_analysis_from_rows`／`csv_acceptance_gate` | 無 | **253 passed／1 skipped**／63.96s | 04 結案；HTML／玉山 invalid 擴充仍 PENDING |
 | `golden_phase2_expected_c_v1` | Phase 2：獨立 C（A＋SPEC）；GOLD-001～004 本機答案；HTML／玉山 invalid→UNKNOWN | 2026-11-26；`test_golden_expected_c` 收集 **ERROR**（缺 `backend.golden`） | 2026-11-26；`expected_c` 模組＋phase2 腳本＋inventory UNKNOWN | ruff Decimal(0) | **261 passed／1 skipped**／74.78s | 真實答案 gitignored；CR-10A／Merge／Migration 未授權；待獨立 Reviewer |
+| `golden_phase2_r2_v1` | Phase 2 複審：唯一 trade_id、負數 TRUNC、帳戶／幣別隔離、來源閘門、逐筆 lines、GOLD-001-2236 | 2026-11-26；**9 failed／7 passed** | 2026-11-26；expected_c＋phase2 腳本重產 | 無 | **269 passed／1 skipped**／81.41s | 受測 report_finance 負數 TRUNC 仍 PENDING；真實答案未入 Git |
 
 **記錄欄位最低要求**
 
@@ -618,3 +631,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`golden_cr_batch3_v1` TDD**：CR-04 returncode、CR-10 列合法性、CR-11 歧義、CR-05 可核對欄；RED 4 failed → GREEN；全量 **252 passed／1 skipped**／64.92s；ruff 通過；正式 DB **未**動；PENDING 外部鍵／多帳戶維持。 |
 | 2026-11-26 | **`golden_cr10_close_v1`**：invalid／excluded 分計＋阻擋完整 PASS；Phase 0／1 收斂摘要；全量 **253 passed／1 skipped**／63.96s；ruff 通過；正式 DB **未**動；待 Owner 確認 Phase 2。 |
 | 2026-11-26 | **`golden_phase2_expected_c_v1`**：Owner 授權 Phase 2；獨立 C 模組＋合成測；本機 expected_c GOLD-001～004；HTML／玉山 invalid→UNKNOWN；全量 **261 passed／1 skipped**／74.78s；ruff 通過；正式 DB **未**動；真實答案未入 Git；待獨立 Reviewer／CR-10A；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase2_r2_v1`**：複審修正—唯一 trade_id、負數 TRUNC 朝零、帳戶／幣別分池、來源閘門、逐筆 allocation_lines、GOLD-001-2236；RED 9 failed → GREEN；全量 **269 passed／1 skipped**／81.41s；ruff 通過；正式 DB **未**動；真實答案未入 Git；受測 trunc 負數見 PENDING；Merge／Migration **未**授權。 |

@@ -11,11 +11,12 @@ from collections import defaultdict, deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import ROUND_DOWN, ROUND_UP, Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from backend.util.date_text import parse_flexible_date
 from backend.util.decimal_text import normalize_decimal_text
+from backend.util.sha256_lock import sha256_lock_mismatches
 
 AMOUNT_TOLERANCE = Decimal(1)
 
@@ -37,6 +38,10 @@ class ExpectedTrade:
     source_order: int
     currency: str = "TWD"
     trade_type: str = "CASH"
+    account_id: str = "default"
+    interest_known: bool = True
+    currency_known: bool = True
+    trade_type_known: bool = True
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,7 @@ class ExpectedOpeningLot:
     quantity: int
     unit_price: Decimal
     currency: str = "TWD"
+    account_id: str = "default"
 
 
 @dataclass
@@ -59,6 +65,9 @@ class ExpectedAllocation:
     quantity: int
     match_type: str
     sequence_no: int
+    account_id: str = "default"
+    symbol: str = ""
+    currency: str = "TWD"
 
 
 @dataclass
@@ -82,6 +91,75 @@ def invalid_row_count_status(source_format: str) -> str:
     return "UNKNOWN"
 
 
+def make_expected_trade_id(source_id: str, physical_line: int | str) -> str:
+    """來源識別＋原始列號 → 全域唯一 trade_id。"""
+    sid = str(source_id).strip() or "UNKNOWN_SOURCE"
+    return f"{sid}:L{physical_line}"
+
+
+def trade_ids_unique(trades: Sequence[ExpectedTrade]) -> bool:
+    ids = [t.trade_id for t in trades]
+    return len(ids) == len(set(ids))
+
+
+def trunc_toward_zero(value: Decimal) -> Decimal:
+    """朝零截斷為整數 Decimal（含負數）。
+
+    注意：``decimal.ROUND_DOWN`` 語意為朝零；``ROUND_UP`` 為離零。
+    不得對負數誤用 ``ROUND_UP``（會得到更負的整數）。
+    """
+    return value.to_integral_value(rounding=ROUND_DOWN)
+
+
+def evaluate_source_integrity(
+    *,
+    expected_sha256: dict[str, str],
+    actual_sha256: dict[str, str],
+    invalid_row_count: int | str | None,
+) -> dict[str, Any]:
+    """重用 Phase 1 SHA256 鎖定語意＋非法列閘門；失敗保留原因。
+
+    - 指紋不符或 invalid>0 → ``FAIL``（不得完整成功）
+    - invalid=UNKNOWN（格式未驗證）→ ``PARTIAL``（可核算但不得完整成功）
+    """
+    hard_reasons: list[str] = []
+    soft_reasons: list[str] = []
+    mismatches = sha256_lock_mismatches(expected_sha256, actual_sha256)
+    if mismatches:
+        hard_reasons.append(f"sha256_lock_mismatch:{','.join(mismatches)}")
+
+    if isinstance(invalid_row_count, str):
+        if invalid_row_count.upper() == "UNKNOWN":
+            soft_reasons.append("invalid_row_count_UNKNOWN_unverified_format")
+        else:
+            try:
+                invalid_n = int(invalid_row_count)
+            except ValueError:
+                hard_reasons.append(f"invalid_row_count_unparseable:{invalid_row_count}")
+            else:
+                if invalid_n > 0:
+                    hard_reasons.append("invalid_trade_rows_present")
+    elif invalid_row_count is None:
+        soft_reasons.append("invalid_row_count_missing")
+    else:
+        if int(invalid_row_count) > 0:
+            hard_reasons.append("invalid_trade_rows_present")
+
+    if hard_reasons:
+        status = "FAIL"
+    elif soft_reasons:
+        status = "PARTIAL"
+    else:
+        status = "PASS"
+    return {
+        "status": status,
+        "reasons": hard_reasons + soft_reasons,
+        "hard_reasons": hard_reasons,
+        "soft_reasons": soft_reasons,
+        "sha256_mismatches": mismatches,
+    }
+
+
 def _dec(text: object) -> Decimal:
     raw = "" if text is None else str(text)
     norm = normalize_decimal_text(raw)
@@ -98,10 +176,38 @@ def _dec_or_zero_if_explicit(text: object) -> tuple[Decimal, bool]:
     return _dec(raw), True
 
 
-def _trunc_toward_zero(value: Decimal) -> Decimal:
-    if value >= 0:
-        return value.to_integral_value(rounding=ROUND_DOWN)
-    return value.to_integral_value(rounding=ROUND_UP)
+def allocate_fragment_amounts(
+    *,
+    unit_price: Decimal,
+    gross: Decimal,
+    qtys: Sequence[int],
+    tolerance: Decimal = AMOUNT_TOLERANCE,
+) -> dict[str, Any]:
+    """依 TRUNC(qty×price) 分配片段價金；超容許明確標不守恆。"""
+    if not qtys:
+        return {
+            "amounts": [],
+            "difference": "0",
+            "conservation_ok": gross == 0,
+            "out_of_tolerance": False,
+        }
+    truncated = [trunc_toward_zero(Decimal(q) * unit_price) for q in qtys]
+    calculated = sum(truncated, Decimal(0))
+    difference = gross - calculated
+    amounts = list(truncated)
+    out_of_tolerance = False
+    if difference == 0:
+        pass
+    elif abs(difference) <= tolerance:
+        amounts[-1] = amounts[-1] + difference
+    else:
+        out_of_tolerance = True
+    return {
+        "amounts": amounts,
+        "difference": _norm_dec_str(difference),
+        "conservation_ok": not out_of_tolerance,
+        "out_of_tolerance": out_of_tolerance,
+    }
 
 
 def _allocate_fragment_amounts(
@@ -109,19 +215,9 @@ def _allocate_fragment_amounts(
     gross: Decimal,
     qtys: Sequence[int],
 ) -> list[Decimal]:
-    if not qtys:
-        return []
-    truncated = [_trunc_toward_zero(Decimal(q) * unit_price) for q in qtys]
-    calculated = sum(truncated, Decimal(0))
-    difference = gross - calculated
-    amounts = list(truncated)
-    if difference == 0:
-        return amounts
-    if abs(difference) <= AMOUNT_TOLERANCE:
-        amounts[-1] = amounts[-1] + difference
-        return amounts
-    # 超容許：保留截斷；呼叫端可標 NOT_CONSERVED
-    return amounts
+    return list(
+        allocate_fragment_amounts(unit_price=unit_price, gross=gross, qtys=qtys)["amounts"]
+    )
 
 
 def aggregate_source_finance(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -167,7 +263,7 @@ def aggregate_source_finance(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
             sell_g += g
             sell_c += c
 
-    out: dict[str, Any] = {
+    return {
         "valid_trade_count": buy_n + sell_n,
         "buy_trade_count": buy_n,
         "sell_trade_count": sell_n,
@@ -184,7 +280,6 @@ def aggregate_source_finance(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "fee_landing_policy": "source_values_unsplit",
         "unknown_side_count": len(unknown_sides),
     }
-    return out
 
 
 def _norm_int_str(value: Decimal) -> str:
@@ -203,27 +298,35 @@ def independent_cash_fifo(
     *,
     opening_lots: Iterable[ExpectedOpeningLot] = (),
 ) -> FifoExpected:
-    """依 SPEC §6 CASH Two-Pass 獨立推導配對預期（不呼叫受測 matcher）。"""
+    """依 SPEC §6 CASH Two-Pass；分組鍵含 account／currency，禁止跨幣別／帳戶混配。"""
     openings = list(opening_lots)
-    by_symbol: dict[str, list[ExpectedTrade]] = defaultdict(list)
+    by_pool: dict[tuple[str, str, str], list[ExpectedTrade]] = defaultdict(list)
     for t in trades:
-        if t.trade_type != "CASH":
+        if not t.trade_type_known or t.trade_type != "CASH":
+            continue
+        if not t.currency_known:
             continue
         if t.side not in {"BUY", "SELL"}:
             continue
-        by_symbol[t.symbol].append(t)
+        by_pool[(t.account_id, t.symbol, t.currency)].append(t)
 
     result = FifoExpected()
     seq = 0
 
-    for symbol in sorted(by_symbol):
+    for account_id, symbol, currency in sorted(by_pool):
         sym_trades = sorted(
-            by_symbol[symbol],
+            by_pool[(account_id, symbol, currency)],
             key=lambda t: (t.trade_date, t.source_order, t.trade_id),
         )
         fifo: deque[dict[str, Any]] = deque()
         for lot in sorted(
-            [o for o in openings if o.symbol == symbol],
+            [
+                o
+                for o in openings
+                if o.symbol == symbol
+                and o.account_id == account_id
+                and o.currency == currency
+            ],
             key=lambda o: (o.trade_date, o.lot_id),
         ):
             fifo.append(
@@ -233,9 +336,6 @@ def independent_cash_fifo(
                     "date": lot.trade_date,
                     "avail": lot.quantity,
                     "unit_price": lot.unit_price,
-                    "qty0": lot.quantity,
-                    "gross": None,
-                    "commission": Decimal(0),
                 }
             )
 
@@ -265,6 +365,9 @@ def independent_cash_fifo(
                             quantity=matched,
                             match_type="STANDARD_FIFO",
                             sequence_no=seq,
+                            account_id=account_id,
+                            symbol=symbol,
+                            currency=currency,
                         )
                     )
                     result.standard_fifo_allocated_qty += matched
@@ -283,15 +386,17 @@ def independent_cash_fifo(
                         "date": buy.trade_date,
                         "avail": buy.quantity,
                         "unit_price": buy.unit_price,
-                        "qty0": buy.quantity,
-                        "gross": buy.gross_amount,
-                        "commission": buy.commission,
                     }
                 )
 
             for sell, left in pending:
                 remain = left
-                while remain > 0 and fifo and fifo[0]["date"] == day and fifo[0]["buy_trade_id"]:
+                while (
+                    remain > 0
+                    and fifo
+                    and fifo[0]["date"] == day
+                    and fifo[0]["buy_trade_id"]
+                ):
                     lot = fifo[0]
                     matched = min(int(lot["avail"]), remain)
                     seq += 1
@@ -303,6 +408,9 @@ def independent_cash_fifo(
                             quantity=matched,
                             match_type="SAME_DAY_RECONCILED",
                             sequence_no=seq,
+                            account_id=account_id,
+                            symbol=symbol,
+                            currency=currency,
                         )
                     )
                     result.same_day_reconciled_qty += matched
@@ -326,7 +434,9 @@ def independent_cash_fifo(
                 {
                     "buy_trade_id": lot["buy_trade_id"],
                     "opening_lot_id": lot["opening_lot_id"],
+                    "account_id": account_id,
                     "symbol": symbol,
+                    "currency": currency,
                     "trade_date": lot["date"].isoformat(),
                     "quantity": avail,
                     "unit_price": str(lot["unit_price"]),
@@ -340,12 +450,11 @@ def compute_realized_and_open(
     trades: Sequence[ExpectedTrade],
     fifo: FifoExpected,
 ) -> dict[str, Any]:
-    """依 SPEC §7 獨立核算已實現損益與未平倉成本（費用落第一片段）。"""
+    """依 SPEC §7 獨立核算已實現損益、未平倉與逐筆配對行。"""
     by_id = {t.trade_id: t for t in trades}
     buy_alloc_qtys: dict[str, list[int]] = defaultdict(list)
     sell_alloc_qtys: dict[str, list[int]] = defaultdict(list)
-    buy_alloc_pairs: list[tuple[str, str, int, str]] = []
-    # (buy_id, sell_id, qty, match_type) in allocation order
+    buy_alloc_pairs: list[tuple[str, str, int, str, ExpectedAllocation]] = []
     for alloc in sorted(fifo.allocations, key=lambda a: a.sequence_no):
         if alloc.buy_trade_id:
             buy_alloc_qtys[alloc.buy_trade_id].append(alloc.quantity)
@@ -355,35 +464,41 @@ def compute_realized_and_open(
                     alloc.sell_trade_id,
                     alloc.quantity,
                     alloc.match_type,
+                    alloc,
                 )
             )
         sell_alloc_qtys[alloc.sell_trade_id].append(alloc.quantity)
 
-    # Append unsold tails for buys
     unsold_by_buy = {
         u["buy_trade_id"]: int(u["quantity"])
         for u in fifo.unsold_lots
         if u.get("buy_trade_id")
     }
+
+    buy_alloc_meta: dict[str, dict[str, Any]] = {}
     buy_piece_amounts: dict[str, list[Decimal]] = {}
     for buy_id, qtys in buy_alloc_qtys.items():
         buy = by_id[buy_id]
         full_qtys = list(qtys)
         if buy_id in unsold_by_buy:
             full_qtys.append(unsold_by_buy[buy_id])
-        buy_piece_amounts[buy_id] = _allocate_fragment_amounts(
-            buy.unit_price, buy.gross_amount, full_qtys
+        meta = allocate_fragment_amounts(
+            unit_price=buy.unit_price, gross=buy.gross_amount, qtys=full_qtys
         )
+        buy_alloc_meta[buy_id] = meta
+        buy_piece_amounts[buy_id] = list(meta["amounts"])
 
-    # Buys that are fully unsold (no allocations)
     for buy_id, qty in unsold_by_buy.items():
         if buy_id in buy_piece_amounts:
             continue
         buy = by_id[buy_id]
-        buy_piece_amounts[buy_id] = _allocate_fragment_amounts(
-            buy.unit_price, buy.gross_amount, [qty]
+        meta = allocate_fragment_amounts(
+            unit_price=buy.unit_price, gross=buy.gross_amount, qtys=[qty]
         )
+        buy_alloc_meta[buy_id] = meta
+        buy_piece_amounts[buy_id] = list(meta["amounts"])
 
+    sell_alloc_meta: dict[str, dict[str, Any]] = {}
     sell_piece_amounts: dict[str, list[Decimal]] = {}
     for sell_id, qtys in sell_alloc_qtys.items():
         sell = by_id[sell_id]
@@ -391,9 +506,11 @@ def compute_realized_and_open(
         full_qtys = list(qtys)
         if unmatched:
             full_qtys.append(unmatched)
-        sell_piece_amounts[sell_id] = _allocate_fragment_amounts(
-            sell.unit_price, sell.gross_amount, full_qtys
+        meta = allocate_fragment_amounts(
+            unit_price=sell.unit_price, gross=sell.gross_amount, qtys=full_qtys
         )
+        sell_alloc_meta[sell_id] = meta
+        sell_piece_amounts[sell_id] = list(meta["amounts"])
 
     buy_fee_used: set[str] = set()
     sell_fee_used: set[str] = set()
@@ -401,7 +518,11 @@ def compute_realized_and_open(
     buy_piece_cursor: dict[str, int] = defaultdict(int)
     realized = Decimal(0)
     matched_qty = 0
-    for buy_id, sell_id, qty, _mt in buy_alloc_pairs:
+    allocation_lines: list[dict[str, Any]] = []
+    any_not_conserved = False
+    interest_unknown = any(not t.interest_known for t in trades)
+
+    for buy_id, sell_id, qty, match_type, alloc in buy_alloc_pairs:
         buy = by_id[buy_id]
         sell = by_id[sell_id]
         buy_gross = buy_piece_amounts[buy_id][buy_piece_cursor[buy_id]]
@@ -416,16 +537,57 @@ def compute_realized_and_open(
         sell_fee = Decimal(0)
         sell_tax = Decimal(0)
         sell_interest = Decimal(0)
+        sell_interest_applied = "0"
         if sell_id not in sell_fee_used:
             sell_fee = sell.commission
             sell_tax = sell.tax
-            sell_interest = sell.interest
+            if sell.interest_known:
+                sell_interest = sell.interest
+                sell_interest_applied = _norm_dec_str(sell_interest)
+            else:
+                sell_interest = Decimal(0)
+                sell_interest_applied = "UNKNOWN"
             sell_fee_used.add(sell_id)
 
         cost = buy_gross + buy_fee
         income = sell_gross - sell_fee - sell_tax - sell_interest
-        realized += income - cost
+        pnl = income - cost
+        realized += pnl
         matched_qty += qty
+
+        buy_cons = buy_alloc_meta.get(buy_id, {})
+        sell_cons = sell_alloc_meta.get(sell_id, {})
+        line_ok = bool(buy_cons.get("conservation_ok", True)) and bool(
+            sell_cons.get("conservation_ok", True)
+        )
+        if not line_ok:
+            any_not_conserved = True
+
+        allocation_lines.append(
+            {
+                "sequence_no": alloc.sequence_no,
+                "match_type": match_type,
+                "buy_trade_id": buy_id,
+                "opening_lot_id": alloc.opening_lot_id,
+                "sell_trade_id": sell_id,
+                "quantity": qty,
+                "account_id": alloc.account_id,
+                "symbol": alloc.symbol,
+                "currency": alloc.currency,
+                "buy_gross": _norm_dec_str(buy_gross),
+                "sell_gross": _norm_dec_str(sell_gross),
+                "buy_commission_applied": _norm_dec_str(buy_fee),
+                "sell_commission_applied": _norm_dec_str(sell_fee),
+                "sell_tax_applied": _norm_dec_str(sell_tax),
+                "sell_interest_applied": sell_interest_applied,
+                "cost": _norm_dec_str(cost),
+                "income": _norm_dec_str(income),
+                "realized_pnl": _norm_dec_str(pnl),
+                "gross_conservation_ok": line_ok,
+                "buy_gross_difference": buy_cons.get("difference", "0"),
+                "sell_gross_difference": sell_cons.get("difference", "0"),
+            }
+        )
 
     open_qty = 0
     open_cost = Decimal(0)
@@ -433,7 +595,6 @@ def compute_realized_and_open(
         buy = by_id[buy_id]
         open_qty += remain_qty
         amounts = buy_piece_amounts[buy_id]
-        # last piece is unsold when there were allocations; sole piece if fully unsold
         if buy_id in buy_alloc_qtys:
             unsold_gross = amounts[-1]
         else:
@@ -443,10 +604,16 @@ def compute_realized_and_open(
             fee = buy.commission
             buy_fee_used.add(buy_id)
         open_cost += unsold_gross + fee
+        if not buy_alloc_meta.get(buy_id, {}).get("conservation_ok", True):
+            any_not_conserved = True
 
     status = "COMPUTED"
     if fifo.unmatched_sell_qty > 0:
         status = "PARTIAL_DUE_TO_UNMATCHED_SELLS"
+    if interest_unknown:
+        status = "PARTIAL_DUE_TO_UNKNOWN_INTEREST"
+    if any_not_conserved:
+        status = "PARTIAL_AMOUNT_NOT_CONSERVED"
 
     return {
         "status": status,
@@ -457,11 +624,13 @@ def compute_realized_and_open(
         "unmatched_sell_qty": fifo.unmatched_sell_qty,
         "same_day_reconciled_qty": fifo.same_day_reconciled_qty,
         "standard_fifo_allocated_qty": fifo.standard_fifo_allocated_qty,
+        "allocation_lines": allocation_lines,
+        "amount_conservation_ok": not any_not_conserved,
     }
 
 
 def rows_to_expected_trades(rows: Sequence[dict[str, Any]]) -> list[ExpectedTrade]:
-    """將 A 有效列轉為 ExpectedTrade。"""
+    """將 A 有效列轉為 ExpectedTrade（trade_id＝來源識別:L列號）。"""
     trades: list[ExpectedTrade] = []
     for idx, row in enumerate(rows):
         side = str(row.get("side") or "").upper()
@@ -477,15 +646,37 @@ def rows_to_expected_trades(rows: Sequence[dict[str, Any]]) -> list[ExpectedTrad
         if trade_date is None:
             raise ValueError(f"invalid_trade_date:{row.get('trade_date')!r}")
         physical = row.get("physical_line", idx + 1)
-        trade_type = str(row.get("trade_type") or "CASH")
-        currency = str(row.get("currency") or "TWD")
+        source_id = str(
+            row.get("source_id")
+            or row.get("_year_key")
+            or row.get("source_key")
+            or "UNKNOWN_SOURCE"
+        )
+        trade_id = make_expected_trade_id(source_id, physical)
+
+        raw_type = row.get("trade_type", None)
+        if raw_type is None or str(raw_type).strip() == "":
+            trade_type = "UNKNOWN"
+            trade_type_known = False
+        else:
+            trade_type = str(raw_type).strip().upper()
+            trade_type_known = trade_type in {"CASH", "DAY_TRADE"}
+
+        raw_ccy = row.get("currency", None)
+        if raw_ccy is None or str(raw_ccy).strip() == "":
+            currency = "UNKNOWN"
+            currency_known = False
+        else:
+            currency = str(raw_ccy).strip()
+            currency_known = True
+
         interest_raw = row.get("interest", "")
-        interest, known = _dec_or_zero_if_explicit(interest_raw)
-        if not known:
-            interest = Decimal(0)
+        interest, interest_known = _dec_or_zero_if_explicit(interest_raw)
+        account_id = str(row.get("account_id") or "default")
+
         trades.append(
             ExpectedTrade(
-                trade_id=f"L{physical}",
+                trade_id=trade_id,
                 symbol=str(row["symbol"]),
                 trade_date=trade_date,
                 side=side,
@@ -496,10 +687,16 @@ def rows_to_expected_trades(rows: Sequence[dict[str, Any]]) -> list[ExpectedTrad
                 tax=_dec(row["tax"]),
                 interest=interest,
                 source_order=idx,
-                currency=currency if currency else "TWD",
-                trade_type=trade_type if trade_type else "CASH",
+                currency=currency,
+                trade_type=trade_type if trade_type_known else "UNKNOWN",
+                account_id=account_id,
+                interest_known=interest_known,
+                currency_known=currency_known,
+                trade_type_known=trade_type_known,
             )
         )
+    if not trade_ids_unique(trades):
+        raise ValueError("duplicate_expected_trade_id")
     return trades
 
 
@@ -515,30 +712,84 @@ def build_expected_c_document(
     opening_lots: Iterable[ExpectedOpeningLot] = (),
     extra_fields_not_computable: Sequence[str] | None = None,
     known_limitations: Sequence[str] | None = None,
+    expected_source_sha256: dict[str, str] | None = None,
+    actual_source_sha256: dict[str, str] | None = None,
+    invalid_row_count: int | str | None = 0,
 ) -> dict[str, Any]:
-    """組裝可存檔之獨立 C 層文件（不含受測系統輸出）。"""
-    if opening_lots_policy != "NONE_APPROVED" and not list(opening_lots):
+    """組裝可存檔之獨立 C 層文件（含逐筆 allocation；不含受測系統輸出）。"""
+    openings = list(opening_lots)
+    if opening_lots_policy != "NONE_APPROVED" and not openings:
         raise ValueError("opening_lots_policy requires approved lots")
-    if opening_lots_policy == "NONE_APPROVED" and list(opening_lots):
+    if opening_lots_policy == "NONE_APPROVED" and openings:
         raise ValueError("NONE_APPROVED cannot include opening lots")
+
+    integrity = evaluate_source_integrity(
+        expected_sha256=expected_source_sha256 or {},
+        actual_sha256=actual_source_sha256 or {},
+        invalid_row_count=invalid_row_count,
+    )
+    # 未提供指紋鎖定時不因空 dict 誤判 PASS 掩蓋；呼叫端應傳入
+    if expected_source_sha256 is None and actual_source_sha256 is None:
+        integrity = {
+            "status": "SKIPPED_NO_LOCK_PROVIDED",
+            "reasons": ["source_sha256_lock_not_provided"],
+            "sha256_mismatches": [],
+        }
 
     aggregates = aggregate_source_finance(rows)
     trades = rows_to_expected_trades(rows)
-    non_cash = [t for t in trades if t.trade_type != "CASH"]
-    cash_trades = [t for t in trades if t.trade_type == "CASH"]
-    fifo = independent_cash_fifo(cash_trades, opening_lots=opening_lots)
+    non_cash = [t for t in trades if t.trade_type_known and t.trade_type != "CASH"]
+    unknown_type = [t for t in trades if not t.trade_type_known]
+    unknown_ccy = [t for t in trades if not t.currency_known]
+    cash_trades = [
+        t
+        for t in trades
+        if t.trade_type_known and t.trade_type == "CASH" and t.currency_known
+    ]
+    fifo = independent_cash_fifo(cash_trades, opening_lots=openings)
     finance = compute_realized_and_open(cash_trades, fifo)
 
     not_computable = list(extra_fields_not_computable or [])
-    if non_cash:
-        not_computable.append("DAY_TRADE_POOL_NOT_INCLUDED_IN_CASH_FIFO")
+    if non_cash or unknown_type:
+        not_computable.append("DAY_TRADE_OR_UNKNOWN_TYPE_NOT_IN_CASH_FIFO")
+    if unknown_ccy:
+        not_computable.append("unknown_currency_rows")
     if not aggregates.get("interest_known", True):
         not_computable.append("interest_blank_rows")
 
     limitations = list(known_limitations or [])
     limitations.append("C 由 A＋SPEC 獨立推導；未使用受測 FIFO／Report Projector／新版 Excel")
+    limitations.append("fifo_scope=CASH_ONLY；DAY_TRADE 未納入本 C 層配對")
     if opening_lots_policy == "NONE_APPROVED":
         limitations.append("無核准期初 lot；不得偽造期初庫存")
+
+    if integrity["status"] == "FAIL":
+        validation_status = "BLOCKED_SOURCE_INTEGRITY"
+    elif (
+        integrity["status"] == "PARTIAL"
+        or finance["status"] != "COMPUTED"
+        or unknown_ccy
+        or unknown_type
+        or non_cash
+    ):
+        validation_status = "INDEPENDENTLY_COMPUTED_PARTIAL"
+    else:
+        validation_status = "INDEPENDENTLY_COMPUTED"
+
+    allocations_out = [
+        {
+            "sequence_no": a.sequence_no,
+            "match_type": a.match_type,
+            "buy_trade_id": a.buy_trade_id,
+            "opening_lot_id": a.opening_lot_id,
+            "sell_trade_id": a.sell_trade_id,
+            "quantity": a.quantity,
+            "account_id": a.account_id,
+            "symbol": a.symbol,
+            "currency": a.currency,
+        }
+        for a in fifo.allocations
+    ]
 
     return {
         "case_id": case_id,
@@ -550,10 +801,14 @@ def build_expected_c_document(
         "applicable_spec": list(applicable_spec),
         "opening_lots": opening_lots_policy,
         "invalid_row_count_status": invalid_row_count_status(source_format),
-        "validation_status": "INDEPENDENTLY_COMPUTED",
+        "invalid_row_count": invalid_row_count,
+        "source_integrity": integrity,
+        "validation_status": validation_status,
+        "fifo_scope": "CASH_ONLY",
         "aggregates": aggregates,
         "fifo_expected": {
             "algorithm": "CASH_TWO_PASS_SPEC_INDEPENDENT",
+            "pool_key": "account_id+symbol+currency+CASH",
             "standard_fifo_allocated_qty": fifo.standard_fifo_allocated_qty,
             "same_day_reconciled_qty": fifo.same_day_reconciled_qty,
             "unmatched_sell_qty": fifo.unmatched_sell_qty,
@@ -561,7 +816,13 @@ def build_expected_c_document(
             "blocking_insufficient_prior_buys": fifo.blocking_insufficient_prior_buys,
             "allocation_count": len(fifo.allocations),
         },
-        "realized_and_open": finance,
+        "allocations": allocations_out,
+        "allocation_lines": finance.get("allocation_lines", []),
+        "realized_and_open": {
+            k: v for k, v in finance.items() if k != "allocation_lines"
+        },
+        "trade_id_unique": trade_ids_unique(trades),
+        "trade_count": len(trades),
         "fields_not_computable": not_computable,
         "known_limitations": limitations,
     }

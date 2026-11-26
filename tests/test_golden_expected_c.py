@@ -191,6 +191,7 @@ def test_invalid_row_count_unknown_for_unverified_formats() -> None:
 def test_build_expected_c_document_schema_from_rows() -> None:
     rows = [
         {
+            "source_id": "syn",
             "symbol": "2236",
             "trade_date": "2024/8/5",
             "side": "BUY",
@@ -205,8 +206,10 @@ def test_build_expected_c_document_schema_from_rows() -> None:
             "physical_line": 3,
             "trade_type": "CASH",
             "currency": "TWD",
+            "account_id": "acct_A",
         },
         {
+            "source_id": "syn",
             "symbol": "2236",
             "trade_date": "2024/8/5",
             "side": "SELL",
@@ -221,6 +224,7 @@ def test_build_expected_c_document_schema_from_rows() -> None:
             "physical_line": 4,
             "trade_type": "CASH",
             "currency": "TWD",
+            "account_id": "acct_A",
         },
     ]
     doc = ec.build_expected_c_document(
@@ -231,6 +235,9 @@ def test_build_expected_c_document_schema_from_rows() -> None:
         applicable_spec=["SPEC.md §6", "SPEC.md §7"],
         rows=rows,
         opening_lots_policy="NONE_APPROVED",
+        expected_source_sha256={"main": "a" * 64},
+        actual_source_sha256={"main": "a" * 64},
+        invalid_row_count=0,
     )
     assert doc["layer"] == "C"
     assert doc["derivation"] == "A_source_plus_SPEC"
@@ -249,3 +256,310 @@ def test_inventory_html_esun_invalid_defaults_unknown() -> None:
 
     assert unresolved_invalid_row_count("html_table_xls") == "UNKNOWN"
     assert unresolved_invalid_row_count("esun_xlsx") == "UNKNOWN"
+
+
+def test_trade_id_uses_source_and_line_and_stays_unique_across_sources() -> None:
+    """跨來源串接不得只靠 physical_line，否則 by_id 會覆蓋。"""
+    rows = [
+        {
+            "source_id": "csv_2023",
+            "physical_line": 10,
+            "symbol": "2236",
+            "trade_date": "2023/1/1",
+            "side": "BUY",
+            "quantity": "100",
+            "unit_price": "10",
+            "gross_amount": "1000",
+            "commission": "1",
+            "tax": "0",
+            "interest": "0",
+            "net_settlement": "-1001",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+        {
+            "source_id": "csv_2024",
+            "physical_line": 10,
+            "symbol": "2236",
+            "trade_date": "2024/1/1",
+            "side": "BUY",
+            "quantity": "200",
+            "unit_price": "11",
+            "gross_amount": "2200",
+            "commission": "2",
+            "tax": "0",
+            "interest": "0",
+            "net_settlement": "-2202",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+    ]
+    trades = ec.rows_to_expected_trades(rows)
+    ids = [t.trade_id for t in trades]
+    assert ids[0] != ids[1]
+    assert ids[0].startswith("csv_2023:")
+    assert ids[1].startswith("csv_2024:")
+    assert ec.trade_ids_unique(trades) is True
+
+
+def test_trunc_toward_zero_for_negative_values() -> None:
+    assert ec.trunc_toward_zero(Decimal("-1.9")) == Decimal(-1)
+    assert ec.trunc_toward_zero(Decimal("1.9")) == Decimal(1)
+    assert ec.trunc_toward_zero(Decimal("-0.1")) == Decimal(0)
+
+
+def test_fifo_does_not_cross_currency_or_account() -> None:
+    trades = [
+        ec.ExpectedTrade(
+            trade_id="a:L1",
+            symbol="X",
+            trade_date=date(2024, 1, 1),
+            side="BUY",
+            quantity=100,
+            unit_price=Decimal(10),
+            gross_amount=Decimal(1000),
+            commission=Decimal(1),
+            tax=Decimal(0),
+            interest=Decimal(0),
+            source_order=0,
+            currency="TWD",
+            account_id="A",
+        ),
+        ec.ExpectedTrade(
+            trade_id="b:L2",
+            symbol="X",
+            trade_date=date(2024, 1, 2),
+            side="SELL",
+            quantity=100,
+            unit_price=Decimal(11),
+            gross_amount=Decimal(1100),
+            commission=Decimal(1),
+            tax=Decimal(3),
+            interest=Decimal(0),
+            source_order=1,
+            currency="USD",
+            account_id="A",
+        ),
+        ec.ExpectedTrade(
+            trade_id="c:L3",
+            symbol="X",
+            trade_date=date(2024, 1, 2),
+            side="SELL",
+            quantity=100,
+            unit_price=Decimal(12),
+            gross_amount=Decimal(1200),
+            commission=Decimal(1),
+            tax=Decimal(3),
+            interest=Decimal(0),
+            source_order=2,
+            currency="TWD",
+            account_id="B",
+        ),
+    ]
+    result = ec.independent_cash_fifo(trades, opening_lots=())
+    assert result.standard_fifo_allocated_qty == 0
+    assert result.same_day_reconciled_qty == 0
+    assert result.unmatched_sell_qty == 200
+    assert result.unsold_buy_qty == 100
+
+
+def test_source_integrity_blocks_full_success() -> None:
+    gate = ec.evaluate_source_integrity(
+        expected_sha256={"csv_2024": "a" * 64},
+        actual_sha256={"csv_2024": "b" * 64},
+        invalid_row_count=0,
+    )
+    assert gate["status"] == "FAIL"
+    assert "sha256_lock_mismatch" in gate["reasons"][0]
+
+    gate2 = ec.evaluate_source_integrity(
+        expected_sha256={"csv_2024": "a" * 64},
+        actual_sha256={"csv_2024": "a" * 64},
+        invalid_row_count=2,
+    )
+    assert gate2["status"] == "FAIL"
+    assert "invalid_trade_rows_present" in gate2["reasons"]
+
+    gate3 = ec.evaluate_source_integrity(
+        expected_sha256={"xls": "a" * 64},
+        actual_sha256={"xls": "a" * 64},
+        invalid_row_count="UNKNOWN",
+    )
+    assert gate3["status"] == "PARTIAL"
+    assert "invalid_row_count_UNKNOWN_unverified_format" in gate3["reasons"]
+
+
+def test_document_persists_allocation_lines_and_cash_only_scope() -> None:
+    rows = [
+        {
+            "source_id": "syn",
+            "physical_line": 1,
+            "symbol": "X",
+            "trade_date": "2024/1/1",
+            "side": "BUY",
+            "quantity": "1000",
+            "unit_price": "10",
+            "gross_amount": "10000",
+            "commission": "20",
+            "tax": "0",
+            "interest": "0",
+            "net_settlement": "-10020",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+        {
+            "source_id": "syn",
+            "physical_line": 2,
+            "symbol": "X",
+            "trade_date": "2024/1/2",
+            "side": "SELL",
+            "quantity": "400",
+            "unit_price": "12",
+            "gross_amount": "4800",
+            "commission": "10",
+            "tax": "14",
+            "interest": "0",
+            "net_settlement": "4776",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+    ]
+    doc = ec.build_expected_c_document(
+        case_id="GOLD-SYN-LINES",
+        source_sha256="a" * 64,
+        source_path="synthetic/a.csv",
+        source_format="capital_csv",
+        applicable_spec=["SPEC.md §6", "SPEC.md §7"],
+        rows=rows,
+        opening_lots_policy="NONE_APPROVED",
+        expected_source_sha256={"main": "a" * 64},
+        actual_source_sha256={"main": "a" * 64},
+        invalid_row_count=0,
+    )
+    assert doc["fifo_scope"] == "CASH_ONLY"
+    assert len(doc["allocations"]) == 1
+    alloc = doc["allocations"][0]
+    assert alloc["buy_trade_id"] == "syn:L1"
+    assert alloc["sell_trade_id"] == "syn:L2"
+    assert alloc["quantity"] == 400
+    assert alloc["match_type"] == "STANDARD_FIFO"
+    assert alloc["sequence_no"] == 1
+    assert len(doc["allocation_lines"]) == 1
+    line = doc["allocation_lines"][0]
+    assert line["cost"] == "4020"
+    assert line["income"] == "4776"
+    assert line["buy_commission_applied"] == "20"
+    assert line["sell_commission_applied"] == "10"
+    assert line["sell_tax_applied"] == "14"
+    assert line["gross_conservation_ok"] is True
+    assert doc["validation_status"] == "INDEPENDENTLY_COMPUTED"
+
+
+def test_document_blocked_when_invalid_rows_or_sha_mismatch() -> None:
+    rows = [
+        {
+            "source_id": "syn",
+            "physical_line": 1,
+            "symbol": "X",
+            "trade_date": "2024/1/1",
+            "side": "BUY",
+            "quantity": "100",
+            "unit_price": "10",
+            "gross_amount": "1000",
+            "commission": "1",
+            "tax": "0",
+            "interest": "0",
+            "net_settlement": "-1001",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+    ]
+    doc = ec.build_expected_c_document(
+        case_id="GOLD-SYN-BLOCK",
+        source_sha256="a" * 64,
+        source_path="synthetic/a.csv",
+        source_format="capital_csv",
+        applicable_spec=["SPEC.md §6"],
+        rows=rows,
+        opening_lots_policy="NONE_APPROVED",
+        expected_source_sha256={"main": "a" * 64},
+        actual_source_sha256={"main": "b" * 64},
+        invalid_row_count=1,
+    )
+    assert doc["validation_status"] == "BLOCKED_SOURCE_INTEGRITY"
+    assert doc["source_integrity"]["status"] == "FAIL"
+    assert len(doc["source_integrity"]["reasons"]) >= 1
+
+
+def test_amount_out_of_tolerance_marked_not_conserved() -> None:
+    result = ec.allocate_fragment_amounts(
+        unit_price=Decimal("10.5"),
+        gross=Decimal(1000),
+        qtys=[50, 50],
+    )
+    # TRUNC(50*10.5)=525 twice = 1050; diff=-50 > 1
+    assert result["conservation_ok"] is False
+    assert result["out_of_tolerance"] is True
+    assert result["difference"] == "-50"
+
+
+def test_unknown_interest_marks_partial_not_silent_zero_success() -> None:
+    rows = [
+        {
+            "source_id": "syn",
+            "physical_line": 1,
+            "symbol": "X",
+            "trade_date": "2024/1/1",
+            "side": "BUY",
+            "quantity": "100",
+            "unit_price": "10",
+            "gross_amount": "1000",
+            "commission": "1",
+            "tax": "0",
+            "interest": "",
+            "net_settlement": "-1001",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+        {
+            "source_id": "syn",
+            "physical_line": 2,
+            "symbol": "X",
+            "trade_date": "2024/1/2",
+            "side": "SELL",
+            "quantity": "100",
+            "unit_price": "11",
+            "gross_amount": "1100",
+            "commission": "1",
+            "tax": "3",
+            "interest": "",
+            "net_settlement": "1096",
+            "trade_type": "CASH",
+            "currency": "TWD",
+            "account_id": "acct_A",
+        },
+    ]
+    doc = ec.build_expected_c_document(
+        case_id="GOLD-SYN-INT",
+        source_sha256="a" * 64,
+        source_path="synthetic/a.csv",
+        source_format="capital_csv",
+        applicable_spec=["SPEC.md §7"],
+        rows=rows,
+        opening_lots_policy="NONE_APPROVED",
+        expected_source_sha256={"main": "a" * 64},
+        actual_source_sha256={"main": "a" * 64},
+        invalid_row_count=0,
+    )
+    assert doc["aggregates"]["interest"] == "UNKNOWN"
+    assert doc["realized_and_open"]["status"] in {
+        "PARTIAL_DUE_TO_UNKNOWN_INTEREST",
+        "PARTIAL",
+    }
+    assert "interest_blank_rows" in doc["fields_not_computable"]

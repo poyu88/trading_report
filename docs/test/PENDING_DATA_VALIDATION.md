@@ -114,6 +114,22 @@
 | 重新啟動條件 | 獨立 Reviewer 通過後接 CR-10A；來源鎖定 |
 | 目前狀態 | PENDING_DATA（Phase 2 C 已建；邊界／CR-10A 仍待） |
 
+## 受測 report_finance 負數 TRUNC 語意（與 C 層分離）
+
+| 欄位 | 內容 |
+|---|---|
+| CR ID | GOLD-TRUNC-NEG |
+| 問題名稱 | 受測 `backend.services.report_finance.trunc_toward_zero` 對負數使用 `ROUND_UP`（離零），與 Decimal「朝零＝ROUND_DOWN」不符 |
+| 程式位置 | `backend/services/report_finance.py`::`trunc_toward_zero` |
+| 目前行為 | 正數朝零；負數離零（例：`-1.9` → `-2`） |
+| 已驗證範圍 | 獨立 C 層 `backend.golden.expected_c.trunc_toward_zero` 已改為一律 `ROUND_DOWN`（合成測覆蓋負數） |
+| 未驗證範圍 | 受測報表路徑負數單價／價金片段之生產修正與回歸 |
+| 缺少資料 | 無需新交易；待 CR-10A 接回時以合成負數片段驗收 |
+| 資料齊全後 | 修正受測函式＋契約測；不得削弱既有正數 TRUNC 斷言 |
+| 未來驗收條件 | 正負數皆朝零；與獨立 C 一致 |
+| 重新啟動條件 | 獨立 Reviewer 通過後接 CR-10A |
+| 目前狀態 | PENDING_DATA（C 層已修；受測路徑待 CR-10A） |
+
 ## 延期（DEFERRED；本輪非阻擋）
 
 | ID | 說明 | 狀態 |

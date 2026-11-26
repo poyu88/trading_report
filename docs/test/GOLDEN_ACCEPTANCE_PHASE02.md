@@ -1,6 +1,6 @@
 # 真實交易黃金驗收 — Phase 2 獨立 C 層（R1.0）
 
-> **狀態**：Owner 已授權 Phase 2；獨立 C 本機產出。**CR-10A 仍未結案**。Merge／正式 Migration／寫入正式 DB **禁止**。
+> **狀態**：Owner 已授權 Phase 2；複審修正後本機 C 已重產。**CR-10A 仍未結案**。Merge／正式 Migration／寫入正式 DB **禁止**。
 > **本文件**：非敏感技術規範。**禁止**貼入真實交易明細、帳戶號碼、完整財務答案數字。
 
 ## 1. 目標
@@ -30,31 +30,38 @@
 
 | case | C 層 | 備註 |
 |---|---|---|
-| GOLD-001 | 已獨立核算 | 年度 CSV；含 FIFO／同日補沖／已實現／未平倉；費用來源落點彙總 |
-| GOLD-002 | 已獨立核算（部分） | 來源彙總＋FIFO；缺期初 → unmatched／PARTIAL；`invalid_row_count=UNKNOWN` |
-| GOLD-003 | 已獨立核算（部分） | 同上；2236 缺買進明確標記；不得混配／自造期初 |
-| GOLD-004 | 已獨立核算 | 四年度 CSV 串接彙總＋FIFO；多檔指紋見 sources |
+| GOLD-001 | 已獨立核算 | 年度 CSV；逐筆 allocations／allocation_lines；來源 SHA＋illegal gate |
+| GOLD-001-2236 | 已獨立核算 | 同年來源篩選 2236 九筆；非硬編碼 Reviewer 數值 |
+| GOLD-002 | PARTIAL | `invalid_row_count=UNKNOWN`；缺期初 → unmatched；仍存逐筆（可算範圍） |
+| GOLD-003 | PARTIAL | 來源無幣別欄 → 幣別 UNKNOWN，CASH FIFO 不混配；2236 缺買進 |
+| GOLD-004 | 已獨立核算 | `trade_id={source_id}:L{line}` 全域唯一；四年度指紋鎖定 |
 
 精確數字與 SHA 見本機 `expected_c/` 與 `evidence/phase02_expected_c_summary.json`。
 
 ## 4. 已核算／未核算欄位（語意）
 
-**已由 A＋SPEC 核算（GOLD-001 完整；002／003 視期初可能 PARTIAL）**
+**已由 A＋SPEC 核算（GOLD-001／001-2236／004 完整；002／003 PARTIAL）**
 
 - 原始有效交易筆數、買賣筆數／股數／成交金額／手續費
 - 交易稅、利息（來源有明確值時）
 - 原始淨收付合計
 - FIFO 預期：`STANDARD_FIFO`／`SAME_DAY_RECONCILED` 股數、未配賣出、未售買進
-- 已實現損益（§7 TRUNC＋費用第一片段）
+- **逐筆** allocations（trade id／買賣來源／股數／match_type／序）
+- **逐筆** allocation_lines（成本／收入／費用落點／價金尾差／conservation）
+- 已實現損益（§7；`decimal.ROUND_DOWN`＝朝零，含負數）
 - 未平倉股數與成本
 - 費用落點政策：`source_values_unsplit`（來源原值；不分攤）
+- 來源完整性：SHA256 鎖定＋CSV acceptance gate（失敗不得完整成功）
 
 **尚未能完整核算或維持 UNKNOWN／PENDING**
 
-- HTML／玉山列級 `invalid_row_count`（→ `UNKNOWN`）
+- HTML／玉山列級 `invalid_row_count`（→ `UNKNOWN` → PARTIAL）
+- 玉山無幣別欄（→ 幣別 UNKNOWN；不硬填 TWD）
 - 缺核准期初之賣出完整成本／損益（→ PARTIAL／unmatched）
+- DAY_TRADE pool（`fifo_scope=CASH_ONLY`）
 - 外部 trade id／多帳戶真實樣本／特殊商品等（見 `PENDING_DATA_VALIDATION.md`）
 - 報表 A～W 逐欄與 CR-10A 財務驗證器綁定（待獨立 Reviewer／CR-10A）
+- 受測 `report_finance.trunc_toward_zero` 負數語意（與 C 層已修正者分離；見 PENDING）
 
 ## 5. 下一步
 
