@@ -406,11 +406,14 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
     tidx = {h: i for i, h in enumerate(theaders)}
     assert "buy_trade_id" in tidx and "sell_trade_id" in tidx
 
-    # 逐筆 SELL：Trace 上該 sell_trade_id 的手續費／稅加總＝原始交易（僅第一片段有值）
+    # 逐筆 SELL：Trace 上該 sell_trade_id 的手續費／稅／利息加總＝原始交易（僅第一片段有值）
     sell_fee_from_trace: dict[str, Decimal] = {}
     sell_tax_from_trace: dict[str, Decimal] = {}
+    sell_interest_from_trace: dict[str, Decimal] = {}
     buy_fee_from_trace: dict[str, Decimal] = {}
     fee_rows_by_sell: dict[str, int] = {}
+    tax_rows_by_sell: dict[str, int] = {}
+    interest_rows_by_sell: dict[str, int] = {}
     for row in tws.iter_rows(min_row=2, max_col=len(theaders), values_only=True):
         sid = row[tidx["sell_trade_id"]]
         bid = row[tidx["buy_trade_id"]]
@@ -422,9 +425,17 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
                 if fee != 0:
                     fee_rows_by_sell[sid] = fee_rows_by_sell.get(sid, 0) + 1
             if row[tidx["交易稅"]] is not None:
-                sell_tax_from_trace[sid] = sell_tax_from_trace.get(sid, Decimal(0)) + Decimal(
-                    str(row[tidx["交易稅"]])
+                tax = Decimal(str(row[tidx["交易稅"]]))
+                sell_tax_from_trace[sid] = sell_tax_from_trace.get(sid, Decimal(0)) + tax
+                if tax != 0:
+                    tax_rows_by_sell[sid] = tax_rows_by_sell.get(sid, 0) + 1
+            if "利息" in tidx and row[tidx["利息"]] is not None:
+                interest = Decimal(str(row[tidx["利息"]]))
+                sell_interest_from_trace[sid] = (
+                    sell_interest_from_trace.get(sid, Decimal(0)) + interest
                 )
+                if interest != 0:
+                    interest_rows_by_sell[sid] = interest_rows_by_sell.get(sid, 0) + 1
         if bid and row[tidx["手續費"]] is not None and not sid:
             # UNSOLD／BUY-only 列；本案例全配平，通常不走此路徑
             buy_fee_from_trace[bid] = buy_fee_from_trace.get(bid, Decimal(0)) + Decimal(
@@ -436,12 +447,20 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
             continue
         assert sell_fee_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.commission_txt)
         assert sell_tax_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.tax_txt)
-        # 第一片段才有費用：該 sell 有費用的列恰為 1（若佣金>0）
+        assert sell_interest_from_trace.get(t.id, Decimal(0)) == txt_to_decimal(t.interest_txt)
+        # 第一片段才有費用：該 sell 有費用的列恰為 1（若佣金／稅／利息>0）
         if txt_to_decimal(t.commission_txt) != 0:
             assert fee_rows_by_sell.get(t.id, 0) == 1
+        if txt_to_decimal(t.tax_txt) != 0:
+            assert tax_rows_by_sell.get(t.id, 0) == 1
+        if txt_to_decimal(t.interest_txt) != 0:
+            assert interest_rows_by_sell.get(t.id, 0) == 1
 
     assert sum(sell_fee_from_trace.values(), Decimal(0)) == golden["sell_commission"]
     assert sum(sell_tax_from_trace.values(), Decimal(0)) == golden["tax"]
+    assert sum(sell_interest_from_trace.values(), Decimal(0)) == sum(
+        (txt_to_decimal(t.interest_txt) for t in trades if t.side == "SELL"), Decimal(0)
+    )
 
     # BUY 手續費：由 detail Excel 第一買片段加總（Trace 賣列不帶買方手續費）
     wb = load_workbook(ctx["xlsx"], data_only=True)
