@@ -149,9 +149,14 @@ def compare_allocation_lines_to_trace_rows(
     *,
     trade_id_to_fp: dict[str, str],
 ) -> dict[str, Any]:
-    """以來源指紋對應 Trace MATCHED 列與 C allocation_lines（逐筆財務）。"""
+    """以來源指紋對應 Trace MATCHED 列與 C allocation_lines（逐筆財務）。
+
+    使用多重集（非單值 dict）比對，避免重複配對鍵被覆蓋而遺失明細。
+    """
+    from collections import Counter, defaultdict
+
     expected = allocation_line_finance_rows(expected_c)
-    actual_map: dict[str, dict[str, Any]] = {}
+    actual_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in trace_rows:
         if str(row.get("row_kind") or "") != "MATCHED":
             continue
@@ -160,19 +165,30 @@ def compare_allocation_lines_to_trace_rows(
         qty = int(row.get("quantity") or 0)
         match_type = str(row.get("match_type") or "")
         key = f"{match_type}|{buy_fp}|{sell_fp}|{qty}"
-        actual_map[key] = row
+        actual_by_key[key].append(row)
 
     diffs: dict[str, dict[str, str]] = {}
     errors: list[str] = []
     if not expected:
         errors.append("no_expected_allocation_lines")
-    exp_keys = {r["identity_key"] for r in expected}
-    act_keys = set(actual_map)
-    if exp_keys != act_keys:
-        diffs["line_identity_set"] = {
-            "expected_only": str(sorted(exp_keys - act_keys)),
-            "actual_only": str(sorted(act_keys - exp_keys)),
+
+    exp_counter = Counter(r["identity_key"] for r in expected)
+    act_counter = Counter(
+        {k: len(v) for k, v in actual_by_key.items()}
+    )
+    # Counter 對缺失鍵視為 0；改以完整多重集相等
+    if exp_counter != act_counter:
+        diffs["line_identity_multiset"] = {
+            "expected_counts": str(dict(sorted(exp_counter.items()))),
+            "actual_counts": str(dict(sorted(act_counter.items()))),
+            "expected_only": str(
+                sorted(k for k in exp_counter if exp_counter[k] > act_counter.get(k, 0))
+            ),
+            "actual_only": str(
+                sorted(k for k in act_counter if act_counter[k] > exp_counter.get(k, 0))
+            ),
         }
+
     field_pairs = (
         ("cost", "cost"),
         ("income", "income"),
@@ -181,22 +197,37 @@ def compare_allocation_lines_to_trace_rows(
         ("sell_tax_applied", "tax"),
         ("sell_interest_applied", "interest"),
     )
+    # 依鍵分組 expected，與 actual 列表逐筆對位（同鍵內順序穩定）
+    exp_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for exp in expected:
-        key = exp["identity_key"]
-        act = actual_map.get(key)
-        if act is None:
-            continue
-        for exp_field, act_field in field_pairs:
-            ev = _d(exp[exp_field])
-            av = _d(act.get(act_field))
-            if ev != av:
-                diffs[f"{key}:{exp_field}"] = {"expected": str(ev), "actual": str(av)}
+        exp_by_key[exp["identity_key"]].append(exp)
+    for key, exp_list in exp_by_key.items():
+        act_list = actual_by_key.get(key) or []
+        for i, exp in enumerate(exp_list):
+            if i >= len(act_list):
+                break
+            act = act_list[i]
+            for exp_field, act_field in field_pairs:
+                ev = _d(exp[exp_field])
+                av = _d(act.get(act_field))
+                if ev != av:
+                    diffs[f"{key}#{i}:{exp_field}"] = {
+                        "expected": str(ev),
+                        "actual": str(av),
+                    }
+
+    actual_matched_count = sum(len(v) for v in actual_by_key.values())
+    if len(expected) != actual_matched_count:
+        diffs["line_count"] = {
+            "expected": str(len(expected)),
+            "actual": str(actual_matched_count),
+        }
     return {
         "ok": not diffs and not errors,
         "diffs": diffs,
         "errors": errors,
         "expected_line_count": len(expected),
-        "actual_matched_count": len(actual_map),
+        "actual_matched_count": actual_matched_count,
     }
 
 

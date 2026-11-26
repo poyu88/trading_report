@@ -20,8 +20,12 @@ from backend.golden.compare_c_d import (
     golden_finance_from_expected_c,
 )
 from backend.golden.expected_c import rows_to_expected_trades
-from backend.golden.phase3_pipeline import read_fifo_trace_rows, run_import_match_report
-from scripts.uat_fifo_same_day_2236 import uat_exit_code, verify_detail_xlsx_finance
+from backend.golden.phase3_pipeline import (
+    decide_gold004_verdict,
+    read_fifo_trace_rows,
+    run_import_match_report,
+)
+from scripts.uat_fifo_same_day_2236 import verify_detail_xlsx_finance
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "data" / "golden"
@@ -197,39 +201,51 @@ def main() -> int:
     fp_after = inv.fingerprint_bundle("phase3_gold004_after")
     drift = inv.compare_fingerprint_bundles(fp_before, fp_after)
 
-    verified_ok = (
-        compare["ok"]
-        and finance["ok"]
-        and per_line["ok"]
-        and pipe["artifacts"]["ok"]
-        and drift.get("status") == "PASS"
+    formal_ok = drift.get("status") == "PASS"
+    decided = decide_gold004_verdict(
+        compare_ok=bool(compare["ok"]),
+        finance_ok=bool(finance["ok"]),
+        per_line_ok=bool(per_line["ok"]),
+        artifacts_ok=bool(pipe["artifacts"]["ok"]),
+        formal_db_untouched=bool(formal_ok),
+        pending_data=pending,
     )
-    # 不強制完整 PASS：有 pending 時標 PARTIAL
-    if verified_ok and not pending:
-        verdict = "PASS"
-    elif compare["ok"] or finance["ok"] or per_line["ok"]:
-        verdict = "PARTIAL"
-        if not verified_ok:
-            pending.append("full_compare_not_ok")
-    else:
-        verdict = "FAIL"
+    verdict = str(decided["verdict"])
+    # Excel 明細以聚合為主；逐筆財務靠 Trace↔C。以下 Excel 欄未做可靠逐欄對應。
+    excel_unverified = [
+        "成交單價（買／賣）逐欄",
+        "備註／annotation 欄",
+        "非聚合明細列順序",
+        "原始 CSV Parser（本腳本僅 HTML bridge）",
+    ]
 
     summary = {
         "case_id": "GOLD-004",
-        "phase": "3_gold004",
+        "phase": "3_gold004_wrap",
         "uat_verdict": verdict,
-        "exit_code": 0 if verdict in {"PASS", "PARTIAL"} else 1,
+        "exit_code": int(decided["exit_code"]),
+        "necessary_ok": decided["necessary_ok"],
         "source_lock_ok": lock_ok,
-        "bridge_note": "HTML bridge only；原始 CSV Parser 未宣稱獨立驗收",
+        "bridge_note": (
+            "HTML bridge only；原始 CSV Parser 未宣稱獨立驗收；"
+            "不得將 bridge 宣稱為 CSV Parser 完整驗收"
+        ),
         "import_trade_count": pipe["import_result"].trade_count,
         "expected_trade_count": raw_doc.get("trade_count"),
         "compare_c_d_ok": compare["ok"],
         "compare_diffs": compare["diffs"],
         "finance_ok": finance["ok"],
         "per_line_ok": per_line["ok"],
+        "per_line_expected_count": per_line.get("expected_line_count"),
+        "per_line_actual_count": per_line.get("actual_matched_count"),
         "artifacts_ok": pipe["artifacts"]["ok"],
-        "formal_db_untouched": drift.get("status") == "PASS",
-        "pending_data": pending,
+        "formal_db_untouched": formal_ok,
+        "pending_data": decided["pending_data"],
+        "excel_verification_scope": {
+            "mode": "aggregate_primary",
+            "per_line_via": "allocation_lines_to_fifo_trace",
+            "unverified_fields": excel_unverified,
+        },
         "known_limitations": list(raw_doc.get("known_limitations") or [])[:8],
         "started_at_utc": datetime.now(UTC).isoformat(),
         "runs_d": str(runs_case.relative_to(ROOT)).replace("\\", "/"),
@@ -239,10 +255,21 @@ def main() -> int:
         "compare_diffs": compare["diffs"],
         "finance_diffs": finance["diffs"],
         "per_line_diffs": per_line["diffs"],
+        "failed_necessary": [
+            name
+            for name, ok in (
+                ("compare_c_d", compare["ok"]),
+                ("finance", finance["ok"]),
+                ("per_line", per_line["ok"]),
+                ("artifacts", pipe["artifacts"]["ok"]),
+                ("formal_db", formal_ok),
+            )
+            if not ok
+        ],
     })
     _write_json(EVIDENCE / "phase03_gold004_summary.json", summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
-    return uat_exit_code("PASS" if verdict != "FAIL" else "FAIL")
+    return int(decided["exit_code"])
 
 
 if __name__ == "__main__":

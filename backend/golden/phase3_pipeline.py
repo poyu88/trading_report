@@ -33,6 +33,50 @@ CONSERVATION_REQUIRED_COLS = {
     "interest",
 }
 
+# Conservation CSV 合法布林字串（Python str(bool) 與小寫）
+_CONSERVATION_TRUE = frozenset({"true"})
+_CONSERVATION_FALSE = frozenset({"false"})
+_CONSERVATION_LEGAL = _CONSERVATION_TRUE | _CONSERVATION_FALSE
+
+
+def decide_gold004_verdict(
+    *,
+    compare_ok: bool,
+    finance_ok: bool,
+    per_line_ok: bool,
+    artifacts_ok: bool,
+    formal_db_untouched: bool,
+    pending_data: list[str],
+) -> dict[str, Any]:
+    """GOLD-004 最終判定。
+
+    必要驗收（compare／finance／per_line／artifacts／正式 DB 指紋）任一失敗 → FAIL。
+    PARTIAL 僅用於已登記資料不足，且必要驗證全過。
+    """
+    necessary_ok = (
+        bool(compare_ok)
+        and bool(finance_ok)
+        and bool(per_line_ok)
+        and bool(artifacts_ok)
+        and bool(formal_db_untouched)
+    )
+    pending = [p for p in pending_data if p]
+    if not necessary_ok:
+        verdict = "FAIL"
+        exit_code = 1
+    elif pending:
+        verdict = "PARTIAL"
+        exit_code = 0
+    else:
+        verdict = "PASS"
+        exit_code = 0
+    return {
+        "verdict": verdict,
+        "exit_code": exit_code,
+        "necessary_ok": necessary_ok,
+        "pending_data": pending,
+    }
+
 
 def trade_row_fingerprint(trade: TradeRow) -> str:
     """由 DB TradeRow 建立來源指紋。"""
@@ -242,6 +286,12 @@ def verify_audit_artifacts_content(
         else:
             checks["trace_headers_ok"] = True
 
+    audit_cons = audit.get("conservation_ok")
+    checks["audit_conservation_ok_is_bool"] = isinstance(audit_cons, bool)
+    if not checks["audit_conservation_ok_is_bool"]:
+        errors.append("audit_conservation_ok_not_bool")
+
+    rows_all_ok = False
     if checks["conservation_under_out"] and cons_path is not None:
         with cons_path.open("r", encoding="utf-8-sig", newline="") as fh:
             reader = csv.DictReader(fh)
@@ -252,11 +302,34 @@ def verify_audit_artifacts_content(
                 errors.append(f"conservation_missing_cols:{','.join(missing)}")
             body = list(reader)
             checks["conservation_has_rows"] = len(body) > 0
-            if body:
-                ok_vals = {str(r.get("F_conservation_ok", "")).lower() for r in body}
-                checks["conservation_ok_column_populated"] = bool(ok_vals & {"true", "false"})
-            else:
+            if not body:
                 errors.append("conservation_empty")
+                checks["conservation_ok_values_legal"] = False
+                checks["conservation_all_rows_ok"] = False
+                checks["audit_conservation_matches_rows"] = False
+            else:
+                raw_vals = [str(r.get("F_conservation_ok", "")).strip() for r in body]
+                lower_vals = [v.lower() for v in raw_vals]
+                legal = all(v in _CONSERVATION_LEGAL for v in lower_vals)
+                checks["conservation_ok_values_legal"] = legal
+                if not legal:
+                    errors.append("conservation_ok_illegal_values")
+                # 不得僅確認字串存在；須核對實際守恆狀態
+                rows_all_ok = legal and all(v in _CONSERVATION_TRUE for v in lower_vals)
+                checks["conservation_all_rows_ok"] = rows_all_ok
+                if legal and not rows_all_ok:
+                    errors.append("conservation_row_failed")
+                if checks["audit_conservation_ok_is_bool"]:
+                    matches = bool(audit_cons) == rows_all_ok
+                    checks["audit_conservation_matches_rows"] = matches
+                    if not matches:
+                        errors.append("audit_conservation_mismatch_csv")
+                else:
+                    checks["audit_conservation_matches_rows"] = False
+    else:
+        checks["conservation_ok_values_legal"] = False
+        checks["conservation_all_rows_ok"] = False
+        checks["audit_conservation_matches_rows"] = False
 
     if not exceptions_path.is_file():
         checks["exceptions_exists"] = False

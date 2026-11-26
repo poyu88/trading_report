@@ -394,6 +394,19 @@
 | 本機 REGRESSION | `uv run pytest -q` → **288 passed**／65.08s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
 | 判定 | 可驗證財務項已收斂；Merge／Migration **未**授權 |
 
+### 1.30 Phase 3 合併前收尾（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12 Phase 3 合併前收尾） |
+| 變更 | GOLD-004 `decide_gold004_verdict`（必要失敗→FAIL）；CR-10C 守恆實際值／audit 一致性；CR-10A 重複鍵多重集＋列數；CR-10B 故障用實際觀測；Excel 未驗證範圍明示 |
+| RED | `tests/test_golden_phase3_wrap.py`：缺 `decide_gold004_verdict`；守恆僅字串存在；重複鍵 dict 覆蓋 |
+| GREEN | `decide_gold004_verdict`；`verify_audit_artifacts_content` 強化；`compare_allocation_lines_to_trace_rows` 多重集；UAT 腳本 |
+| REFACTOR | 無大型重構 |
+| 本機 UAT | GOLD-001-2236 **PASS**（fault 僅 `detail_xlsx_finance_ok`）；GOLD-004 **PASS**（`necessary_ok`；HTML bridge；CSV Parser 仍 PENDING） |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed**／74.81s；`uv run ruff check .` 通過；正式 DB **未**寫入 |
+| 判定 | 合併前財務驗收可交 Reviewer；**不得** Merge／正式 Migration／寫正式 DB |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -576,6 +589,7 @@
 | `golden_phase2_expected_c_v1` | Phase 2：獨立 C（A＋SPEC）；GOLD-001～004 本機答案；HTML／玉山 invalid→UNKNOWN | 2026-11-26；`test_golden_expected_c` 收集 **ERROR**（缺 `backend.golden`） | 2026-11-26；`expected_c` 模組＋phase2 腳本＋inventory UNKNOWN | ruff Decimal(0) | **261 passed／1 skipped**／74.78s | 真實答案 gitignored；CR-10A／Merge／Migration 未授權；待獨立 Reviewer |
 | `golden_phase2_r2_v1` | Phase 2 複審：唯一 trade_id、負數 TRUNC、帳戶／幣別隔離、來源閘門、逐筆 lines、GOLD-001-2236 | 2026-11-26；**9 failed／7 passed** | 2026-11-26；expected_c＋phase2 腳本重產 | 無 | **269 passed／1 skipped**／81.41s | 受測 report_finance 負數 TRUNC 仍 PENDING；真實答案未入 Git |
 | `golden_phase3_cr10a_v1` | Phase 3：exit 碼／TRUNC-NEG／C↔D／RED-07／CR-10B exit／本機 2236 UAT | 2026-11-26；exit／trunc／compare 缺模組或負數離零 | 2026-11-26；phase2 exit＋report_finance＋compare／pipeline＋UAT 腳本 | ruff B023 | **285 passed**／66.31s | 真實答案／runs_d 本機；Merge／Migration 未授權 |
+| `golden_phase3_wrap_v1` | Phase 3 合併前：GOLD-004 必要失敗→FAIL；CR-10C 守恆實際值；CR-10A 重複鍵多重集；CR-10B 觀測非固定 True | 2026-11-26；`test_golden_phase3_wrap` ImportError／契約 failed | 2026-11-26；`decide_gold004_verdict`＋artifacts／compare／UAT | 無 | **299 passed**／74.81s | GOLD-001／004 UAT PASS；CSV Parser 仍 PENDING；Merge／Migration 未授權 |
 
 **記錄欄位最低要求**
 
@@ -660,3 +674,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`golden_phase2_r2_v1`**：複審修正—唯一 trade_id、負數 TRUNC 朝零、帳戶／幣別分池、來源閘門、逐筆 allocation_lines、GOLD-001-2236；RED 9 failed → GREEN；全量 **269 passed／1 skipped**／81.41s；ruff 通過；正式 DB **未**動；真實答案未入 Git；受測 trunc 負數見 PENDING；Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_phase3_cr10a_v1`**：Owner 授權 Phase 3；Phase2 FAIL／BLOCKED 非零結束碼；GOLD-TRUNC-NEG 受測朝零；C↔D 比對＋本機 GOLD-001-2236 UAT **PASS**；RED-07 逐筆互抵；CR-10B `uat_exit_code`；GOLD-002／003 PARTIAL、004 C 就緒；全量 **285 passed**／66.31s；ruff 通過；正式 DB **未**動；真實證據未入 Git；Merge／Migration **未**授權。 |
 | 2026-11-26 | **`golden_phase3_cr10a_r2_v1`**：複審—allocation_lines↔Trace 逐筆；open_cost 觀測；CR-10B／10C；WAL／SHM；GOLD-004 全年 D **PASS**（HTML bridge）；全量 **288 passed**／65.08s；ruff 通過；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |
+| 2026-11-26 | **`golden_phase3_wrap_v1`**：合併前收尾—GOLD-004 必要失敗不得 PARTIAL；CR-10C 守恆實際值；CR-10A 重複鍵多重集；CR-10B 觀測非固定 True；Excel 未驗證範圍明示；全量 **299 passed**／74.81s；ruff 通過；GOLD-001／004 UAT **PASS**；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |

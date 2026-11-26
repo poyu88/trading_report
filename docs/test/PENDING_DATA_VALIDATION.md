@@ -136,7 +136,7 @@
 |---|---|---|
 | GOLD-002 | PARTIAL：來源 PARTIAL、可算 FIFO／aggregates；不得完整成功 | HTML `invalid_row_count=UNKNOWN`；realized 因未配賣出不完全 |
 | GOLD-003 | PARTIAL：已確認缺買進／未知幣別／非 CASH 類型欄 | 期初、DAY_TRADE pool、幣別；**不得補造期初／預設 0** |
-| GOLD-004 | 本機全年 D 回歸 **PASS**（HTML bridge＋正式 FIFO／Report；逐筆 Trace↔C） | **原始 CSV Parser 尚未獨立驗收**（僅 bridge 後流程）；無跨年期初限制仍列 known_limitations |
+| GOLD-004 | 本機全年 D 回歸 **PASS**（`necessary_ok`；HTML bridge＋正式 FIFO／Report；逐筆 Trace↔C；必要失敗→FAIL） | **原始 CSV Parser 尚未獨立驗收**（僅 bridge 後流程；不得宣稱 Parser 完整驗收）；無跨年期初限制仍列 known_limitations；Excel 逐欄未全面驗（見 summary `excel_verification_scope`） |
 
 本機摘要：`data/golden/evidence/phase03_partial_cases_summary.json`、`phase03_gold004_summary.json`（gitignored）。
 
@@ -160,8 +160,9 @@
 
 | ID | 說明 | 狀態 |
 |---|---|---|
-| CR-10A GOLD-001-2236 | 逐筆 Trace↔C＋聚合＋故障注入本機 **PASS** | **本輪已驗** |
-| CR-10B | 合法副本 → FAIL／非零 exit／failed_checks／summary | **本輪已驗** |
-| CR-10C | Audit／Trace／Conservation／Exceptions 內容欄位核對 | **本輪已驗**（內容深度可再擴） |
+| CR-10A GOLD-001-2236 | 逐筆 Trace↔C＋聚合＋故障注入本機 **PASS**；重複鍵多重集；Excel 未驗證範圍已記錄 | **本輪已驗（合併前收尾）** |
+| CR-10B | 合法副本 → FAIL／非零 exit／failed_checks；觀測自正常 UAT（非固定 True） | **本輪已驗（合併前收尾）** |
+| CR-10C | Conservation 實際守恆狀態＋audit `conservation_ok` 一致性；非法型別不得 PASS | **本輪已驗（合併前收尾）** |
+| GOLD-CSV-PARSER | HTML bridge ≠ 原始 CSV Parser 完整驗收 | **PENDING_DATA**（見上節） |
 | CR-06B／06C | 既有合成九筆 E2E 維持 | 既有通過 |
 | Manifest Pydantic／mypy／Hypothesis／Mutation／完整稅務引擎 | 獨立評估 | DEFERRED |

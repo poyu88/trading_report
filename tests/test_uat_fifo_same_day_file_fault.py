@@ -16,6 +16,7 @@ from backend.services.allocation_service import match_fifo_for_account
 from backend.services.report_service import generate_detail_report
 from scripts.uat_fifo_same_day_2236 import (
     TRADES,
+    _formal_fingerprint,
     _seed,
     build_uat_checks,
     compute_finance_golden_from_uat_trades,
@@ -27,6 +28,7 @@ from scripts.uat_fifo_same_day_2236 import (
 
 def _run_synthetic_report(tmp_path: Path):
     """於 tmp DB 跑合成 2236 → match → report（不碰正式 DB）。"""
+    formal_before = _formal_fingerprint()
     db_path = tmp_path / "fault.db"
     engine = init_db(db_path)
     Session = make_session_factory(engine)
@@ -45,6 +47,7 @@ def _run_synthetic_report(tmp_path: Path):
         alloc_rows = list(
             session.scalars(select(FifoAllocation).where(FifoAllocation.run_id == run.id))
         )
+        formal_after = _formal_fingerprint()
         return {
             "session": session,
             "account": account,
@@ -56,6 +59,8 @@ def _run_synthetic_report(tmp_path: Path):
             "audit_path": audit_path,
             "exc_path": exc_path,
             "audit": audit,
+            # 實際觀測：正式 DB 指紋未變（非固定 True）
+            "formal_db_untouched": formal_before == formal_after,
         }
     except Exception:
         session.rollback()
@@ -63,35 +68,57 @@ def _run_synthetic_report(tmp_path: Path):
         raise
 
 
+# 合成路徑未跑 migration／冪等／annotation-H；不得當正向或反向證據
+_NOT_CLAIMED_CHECKS = frozenset(
+    {
+        "actual_migration_day_trade_backfill",
+        "actual_migration_cash_standard_ok",
+        "actual_migration_fk_ok",
+        "actual_migration_integrity_ok",
+        "idempotent_old_preserved",
+        "idempotent_old_keys_unchanged",
+        "idempotent_new_keys_equal",
+        "idempotent_qty_same",
+        "h_ok",
+    }
+)
+
+
+def _claimed_checks(checks: dict[str, bool]) -> dict[str, bool]:
+    """僅保留本輪可觀測檢查（排除未執行探針）。"""
+    return {k: v for k, v in checks.items() if k not in _NOT_CLAIMED_CHECKS}
+
+
 def _base_checks_kwargs(ctx: dict, *, finance_ok: bool, required: dict[str, bool]) -> dict:
     by_type: dict[str, int] = {}
     for a in ctx["result"].allocations:
         by_type[a.match_type] = by_type.get(a.match_type, 0) + a.quantity
+    # conservation／formal_db 取自本輪實際觀測（非固定 True）
     return {
         "required_outputs": required,
         "migration_probe": {
-            "day_trade_backfill_ok": True,
-            "cash_standard_ok": True,
-            "foreign_key_check_empty": True,
-            "integrity_ok": True,
+            "day_trade_backfill_ok": False,
+            "cash_standard_ok": False,
+            "foreign_key_check_empty": False,
+            "integrity_ok": False,
         },
         "fresh_schema_has_match_type": True,
         "allocated_qty": sum(a.quantity for a in ctx["result"].allocations),
         "qty_by_match_type": by_type,
         "unsold_qty": sum(u.available for u in ctx["result"].unsold),
         "blocking": bool(ctx["result"].blocking),
-        "conservation_ok": True,
+        "conservation_ok": bool(ctx["audit"].get("conservation_ok")),
         "audit_json": ctx["audit"],
         "integrity_check_result": "ok",
-        "h_annotation_non_interference": True,
+        "h_annotation_non_interference": False,
         "detail_is_draft": "DRAFT" in ctx["xlsx"].name,
         "idempotent": {
-            "old_run_preserved": True,
-            "old_run_keys_unchanged": True,
-            "new_run_keys_equal_old": True,
-            "allocated_qty_same": True,
+            "old_run_preserved": False,
+            "old_run_keys_unchanged": False,
+            "new_run_keys_equal_old": False,
+            "allocated_qty_same": False,
         },
-        "formal_db_untouched": True,
+        "formal_db_untouched": bool(ctx.get("formal_db_untouched")),
         "run_dir_under_data_uat": True,
         "out_dir_under_output_uat": True,
         "detail_xlsx_finance_ok": finance_ok,
@@ -129,8 +156,12 @@ def test_cr10b_actual_excel_profit_tamper_fails(tmp_path: Path) -> None:
         audit_path=ctx["audit_path"],
         exceptions_path=ctx["exc_path"],
     )
-    checks = build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=after["ok"], required=required))
+    checks = _claimed_checks(
+        build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=after["ok"], required=required))
+    )
     assert checks["detail_xlsx_finance_ok"] is False
+    assert checks["conservation_ok"] is True  # 觀測自 audit，非固定
+    assert checks["formal_db_untouched"] is True
     assert all(checks.values()) is False
     ctx["session"].close()
 
@@ -195,8 +226,8 @@ def test_cr10c_delete_fifo_trace_fails_required_outputs(tmp_path: Path) -> None:
         exceptions_path=ctx["exc_path"],
     )
     assert required["fifo_trace"] is False
-    checks = build_uat_checks(
-        **_base_checks_kwargs(ctx, finance_ok=True, required=required)
+    checks = _claimed_checks(
+        build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=True, required=required))
     )
     assert checks["required_fifo_trace"] is False
     assert all(checks.values()) is False
@@ -217,8 +248,8 @@ def test_cr10c_delete_conservation_fails_required_outputs(tmp_path: Path) -> Non
         exceptions_path=ctx["exc_path"],
     )
     assert required["conservation"] is False
-    checks = build_uat_checks(
-        **_base_checks_kwargs(ctx, finance_ok=True, required=required)
+    checks = _claimed_checks(
+        build_uat_checks(**_base_checks_kwargs(ctx, finance_ok=True, required=required))
     )
     assert checks["required_conservation"] is False
     assert all(checks.values()) is False
@@ -242,11 +273,13 @@ def test_cr10c_tamper_audit_suspected_qty_fails(tmp_path: Path) -> None:
     )
     golden = compute_finance_golden_from_uat_trades(TRADES)
     finance = verify_detail_xlsx_finance(ctx["xlsx"], golden)
-    checks = build_uat_checks(
-        **_base_checks_kwargs(
-            {**ctx, "audit": loaded},
-            finance_ok=finance["ok"],
-            required=required,
+    checks = _claimed_checks(
+        build_uat_checks(
+            **_base_checks_kwargs(
+                {**ctx, "audit": loaded},
+                finance_ok=finance["ok"],
+                required=required,
+            )
         )
     )
     assert checks["annotation_suspected_exact_1000"] is False
@@ -291,8 +324,10 @@ def test_cr10b_fault_copy_produces_fail_exit_and_summary(tmp_path: Path) -> None
         audit_path=ctx["audit_path"],
         exceptions_path=ctx["exc_path"],
     )
-    checks = build_uat_checks(
-        **_base_checks_kwargs(ctx, finance_ok=bool(finance["ok"]), required=required)
+    checks = _claimed_checks(
+        build_uat_checks(
+            **_base_checks_kwargs(ctx, finance_ok=bool(finance["ok"]), required=required)
+        )
     )
     verdict = "PASS" if all(checks.values()) else "FAIL"
     exit_code = uat_exit_code(verdict)
@@ -301,11 +336,16 @@ def test_cr10b_fault_copy_produces_fail_exit_and_summary(tmp_path: Path) -> None
         "exit_code": exit_code,
         "failed_checks": [k for k, v in checks.items() if not v],
         "finance_diffs": finance["diffs"],
+        "observations": {
+            "conservation_ok": bool(ctx["audit"].get("conservation_ok")),
+            "formal_db_untouched": bool(ctx.get("formal_db_untouched")),
+        },
     }
     assert verdict == "FAIL"
     assert exit_code != 0
     assert "detail_xlsx_finance_ok" in summary["failed_checks"]
     assert summary["finance_diffs"]
+    assert summary["observations"]["formal_db_untouched"] is True
     ctx["session"].close()
 
 

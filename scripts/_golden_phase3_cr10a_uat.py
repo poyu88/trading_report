@@ -314,7 +314,7 @@ def main() -> int:
             trade_id_to_fp=trade_id_to_fp,
         )
 
-        # CR-10B：合法副本故障注入 → 走 UAT checks／exit／summary
+        # CR-10B：合法副本故障注入；觀測值來自本輪正常 UAT（禁固定 True）
         fault_path = runs_case / "fault_cost_income_both_up.xlsx"
         _fault_inject_copy(pipe["xlsx"], fault_path)
         fault_finance = verify_detail_xlsx_finance(fault_path, golden_agg)
@@ -325,49 +325,17 @@ def main() -> int:
             audit_path=pipe["audit_path"],
             exceptions_path=pipe["exc_path"],
         )
-        # detail 被換成 fault 檔名未必含 DRAFT；以 finance_ok 驅動 FAIL
         by_type: dict[str, int] = {}
         for a in pipe["match"].allocations:
             by_type[a.match_type] = by_type.get(a.match_type, 0) + a.quantity
-        fault_checks = build_uat_checks(
-            required_outputs=required,
-            migration_probe={
-                "day_trade_backfill_ok": True,
-                "cash_standard_ok": True,
-                "foreign_key_check_empty": True,
-                "integrity_ok": True,
-            },
-            fresh_schema_has_match_type=True,
-            allocated_qty=sum(a.quantity for a in pipe["match"].allocations),
-            qty_by_match_type=by_type,
-            unsold_qty=sum(u.available for u in pipe["match"].unsold),
-            blocking=bool(pipe["match"].blocking),
-            conservation_ok=True,
-            audit_json=audit,
-            integrity_check_result="ok",
-            h_annotation_non_interference=True,
-            detail_is_draft="DRAFT" in fault_path.name,
-            idempotent={
-                "old_run_preserved": True,
-                "old_run_keys_unchanged": True,
-                "new_run_keys_equal_old": True,
-                "allocated_qty_same": True,
-            },
-            formal_db_untouched=True,
-            run_dir_under_data_uat=str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
-            out_dir_under_output_uat=str(OUT_ROOT.resolve()) in str(out_dir.resolve()),
-            detail_xlsx_finance_ok=bool(fault_finance.get("ok")),
-        )
-        fault_verdict = "PASS" if all(fault_checks.values()) else "FAIL"
-        fault_exit = uat_exit_code(fault_verdict)
-        fault_summary = {
-            "uat_verdict": fault_verdict,
-            "exit_code": fault_exit,
-            "failed_checks": [k for k, v in fault_checks.items() if not v],
-            "finance_diffs": fault_finance.get("diffs"),
-            "detail_xlsx_finance_ok": fault_finance.get("ok"),
-        }
-        _write_json(runs_case / "fault_uat_summary.json", fault_summary)
+        # 正常管線觀測（故障前後不變的項目）
+        obs_conservation = bool(audit.get("conservation_ok"))
+        art_checks = pipe["artifacts"].get("checks") or {}
+        obs_conservation_rows = bool(art_checks.get("conservation_all_rows_ok"))
+        obs_artifacts_ok = bool(pipe["artifacts"]["ok"])
+        obs_allocated = sum(a.quantity for a in pipe["match"].allocations)
+        obs_unsold = sum(u.available for u in pipe["match"].unsold)
+        obs_blocking = bool(pipe["match"].blocking)
 
         # RED-07：以合法報表列序為基線（偵測竄改；非以 D 反推 C 正向答案）
         wb_legit = load_workbook(pipe["xlsx"], data_only=True)
@@ -405,6 +373,73 @@ def main() -> int:
     _write_json(run_dir / "formal_fp_after.json", fp_after)
     drift = inv.compare_fingerprint_bundles(fp_before, fp_after)
     _write_json(run_dir / "formal_fp_drift.json", drift)
+
+    # 指紋觀測完成後組裝故障判定（formal_db／conservation 皆為實際觀測）
+    obs_formal = drift.get("status") == "PASS"
+    fault_checks = build_uat_checks(
+        required_outputs=required,
+        migration_probe={
+            # 本腳本未跑 alembic 探針；不得宣稱 migration 已驗——以 False 顯式排除
+            "day_trade_backfill_ok": False,
+            "cash_standard_ok": False,
+            "foreign_key_check_empty": False,
+            "integrity_ok": False,
+        },
+        fresh_schema_has_match_type=True,  # init_db create_all 本輪已觀測
+        allocated_qty=obs_allocated,
+        qty_by_match_type=by_type,
+        unsold_qty=obs_unsold,
+        blocking=obs_blocking,
+        conservation_ok=obs_conservation and obs_conservation_rows,
+        audit_json=audit,
+        integrity_check_result="ok",  # 隔離 UAT DB；正式 DB 另以指紋
+        h_annotation_non_interference=True,  # 本輪未重跑 annotation；見 note
+        detail_is_draft="DRAFT" in fault_path.name,
+        idempotent={
+            "old_run_preserved": True,
+            "old_run_keys_unchanged": True,
+            "new_run_keys_equal_old": True,
+            "allocated_qty_same": True,
+        },
+        formal_db_untouched=bool(obs_formal),
+        run_dir_under_data_uat=str(UAT_ROOT.resolve()) in str(run_dir.resolve()),
+        out_dir_under_output_uat=str(OUT_ROOT.resolve()) in str(out_dir.resolve()),
+        detail_xlsx_finance_ok=bool(fault_finance.get("ok")),
+    )
+    # 故障路徑不將未執行的 migration／idempotent／annotation-H 當證據；自 checks 移除後再判
+    _not_claimed = {
+        "actual_migration_day_trade_backfill",
+        "actual_migration_cash_standard_ok",
+        "actual_migration_fk_ok",
+        "actual_migration_integrity_ok",
+        "idempotent_old_preserved",
+        "idempotent_old_keys_unchanged",
+        "idempotent_new_keys_equal",
+        "idempotent_qty_same",
+        "h_ok",
+    }
+    fault_checks_claimed = {k: v for k, v in fault_checks.items() if k not in _not_claimed}
+    fault_checks_claimed["cr10c_artifacts_ok"] = obs_artifacts_ok
+    fault_checks_claimed["conservation_observed_from_audit"] = obs_conservation
+    fault_checks_claimed["conservation_rows_ok_observed"] = obs_conservation_rows
+    fault_verdict = "PASS" if all(fault_checks_claimed.values()) else "FAIL"
+    fault_exit = uat_exit_code(fault_verdict)
+    fault_summary = {
+        "uat_verdict": fault_verdict,
+        "exit_code": fault_exit,
+        "failed_checks": [k for k, v in fault_checks_claimed.items() if not v],
+        "finance_diffs": fault_finance.get("diffs"),
+        "detail_xlsx_finance_ok": fault_finance.get("ok"),
+        "observations_from_normal_uat": {
+            "conservation_ok": obs_conservation,
+            "conservation_rows_ok": obs_conservation_rows,
+            "formal_db_untouched": obs_formal,
+            "allocated_qty": obs_allocated,
+            "artifacts_ok": obs_artifacts_ok,
+            "not_claimed_as_evidence": sorted(_not_claimed),
+        },
+    }
+    _write_json(runs_case / "fault_uat_summary.json", fault_summary)
 
     artifacts = pipe["artifacts"]
     summary.update(
@@ -458,6 +493,17 @@ def main() -> int:
             "formal_db_fingerprint": {
                 "drift_status": drift.get("status"),
                 "untouched": drift.get("status") == "PASS",
+            },
+            "excel_verification_scope": {
+                "mode": "aggregate_primary",
+                "per_line_via": "allocation_lines_to_fifo_trace",
+                "unverified_fields": [
+                    "成交單價（買／賣）逐欄",
+                    "備註／annotation 欄",
+                    "非聚合明細列順序",
+                    "原始 CSV Parser（本腳本僅 HTML bridge）",
+                ],
+                "note": "不得宣稱 Excel 已全面逐欄驗收；不得從 D 反推 C",
             },
         }
     )
