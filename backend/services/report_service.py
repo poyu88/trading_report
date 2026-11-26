@@ -192,47 +192,50 @@ def generate_detail_report(
         # 超容許差不得讓 conservation_ok 維持 true
         audit.conservation_ok = False
 
-    domain_trades = [
-        Trade(
-            trade_id=t.id,
-            account_id=t.account_id,
-            source_row_id=t.raw_row_id,
-            symbol=t.symbol,
-            name=t.name,
-            trade_date=date.fromisoformat(t.trade_date),
-            trade_time=None,
-            trade_sequence=t.trade_sequence,
-            side=t.side,  # type: ignore[arg-type]
-            trade_type=t.trade_type,  # type: ignore[arg-type]
-            currency=t.currency,
-            quantity=t.quantity,
-            unit_price=txt_to_decimal(t.unit_price_txt),
-            gross_amount=txt_to_decimal(t.gross_amount_txt),
-            commission=txt_to_decimal(t.commission_txt),
-            tax=txt_to_decimal(t.tax_txt),
-            interest=txt_to_decimal(t.interest_txt),
-            net_settlement=(
-                txt_to_decimal(t.net_settlement_txt) if t.net_settlement_txt else None
-            ),
-        )
-        for t in trades
-    ]
-    domain_allocs = [
-        Allocation(
-            run_id=run.id,
-            allocation_id=a.id,
-            buy_trade_id=a.buy_trade_id,
-            opening_lot_id=a.opening_lot_id,
-            sell_trade_id=a.sell_trade_id,
-            quantity=a.allocated_quantity,
-            sequence_no=a.sequence_no,
-            match_type=getattr(a, "match_type", None) or "STANDARD_FIFO",
-        )
-        for a in allocations
-    ]
     annotation_extra: dict = {}
     if include_day_trade_annotation:
+        # CR-04：專用資料準備／分析／serialization 全包於例外邊界；OFF 時不執行
         try:
+            domain_trades = [
+                Trade(
+                    trade_id=t.id,
+                    account_id=t.account_id,
+                    source_row_id=t.raw_row_id,
+                    symbol=t.symbol,
+                    name=t.name,
+                    trade_date=date.fromisoformat(t.trade_date),
+                    trade_time=None,
+                    trade_sequence=t.trade_sequence,
+                    side=t.side,  # type: ignore[arg-type]
+                    trade_type=t.trade_type,  # type: ignore[arg-type]
+                    currency=t.currency,
+                    quantity=t.quantity,
+                    unit_price=txt_to_decimal(t.unit_price_txt),
+                    gross_amount=txt_to_decimal(t.gross_amount_txt),
+                    commission=txt_to_decimal(t.commission_txt),
+                    tax=txt_to_decimal(t.tax_txt),
+                    interest=txt_to_decimal(t.interest_txt),
+                    net_settlement=(
+                        txt_to_decimal(t.net_settlement_txt)
+                        if t.net_settlement_txt
+                        else None
+                    ),
+                )
+                for t in trades
+            ]
+            domain_allocs = [
+                Allocation(
+                    run_id=run.id,
+                    allocation_id=a.id,
+                    buy_trade_id=a.buy_trade_id,
+                    opening_lot_id=a.opening_lot_id,
+                    sell_trade_id=a.sell_trade_id,
+                    quantity=a.allocated_quantity,
+                    sequence_no=a.sequence_no,
+                    match_type=getattr(a, "match_type", None) or "STANDARD_FIFO",
+                )
+                for a in allocations
+            ]
             annotation_extra = annotation_to_audit_dict(
                 annotate_day_trades(domain_trades, domain_allocs)
             )
@@ -240,6 +243,7 @@ def generate_detail_report(
             annotation_extra = {
                 "day_trade_annotation": {
                     "rules_version": "unknown",
+                    "status": "FAILED",
                     "suspected_day_trade_qty": 0,
                     "same_day_reconciled_qty": 0,
                     "candidates": [],

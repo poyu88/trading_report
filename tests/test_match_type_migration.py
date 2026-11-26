@@ -115,6 +115,60 @@ def _seed_pre_match_type(engine) -> None:
         )
 
 
+def _seed_opening_lot_alloc(engine) -> None:
+    """補 opening lot 配對列（無 buy_trade_id）。"""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO opening_lots (
+                    id, account_id, symbol, currency, buy_date, quantity,
+                    unit_cost_txt, approval_note, source_reference, status
+                ) VALUES (
+                    'lot1', 'ac1', '2330', 'TWD', '2024-12-01', 50,
+                    '100', 'uat', NULL, 'approved'
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO raw_rows (
+                    id, batch_id, sheet_name, row_index, raw_json, row_sha256, parse_status
+                ) VALUES ('raw_os', 'bat1', 'S', 5, '{}', :sha, 'ok')
+                """
+            ),
+            {"sha": ("raw_os" + "x" * 64)[:64]},
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO trades (
+                    id, raw_row_id, account_id, symbol, name, trade_date, trade_time,
+                    trade_sequence, side, trade_type, currency, quantity,
+                    unit_price_txt, gross_amount_txt, commission_txt, tax_txt,
+                    interest_txt, net_settlement_txt, external_trade_id, raw_payload_json
+                ) VALUES (
+                    't_sell_open', 'raw_os', 'ac1', '2330', NULL, '2025-01-10', NULL, NULL,
+                    'SELL', 'CASH', 'TWD', 50,
+                    '110', '5500', '10', '16', '0', NULL, NULL, '{}'
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO fifo_allocations (
+                    id, run_id, buy_trade_id, opening_lot_id, sell_trade_id,
+                    allocated_quantity, sequence_no
+                ) VALUES ('a_open', 'run1', NULL, 'lot1', 't_sell_open', 50, 3)
+                """
+            )
+        )
+
+
 def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -> None:
     """upgrade → DAY_TRADE 列標記／CASH 維持 STANDARD → downgrade → re-upgrade。"""
     db_path = tmp_path / "mig.db"
@@ -123,11 +177,31 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
     command.upgrade(cfg, PREV_REV)
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     _seed_pre_match_type(engine)
+    _seed_opening_lot_alloc(engine)
 
     with engine.connect() as conn:
         cols = {r[1] for r in conn.execute(text("PRAGMA table_info(fifo_allocations)")).all()}
         assert "match_type" not in cols
-        assert conn.execute(text("SELECT COUNT(*) FROM fifo_allocations")).scalar() == 2
+        assert conn.execute(text("SELECT COUNT(*) FROM fifo_allocations")).scalar() == 3
+        before_keys = {
+            (r[0], r[1], r[2], r[3], r[4])
+            for r in conn.execute(
+                text(
+                    """
+                    SELECT id, buy_trade_id, opening_lot_id, sell_trade_id, allocated_quantity
+                    FROM fifo_allocations
+                    """
+                )
+            ).all()
+        }
+        before_fin = {
+            (r[0], r[1], r[2])
+            for r in conn.execute(
+                text("SELECT id, quantity, unit_price_txt FROM trades")
+            ).all()
+        }
+        assert conn.execute(text("PRAGMA integrity_check")).scalar() == "ok"
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
 
     command.upgrade(cfg, HEAD_REV)
 
@@ -142,7 +216,29 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         }
         assert rows["a_cash"] == "STANDARD_FIFO"
         assert rows["a_dt"] == "DAY_TRADE_FIFO"
-        # FK 仍可 join
+        assert rows["a_open"] == "STANDARD_FIFO"  # opening lot 維持 STANDARD
+        after_keys = {
+            (r[0], r[1], r[2], r[3], r[4])
+            for r in conn.execute(
+                text(
+                    """
+                    SELECT id, buy_trade_id, opening_lot_id, sell_trade_id, allocated_quantity
+                    FROM fifo_allocations
+                    """
+                )
+            ).all()
+        }
+        assert before_keys == after_keys
+        after_fin = {
+            (r[0], r[1], r[2])
+            for r in conn.execute(
+                text("SELECT id, quantity, unit_price_txt FROM trades")
+            ).all()
+        }
+        assert before_fin == after_fin
+        assert conn.execute(text("SELECT COUNT(*) FROM allocation_runs")).scalar() == 1
+        assert conn.execute(text("PRAGMA integrity_check")).scalar() == "ok"
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
         join_n = conn.execute(
             text(
                 """
@@ -154,11 +250,20 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
         ).scalar()
         assert join_n == 1
 
+    # Lossy downgrade：v3 SAME_DAY_RECONCILED 標籤會隨欄位移除而遺失（不可恢復為 SAME_DAY）
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE fifo_allocations SET match_type='SAME_DAY_RECONCILED' WHERE id='a_cash'"
+            )
+        )
+
     command.downgrade(cfg, PREV_REV)
     with engine.connect() as conn:
         cols = {r[1] for r in conn.execute(text("PRAGMA table_info(fifo_allocations)")).all()}
         assert "match_type" not in cols
-        assert conn.execute(text("SELECT COUNT(*) FROM fifo_allocations")).scalar() == 2
+        assert conn.execute(text("SELECT COUNT(*) FROM fifo_allocations")).scalar() == 3
+        assert conn.execute(text("PRAGMA integrity_check")).scalar() == "ok"
 
     command.upgrade(cfg, HEAD_REV)
     with engine.connect() as conn:
@@ -168,8 +273,10 @@ def test_match_type_migration_backfill_day_trade_and_roundtrip(tmp_path: Path) -
                 text("SELECT id, match_type FROM fifo_allocations ORDER BY id")
             ).all()
         }
+        # re-upgrade 依賣出 trade_type backfill；無法恢復 SAME_DAY_RECONCILED
         assert rows["a_cash"] == "STANDARD_FIFO"
         assert rows["a_dt"] == "DAY_TRADE_FIFO"
+        assert rows["a_open"] == "STANDARD_FIFO"
 
 
 def test_migration_db_path_isolated_from_formal(tmp_path: Path) -> None:

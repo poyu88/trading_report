@@ -195,7 +195,7 @@ def test_cr06_2236_synthetic_e2e_seed_match_report_audit(db_session, tmp_path: P
         for a in alloc_rows
     ]
     ann = annotate_day_trades(domain_trades, domain_allocs)
-    assert ann.suspected_day_trade_qty <= 1000
+    assert ann.suspected_day_trade_qty == 1000
     assert ann.same_day_reconciled_qty == 400
 
     out = tmp_path / "out"
@@ -207,8 +207,11 @@ def test_cr06_2236_synthetic_e2e_seed_match_report_audit(db_session, tmp_path: P
     assert "DRAFT" not in xlsx.name
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert "day_trade_annotation" in audit
-    assert audit["day_trade_annotation"]["suspected_day_trade_qty"] <= 1000
+    assert audit["day_trade_annotation"]["suspected_day_trade_qty"] == 1000
     cand0 = audit["day_trade_annotation"]["candidates"][0]
     assert "candidate_sell_trade_ids" in cand0
+    assert "half_rate_sell_trade_ids" in cand0
+    assert "same_day_sell_trade_ids" in cand0
     assert "half_rate_sell_qty" in cand0
     assert "tax_rule_version" in cand0
+    assert cand0["half_rate_sell_qty"] == 1000

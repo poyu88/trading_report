@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from backend.db.models import (
@@ -18,6 +19,7 @@ from backend.db.models import (
     RawRow,
     TradeRow,
 )
+from backend.reports.field_schema import HEADERS
 from backend.services.allocation_service import match_fifo_for_account
 from backend.services.report_service import generate_detail_report
 
@@ -91,8 +93,19 @@ def _finance_snapshot(session, run_id: str, account_id: str) -> dict:
     }
 
 
+def _xlsx_finance_matrix(path: Path) -> list[tuple]:
+    """讀取明細 A–W 財務儲存格（含表頭，排除僅 metadata 差異）。"""
+    wb = load_workbook(path, data_only=True)
+    ws = wb.active
+    assert [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))] == HEADERS
+    rows: list[tuple] = []
+    for row in ws.iter_rows(min_row=2, max_col=len(HEADERS), values_only=True):
+        rows.append(tuple(row))
+    return rows
+
+
 def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> None:
-    """CR-07／09：include_day_trade_annotation ON／OFF 財務鍵全等。"""
+    """CR-07／09：ON／OFF 財務鍵與 Excel A–W 儲存格全等。"""
     account = _seed(db_session)
     db_session.commit()
     run, result = match_fifo_for_account(db_session, account.id)
@@ -103,7 +116,7 @@ def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> N
 
     out_off = tmp_path / "off"
     out_on = tmp_path / "on"
-    xlsx_off, audit_off, _ = generate_detail_report(
+    xlsx_off, audit_off, exc_off = generate_detail_report(
         db_session,
         account.id,
         out_off,
@@ -111,7 +124,7 @@ def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> N
         include_day_trade_annotation=False,
     )
     db_session.commit()
-    xlsx_on, audit_on, _ = generate_detail_report(
+    xlsx_on, audit_on, exc_on = generate_detail_report(
         db_session,
         account.id,
         out_on,
@@ -122,12 +135,27 @@ def test_report_annotation_on_off_finance_equal(db_session, tmp_path: Path) -> N
 
     assert snap_before == _finance_snapshot(db_session, run.id, account.id)
     assert xlsx_off.exists() and xlsx_on.exists()
+    assert _xlsx_finance_matrix(xlsx_off) == _xlsx_finance_matrix(xlsx_on)
+    assert exc_off.read_bytes() == exc_on.read_bytes()
 
     off_audit = json.loads(audit_off.read_text(encoding="utf-8"))
     on_audit = json.loads(audit_on.read_text(encoding="utf-8"))
     assert "day_trade_annotation" not in off_audit
     assert "day_trade_annotation" in on_audit
-    assert on_audit["day_trade_annotation"]["suspected_day_trade_qty"] >= 0
+    for key in (
+        "conservation_ok",
+        "blocking_issue_count",
+        "matched_quantity",
+        "unmatched_quantity",
+        "unsold_quantity",
+    ):
+        if key in off_audit and key in on_audit:
+            assert off_audit[key] == on_audit[key]
+    # conservation csv 應與 annotation 無關
+    cons_off = next(out_off.glob("*conservation*"), None)
+    cons_on = next(out_on.glob("*conservation*"), None)
+    if cons_off and cons_on:
+        assert cons_off.read_bytes() == cons_on.read_bytes()
 
 
 def test_report_annotation_fault_still_writes_detail(
@@ -164,3 +192,76 @@ def test_report_annotation_fault_still_writes_detail(
     warnings = audit["day_trade_annotation"]["warnings"]
     assert any(w.startswith("ANNOTATION_FAILED:") for w in warnings)
     assert snap == _finance_snapshot(db_session, run.id, account.id)
+
+
+def test_cr04_annotation_prep_fault_isolated(
+    db_session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-04：annotation 專用資料準備失敗 → FAILED warning；主報表仍產出。"""
+    from backend.services import report_service as rpt
+
+    account = _seed(db_session, label="ann-prep")
+    db_session.commit()
+    run, result = match_fifo_for_account(db_session, account.id)
+    db_session.commit()
+    assert not result.blocking
+    snap = _finance_snapshot(db_session, run.id, account.id)
+
+    real_trade = rpt.Trade
+
+    class _BoomTrade:
+        def __init__(self, *a, **k):
+            raise RuntimeError("prep fault")
+
+    monkeypatch.setattr(rpt, "Trade", _BoomTrade)
+
+    out = tmp_path / "prep-fault"
+    xlsx, audit_path, _ = generate_detail_report(
+        db_session,
+        account.id,
+        out,
+        run_id=run.id,
+        include_day_trade_annotation=True,
+    )
+    db_session.commit()
+    assert xlsx.exists()
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    warnings = audit["day_trade_annotation"]["warnings"]
+    assert any(w.startswith("ANNOTATION_FAILED:") for w in warnings)
+    assert audit["day_trade_annotation"]["suspected_day_trade_qty"] == 0
+    assert audit["day_trade_annotation"]["candidates"] == []
+    assert snap == _finance_snapshot(db_session, run.id, account.id)
+    monkeypatch.setattr(rpt, "Trade", real_trade)
+
+
+def test_cr04_annotation_off_skips_prep(monkeypatch: pytest.MonkeyPatch, db_session, tmp_path: Path) -> None:
+    """CR-04：Annotation OFF 不得執行 annotation 專用資料準備。"""
+    from backend.services import report_service as rpt
+
+    account = _seed(db_session, label="ann-off")
+    db_session.commit()
+    run, result = match_fifo_for_account(db_session, account.id)
+    db_session.commit()
+    assert not result.blocking
+
+    calls = {"n": 0}
+
+    class _CountingTrade:
+        def __init__(self, *a, **k):
+            calls["n"] += 1
+            raise AssertionError("annotation prep must not run when OFF")
+
+    monkeypatch.setattr(rpt, "Trade", _CountingTrade)
+    out = tmp_path / "off-skip"
+    xlsx, audit_path, _ = generate_detail_report(
+        db_session,
+        account.id,
+        out,
+        run_id=run.id,
+        include_day_trade_annotation=False,
+    )
+    db_session.commit()
+    assert xlsx.exists()
+    assert calls["n"] == 0
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert "day_trade_annotation" not in audit

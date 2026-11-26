@@ -26,6 +26,7 @@ def _trade(
     tax: str,
     commission: str = "20",
     symbol: str = "2236",
+    name: str | None = None,
     account: str = "acc1",
     currency: str = "TWD",
     trade_type: str = "CASH",
@@ -41,7 +42,7 @@ def _trade(
         account_id=account,
         source_row_id=f"src-{tid}",
         symbol=symbol,
-        name=None,
+        name=name,
         trade_date=date.fromisoformat(day),
         trade_time=None,
         trade_sequence=None,
@@ -163,6 +164,56 @@ def test_cr02_invalid_gross_insufficient_evidence() -> None:
     assert result.suspected_day_trade_qty == 0
 
 
+def test_cr02_eligible_common_stock_half_rate() -> None:
+    """CR-02：已知適用一般股票（四碼非 00xx）可判 HALF_RATE。"""
+    buy = _trade("b1", "2025-04-10", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2025-04-10", "SELL", 1000, "100", tax="150", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "HALF_RATE"
+    assert result.suspected_day_trade_qty == 1000
+    assert result.candidates[0].tax_rule_version == TAX_RULES_VERSION
+
+
+def test_cr02_etf_symbol_insufficient_evidence() -> None:
+    """CR-02：ETF（00xx）不得套用股票減半稅 → INSUFFICIENT_EVIDENCE。"""
+    buy = _trade("b1", "2025-04-11", "BUY", 1000, "100", tax="0", symbol="0050", name="合成ETF")
+    # 數值若硬套股票減半會是 HALF_RATE
+    sell = _trade(
+        "s1", "2025-04-11", "SELL", 1000, "100", tax="150", symbol="0050", name="合成ETF"
+    )
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr02_unknown_instrument_insufficient_evidence() -> None:
+    """CR-02：未知商品型別 → INSUFFICIENT_EVIDENCE。"""
+    buy = _trade("b1", "2025-04-12", "BUY", 1000, "100", tax="0", symbol="ABC")
+    sell = _trade("s1", "2025-04-12", "SELL", 1000, "100", tax="150", symbol="ABC")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr02_before_half_rate_effective_date_insufficient() -> None:
+    """CR-02：減半稅生效日前不得判 HALF_RATE。"""
+    # 生效日 2017-04-28；此前即使稅額像減半亦不足
+    buy = _trade("b1", "2017-04-27", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2017-04-27", "SELL", 1000, "100", tax="150", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "INSUFFICIENT_EVIDENCE"
+    assert result.suspected_day_trade_qty == 0
+
+
+def test_cr02_on_half_rate_effective_date_allows_half() -> None:
+    """CR-02：減半稅生效日當日可判 HALF_RATE。"""
+    buy = _trade("b1", "2017-04-28", "BUY", 1000, "100", tax="0", symbol="2330")
+    sell = _trade("s1", "2017-04-28", "SELL", 1000, "100", tax="150", symbol="2330")
+    result = annotate_day_trades([buy, sell], allocations=[])
+    assert result.candidates[0].tax_evidence == "HALF_RATE"
+    assert result.suspected_day_trade_qty == 1000
+
+
 def test_cr03_ambiguous_when_both_rates_within_tolerance() -> None:
     """CR-03：|tax-half|≤tol 且 |tax-full|≤tol → AMBIGUOUS；優先於 HALF_RATE；不標 SUSPECTED。"""
     # gross=200 → half=0.3→0（ROUND_HALF_UP? 0.3→0）、full=0.6→1；選小額使兩者皆≤1
@@ -264,7 +315,7 @@ def test_h01_annotation_on_off_financial_fields_equal() -> None:
 
 
 def test_cr12_audit_dict_includes_trace_fields() -> None:
-    """CR-12：audit candidate 含可追溯增量欄位。"""
+    """CR-12：audit candidate 區分 same_day／half_rate ids 與逐筆稅證據。"""
     buy = _trade("b1", "2025-04-09", "BUY", 1000, "100", tax="0")
     sell_half = _trade("s1", "2025-04-09", "SELL", 400, "100", tax="60")
     sell_full = _trade("s2", "2025-04-09", "SELL", 600, "100", tax="180")
@@ -283,10 +334,17 @@ def test_cr12_audit_dict_includes_trace_fields() -> None:
     result = annotate_day_trades([buy, sell_half, sell_full], allocs)
     payload = annotation_to_audit_dict(result)
     cand = payload["day_trade_annotation"]["candidates"][0]
-    assert set(cand["candidate_sell_trade_ids"]) == {"s1", "s2"}
+    assert set(cand["same_day_sell_trade_ids"]) == {"s1", "s2"}
+    assert set(cand["half_rate_sell_trade_ids"]) == {"s1"}
+    assert set(cand["candidate_sell_trade_ids"]) == {"s1"}  # 僅 HALF_RATE 候選
     assert set(cand["source_buy_trade_ids"]) == {"b1"}
+    assert set(cand["source_row_ids"]) == {"src-b1", "src-s1", "src-s2"}
     assert cand["half_rate_sell_qty"] == 400
     assert cand["suspected_support_qty"] == 400
     assert cand["reconciled_quantity"] == 400
     assert "uncertainty_reason" in cand
     assert cand["tax_rule_version"] == TAX_RULES_VERSION
+    by_id = {e["trade_id"]: e for e in cand["sell_tax_evidences"]}
+    assert by_id["s1"]["tax_evidence"] == "HALF_RATE"
+    assert by_id["s2"]["tax_evidence"] == "STANDARD_RATE"
+    assert by_id["s1"]["source_row_id"] == "src-s1"

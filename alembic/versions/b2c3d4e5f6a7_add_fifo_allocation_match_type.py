@@ -56,7 +56,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """移除 ``match_type`` 欄與 check constraint。"""
+    """移除 ``match_type`` 欄與 check constraint。
+
+    Lossy：``SAME_DAY_RECONCILED`` 等 v3 標籤隨欄位移除而遺失；
+    之後 re-upgrade 僅能依賣出 ``trade_type`` 恢復 ``DAY_TRADE_FIFO``，
+    **無法**還原 ``SAME_DAY_RECONCILED``。
+    """
     with op.batch_alter_table("fifo_allocations") as batch_op:
         batch_op.drop_constraint("ck_alloc_match_type", type_="check")
         batch_op.drop_column("match_type")

@@ -261,6 +261,18 @@
 | 本機 REGRESSION | `uv run pytest -q` → **145 passed**／57.98s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
 | 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_fixes_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
 
+### 1.19 PR #12 Round-2 CR Fixes（本任務）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation` |
+| 變更 | Round-2：CR-02 商品／生效日稅適用；CR-04 annotation 準備全包例外＋OFF 跳過；CR-06 原始九筆 Parser／Import E2E；CR-05 migration FK／opening／lossy downgrade；CR-07 Excel A–W 比較；CR-10／11 UAT verdict／WAL／獨立 out；CR-12 same_day vs half_rate ids |
+| RED | `uv run pytest tests/test_day_trade_annotation.py tests/test_annotation_report_noninterfere.py tests/test_fifo_same_day_2236_original_import_e2e.py -q` → **7 failed／15 passed**（ETF／未知／生效日前仍 HALF；缺 CR-12 欄；prep 未隔離；缺 half_rate ids） |
+| GREEN | `tw_sec_tax_v2` 分類＋生效日；report prep 邊界；原始九筆 import E2E；migration／UAT／audit 欄位強化 |
+| REFACTOR | 無獨立 restruct |
+| 本機 REGRESSION | `uv run pytest -q` → **153 passed**／71.67s（2026-11-26）；`uv run ruff check .` 通過；正式 DB **未** apply／migrate／寫入 |
+| 判定 | **有證據 TDD**（見 §6.2 `pr12_cr_r2_v1`）；Commit／Push／PR 回覆 **待**使用者授權 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -430,6 +442,7 @@
 | `pr7_fifo_cr_fixes_v1` | CR-01 版本追溯、CR-02 期初守恆、CR-03 fingerprint、CR-04 SQLite 整合；真實副本 UAT | 2026-11-22；`uv run pytest tests/test_fifo_cr_fixes.py tests/test_fifo_sqlite_integration.py -q`；**9 failed／5 passed**；版本／opening 守恆／fingerprint；commit `33f2222` | 2026-11-22；`ALGORITHM_VERSION`、`quantity_conservation(opening_lots=…)`、`build_audit`、fingerprint 欄位、backup ro；commit `60d3446` | 無獨立 restruct | **120 passed** | UAT／規格 doc `07b5f4b`；正式 DB 未動 |
 | `fifo_v3_two_pass_same_day_v1` | CASH Pass2 同日補沖銷；`match_type`；Independent day-trade annotation；2236 合成配平 | 2026-11-26；目標測 **9 failed／3 passed**（blocking／缺 `match_type`／annotation stub／版本 v2） | 2026-11-26；Pass2＋`match_type`＋annotation＋migration＋版本 v3；工作區尚未 commit | 無獨立 restruct | **128 passed** | RCA `docs/test/RCA_two_pass_fifo_same_day.md`；正式 DB 未動；Commit 待授權 |
 | `pr12_cr_fixes_v1` | PR #12 CR：annotation 稅證據／支持股數／AMBIGUOUS／例外隔離；migration backfill；report ON／OFF；2236 E2E；UAT 目錄／verdict | 2026-11-26；`tests/test_day_trade_annotation.py` **5 failed／7 passed**（業務缺口） | 2026-11-26；annotation／migration／report／UAT／E2E／matcher 邊界；工作區尚未 commit | docstring（無行為變更） | **145 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
+| `pr12_cr_r2_v1` | PR #12 Round-2：稅適用範圍／annotation prep 邊界／原始九筆 import E2E／migration FK／Excel ON-OFF／UAT WAL＋獨立 out／CR-12 ids | 2026-11-26；目標測 **7 failed／15 passed**（ETF／未知／生效日前仍 HALF；缺欄；prep 未隔離） | 2026-11-26；`tw_sec_tax_v2`；report prep 邊界；original import E2E；UAT／migration 強化；工作區尚未 commit | 無獨立 restruct | **153 passed** | 正式 DB 未動；Commit／PR 回覆待授權 |
 
 **記錄欄位最低要求**
 
@@ -503,3 +516,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`fifo_v3_two_pass_same_day_v1` TDD**：分支 `feature/fifo-same-day-reconciliation`；Gate2 契約變更（FIFO-05 Pass2）；RED 9 failed → GREEN Pass2／annotation／`match_type` migration；全量 **128 passed**／66.92s；正式 DB **未**動；Commit／Push／PR **待**授權。 |
 | 2026-11-26 | **隔離 UAT `fifo_same_day_2236`**：合成九筆；`data/uat/fifo_same_day_2236/`＋`output/uat_fifo_same_day_2236/`；allocated 4000（3600＋400 Pass2）；非 DRAFT；annotation 1000≠400；正式 DB mtime 2026-11-22 14:49:49 未變；判定 **PASS**（`UAT_fifo_same_day_2236.md`）。 |
 | 2026-11-26 | **`pr12_cr_fixes_v1` TDD**：PR #12 CR-01～13；RED 5 failed → GREEN annotation／migration／report／E2E／UAT；全量 **145 passed**／57.98s；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
+| 2026-11-26 | **`pr12_cr_r2_v1` TDD**：PR #12 Round-2；RED 7 failed → GREEN 稅適用／prep 邊界／原始九筆 import E2E／migration／Excel／UAT；全量 **153 passed**／71.67s；隔離 UAT **PASS**；ruff 通過；正式 DB **未**動；Commit／Push／PR 回覆待授權。 |
