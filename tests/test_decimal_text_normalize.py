@@ -19,7 +19,8 @@ from backend.util.decimal_text import normalize_decimal_text
         ("0.00", "0"),
         ("", ""),
         ("  96.80  ", "96.8"),
-        ("not-a-number", "not-a-number"),
+        ("-0", "0"),
+        ("+0.00", "0"),
     ],
 )
 def test_normalize_decimal_text_anonymous_cases(raw: str, expected: str) -> None:
@@ -30,3 +31,9 @@ def test_normalize_decimal_text_trailing_zeros_do_not_break_equality() -> None:
     """INV-03／GOLD-004：CSV 尾隨 .00 與 DB 整數文字須視為同一值。"""
     assert normalize_decimal_text("1030.00") == normalize_decimal_text("1030")
     assert normalize_decimal_text("1,030.00") == normalize_decimal_text("1030")
+
+
+def test_normalize_decimal_text_illegal_raises() -> None:
+    """GOLD-CR-06：非法數值不得回傳原文冒充可比對。"""
+    with pytest.raises(ValueError, match="invalid_decimal"):
+        normalize_decimal_text("not-a-number")

@@ -15,6 +15,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from backend.util.date_text import date_bounds, format_manifest_date
+from backend.util.sha256_lock import sha256_lock_mismatches
+
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "data" / "golden"
 EVIDENCE = GOLDEN / "evidence"
@@ -202,8 +205,7 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
     per_symbol = Counter(r["symbol"] for r in valid)
 
     dates = [r["trade_date"] for r in valid if r["trade_date"]]
-    date_from = min(dates) if dates else "UNKNOWN"
-    date_to = max(dates) if dates else "UNKNOWN"
+    d_from, d_to = date_bounds(dates)
 
     return {
         "source_path": str(path.relative_to(ROOT)).replace("\\", "/"),
@@ -218,8 +220,8 @@ def analyze_capital_csv(path: Path) -> dict[str, Any]:
         "symbol_count": len(per_symbol),
         "per_symbol": dict(sorted(per_symbol.items())),
         "contains_2236": "2236" in per_symbol,
-        "date_from": date_from,
-        "date_to": date_to,
+        "date_from": format_manifest_date(d_from),
+        "date_to": format_manifest_date(d_to),
         "rows": valid,
     }
 
@@ -285,6 +287,7 @@ def analyze_html_xls(path: Path) -> dict[str, Any]:
     duplicate_row_count = sum(c - 1 for c in key_counts.values() if c > 1)
     per_symbol = Counter(r["symbol"] for r in valid)
     dates = [r["trade_date"] for r in valid if r["trade_date"]]
+    d_from, d_to = date_bounds(dates)
 
     return {
         "source_path": str(path.relative_to(ROOT)).replace("\\", "/"),
@@ -299,8 +302,8 @@ def analyze_html_xls(path: Path) -> dict[str, Any]:
         "symbol_count": len(per_symbol),
         "per_symbol": dict(sorted(per_symbol.items())),
         "contains_2236": "2236" in per_symbol,
-        "date_from": min(dates) if dates else "UNKNOWN",
-        "date_to": max(dates) if dates else "UNKNOWN",
+        "date_from": format_manifest_date(d_from),
+        "date_to": format_manifest_date(d_to),
         "parser_profile": "statement_html_v1",
         "parser_version": profile.version,
         "physical_row_count_note": (
@@ -374,6 +377,7 @@ def analyze_esun_xlsx(path: Path) -> dict[str, Any]:
     duplicate_row_count = sum(c - 1 for c in key_counts.values() if c > 1)
     per_symbol = Counter(r["symbol"] for r in valid)
     dates = [r["trade_date"] for r in valid if r["trade_date"]]
+    d_from, d_to = date_bounds(dates)
 
     return {
         "source_path": str(path.relative_to(ROOT)).replace("\\", "/"),
@@ -388,8 +392,8 @@ def analyze_esun_xlsx(path: Path) -> dict[str, Any]:
         "symbol_count": len(per_symbol),
         "per_symbol": dict(sorted(per_symbol.items())),
         "contains_2236": "2236" in per_symbol,
-        "date_from": min(dates) if dates else "UNKNOWN",
-        "date_to": max(dates) if dates else "UNKNOWN",
+        "date_from": format_manifest_date(d_from),
+        "date_to": format_manifest_date(d_to),
         "parser_profile": "esun_xlsx_v1",
         "parser_version": profile.version,
         "known_limitations": [
@@ -404,10 +408,24 @@ def normalize_qty(text: str) -> str:
 
 
 def normalize_num(text: str) -> str:
-    """正規化金額／單價字串（委派 ``backend.util.decimal_text``）。"""
+    """正規化金額／單價字串（委派 ``backend.util.decimal_text``）。
+
+    非法數值回傳唯一 sentinel（含原文摘要），使交叉核對無法誤判為相等
+    （GOLD-CR-06 fail-closed）。
+    """
     from backend.util.decimal_text import normalize_decimal_text
 
-    return normalize_decimal_text(text)
+    try:
+        return normalize_decimal_text(text)
+    except ValueError:
+        return f"__INVALID_DECIMAL__:{text!r}"
+
+
+def inventory_exit_code(*, blockers: list[str], inv_fail: bool) -> int:
+    """GOLD-CR-09：有阻礙或 INV 失敗 → 非零結束碼。"""
+    if blockers or inv_fail:
+        return 1
+    return 0
 
 
 def side_to_buy_sell(side_raw: str) -> str:
@@ -489,7 +507,11 @@ def cross_check_csv_to_db(
     file_sha256: str,
     symbol_filter: str | None = None,
 ) -> dict[str, Any]:
-    """CSV 有效列 ↔ DB trades（依 batch.file_sha256）逐欄交叉。"""
+    """CSV 有效列 ↔ DB trades（依 batch.file_sha256）逐欄交叉。
+
+    TODO(GOLD-CR-05): 來源端外部 trade id 齊全後擴充交叉鍵；缺則維持 NOT_IN_SOURCE。
+    TODO(GOLD-CR-11): 多帳戶／批次歧義樣本齊全後禁止任意選 batch。
+    """
     batch = con.execute(
         "SELECT * FROM import_batches WHERE file_sha256=?",
         (file_sha256,),
@@ -1211,8 +1233,16 @@ def main() -> None:
         account_alias=account_alias,
         parser_profile="statement_html_v1",
         parser_version=1,
-        date_from=min(s["date_from"] for s in m004_sources),
-        date_to=max(s["date_to"] for s in m004_sources),
+        date_from=format_manifest_date(
+            date_bounds(
+                [s["date_from"] for s in m004_sources if s["date_from"] != "UNKNOWN"]
+            )[0]
+        ),
+        date_to=format_manifest_date(
+            date_bounds(
+                [s["date_to"] for s in m004_sources if s["date_to"] != "UNKNOWN"]
+            )[1]
+        ),
         physical_row_count=sum(s["physical_row_count"] for s in m004_sources),
         valid_trade_count=sum(s["valid_trade_count"] for s in m004_sources),
         excluded_row_count=sum(s["excluded_row_count"] for s in m004_sources),
@@ -1329,12 +1359,23 @@ def main() -> None:
     if gitignore_check["status"] != "PASS":
         summary["blockers"].append("gitignore data/ missing")
 
-    # trading.db sha vs plan
-    if not fp_after["files"]["trading_db"].get("matches_plan_expected"):
-        summary["open_items"].append(
-            "trading.db SHA256 與計畫先前指紋不一致（已記錄實際值）；"
-            "可能因 wal checkpoint／後續唯讀以外變更——需 Owner 確認是否可接受新指紋。"
-        )
+    # GOLD-CR-08：鎖定 SHA256 不一致 → blocker（非僅 open_items）
+    actual_sha = {
+        k: fp_after["files"][k]["sha256"]
+        for k in EXPECTED_SHA256
+        if fp_after["files"].get(k, {}).get("exists")
+    }
+    lock_bad = sha256_lock_mismatches(EXPECTED_SHA256, actual_sha)
+    summary["sha256_lock_mismatches"] = lock_bad
+    if lock_bad:
+        summary["blockers"].append(f"GOLD-CR-08 sha256_lock_mismatch:{','.join(lock_bad)}")
+
+    inv_fail = any(
+        summary["inv"][k] not in {"PASS", "DONE", "DOCUMENTED", "CORRECTED"}
+        for k in summary["inv"]
+    )
+    code = inventory_exit_code(blockers=summary["blockers"], inv_fail=inv_fail)
+    summary["exit_code"] = code
 
     write_json(EVIDENCE / "phase01_summary.json", summary)
 
@@ -1346,6 +1387,7 @@ def main() -> None:
 - GOLD-001 交叉：{cc_2024['status']}；2236：{cc_2236['status']}
 - GOLD-004 交叉：{'PASS' if gold004['summary']['all_pass'] else 'FAIL'}
 - gitignore：{gitignore_check['status']}
+- exit_code：{code}
 
 詳見 `phase01_summary.json`。真實交易明細僅存本機 evidence，勿貼 PR。
 """
@@ -1358,6 +1400,7 @@ def main() -> None:
     )
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":
