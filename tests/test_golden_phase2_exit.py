@@ -1,4 +1,7 @@
-"""Phase 2 來源完整性 FAIL／BLOCKED 不得回傳成功結束碼。"""
+"""Phase 2 來源完整性 FAIL／BLOCKED 不得回傳成功結束碼。
+
+SOURCE: SYNTHETIC_UNIT／FAULT_INJECTION — 結束碼契約。
+"""
 
 from __future__ import annotations
 

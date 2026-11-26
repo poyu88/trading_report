@@ -1,4 +1,7 @@
-"""CR-10A：獨立 C 層與實際 D 層輸出比對（合成契約；禁改 C 配合 D）。"""
+"""CR-10A：獨立 C 層與實際 D 層輸出比對（合成契約；禁改 C 配合 D）。
+
+SOURCE: SYNTHETIC_CONTRACT — 禁從 Excel 反推 C；禁改 C 配合 D。
+"""
 
 from __future__ import annotations
 

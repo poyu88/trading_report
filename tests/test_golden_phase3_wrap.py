@@ -1,4 +1,8 @@
-"""Phase 3 合併前收尾：GOLD-004 判定、CR-10A 重複鍵、CR-10C 守恆內容。"""
+"""Phase 3 合併前收尾：GOLD-004 判定、CR-10A 重複鍵、CR-10C 守恆內容。
+
+SOURCE: SYNTHETIC_UNIT + FAULT_INJECTION
+- ``finance_ok=True`` 等為受控輸入測 verdict 邏輯，非略過實際驗證。
+"""
 
 from __future__ import annotations
 

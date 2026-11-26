@@ -1,4 +1,9 @@
-"""CR-06：2236 RCA 軌跡對齊之合成 E2E（seed→match→report→audit）。"""
+"""CR-06：2236 RCA 軌跡對齊之合成 E2E（seed→match→report→audit）。
+
+SOURCE: SYNTHETIC_CONTRACT
+- 金額為 price×qty 合成；與 Owner REAL_DERIVED 原始價金不同。
+- 用途：Two-Pass／annotation／管線契約；**不得**宣稱真實財務驗收。
+"""
 
 from __future__ import annotations
 
@@ -22,7 +27,7 @@ from backend.services.allocation_service import match_fifo_for_account, quantity
 from backend.services.day_trade_annotation import annotate_day_trades
 from backend.services.report_service import generate_detail_report
 
-# 與 RCA／UAT 同軌跡；金額由 fixture Decimal 獨立重算（不宣稱真實對帳單）
+# SOURCE: SYNTHETIC_CONTRACT — 與 RCA／UAT 同軌跡；price×qty；不宣稱真實對帳單
 TRADES: list[tuple[str, str, int, str, str, str]] = [
     ("2024-08-05", "BUY", 2000, "100", "40", "0"),
     ("2024-08-12", "BUY", 1000, "105", "25", "0"),

@@ -1,4 +1,7 @@
-"""Phase 3／CR-10A：合成路徑 C↔D（正式 Import／FIFO／Report；禁改 C）。"""
+"""Phase 3／CR-10A：合成路徑 C↔D（正式 Import／FIFO／Report；禁改 C）。
+
+SOURCE: SYNTHETIC_CONTRACT — 合成 HTML；非 REAL_SOURCE 帳戶驗收。
+"""
 
 from __future__ import annotations
 

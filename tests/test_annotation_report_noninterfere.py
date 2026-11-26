@@ -1,4 +1,7 @@
-"""CR-07／08／09：report annotation ON／OFF 與 fault injection。"""
+"""CR-07／08／09：report annotation ON／OFF 與 fault injection。
+
+SOURCE: SYNTHETIC_CONTRACT + FAULT_INJECTION — 財務非干涉／例外注入；合成帳戶。
+"""
 
 from __future__ import annotations
 

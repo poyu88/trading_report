@@ -1,4 +1,9 @@
-"""CR-10B／10C：UAT 實際檔案層故障注入（非僅 mock 布林）。"""
+"""CR-10B／10C：UAT 實際檔案層故障注入（非僅 mock 布林）。
+
+SOURCE: FAULT_INJECTION（底層報表路徑 SYNTHETIC_CONTRACT）
+- 篡改／刪除實際產物 → FAIL；正式 DB 指紋為觀測值非固定 True。
+- 合成路徑未跑 migration／冪等／H → 不得當正向完整 UAT 證據。
+"""
 
 from __future__ import annotations
 

@@ -429,6 +429,16 @@
 | 本機 REGRESSION | `uv run pytest -q` → **299 passed**／61.38s；`uv run ruff check .` 通過；正式 DB **未**寫入／**未** migrate |
 | 判定 | 見 Merge Readiness Report；**等待 Owner 最終授權 Merge** |
 
+### 1.33 測試資料來源與驗收誠信稽核（Merge 暫停）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | `feature/fifo-same-day-reconciliation`（PR #12：Merge 前資料誠信稽核） |
+| 變更 | 新增 `docs/test/PR12_TEST_DATA_SOURCE_AUDIT.md`；關鍵測試／UAT／fixture 標 `SOURCE:`；CR-06C 非零利息 `pytest.skip` 占位 |
+| 十項檢查 | 未發現 INVALID_EVIDENCE／反推 Expected／固定 True 冒充／敏感入 Git；合成 vs REAL_DERIVED 已分列 |
+| 本機 REGRESSION | `uv run pytest -q` → **299 passed／1 skipped**／68.28s；`uv run ruff check .` 通過；正式 DB **未**動；**暫停 Merge** |
+| 判定 | 稽核表已交；等待 Reviewer 最終確認 |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -699,3 +709,4 @@ uv run pytest -v --tb=line
 | 2026-11-26 | **`golden_phase3_wrap_v1`**：合併前收尾—GOLD-004 必要失敗不得 PARTIAL；CR-10C 守恆實際值；CR-10A 重複鍵多重集；CR-10B 觀測非固定 True；Excel 未驗證範圍明示；全量 **299 passed**／74.81s；ruff 通過；GOLD-001／004 UAT **PASS**；正式 DB **未**動；CSV Parser 仍 PENDING；Merge／Migration **未**授權。 |
 | 2026-11-26 | **原始 CR 銷帳**：`PR12_ORIGINAL_CR_WRITEOFF.md`；GOLD≠原始 CR；CR-06C 利息／稅落點強化；暫停 Merge Readiness；正式 DB **未**動；待 Reviewer 最終審查。 |
 | 2026-11-26 | **`pr12_cr06c_merge_ready_v1`**：CR-06C 第一片段 sequence 對位＋獨立 C／Excel；全量 **299 passed**／61.38s；ruff 通過；隔離 DB integrity／FK 實查；隔離 migration upgrade／downgrade 實查；正式 DB **未**寫入／**未** migrate；Merge **待** Owner 授權。 |
+| 2026-11-26 | **`pr12_test_data_audit_v1`**：測試資料來源／誠信稽核表；SOURCE 標籤；非零利息 PENDING skip；全量 **299 passed／1 skipped**／68.28s；ruff 通過；**暫停 Merge**；正式 DB **未**動。 |

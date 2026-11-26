@@ -1,5 +1,9 @@
 """隔離 UAT：2236 Two-Pass FIFO（合成資料；禁止寫正式 DB）。
 
+SOURCE: SYNTHETIC_CONTRACT
+- ``TRADES`` 為 price×qty 合成軌跡；**不得**宣稱為真實帳戶財務驗收。
+- 真實／Owner 原始價金見 ``tests/test_fifo_same_day_2236_original_import_e2e.py``（REAL_DERIVED）。
+
 Fingerprint 限制（CR-11）：
 - UAT 期間禁止其他程序寫入正式 ``data/trading.db``（含 -wal／-shm）。
 - 指紋比對僅適用「無並發寫入」前提；指紋變 → verdict FAIL。
@@ -46,7 +50,7 @@ OUT_ROOT = PROJECT_ROOT / "output" / f"uat_{UAT_THEME}"
 FORMAL_DB = PROJECT_ROOT / "data" / "trading.db"
 ACCOUNT_LABEL = "uat2236"
 
-# 與 tests/test_same_day_reconciliation.py::test_c01 同軌跡（買＝賣＝4000）
+# SOURCE: SYNTHETIC_CONTRACT — 與 test_c01 同軌跡（買＝賣＝4000）；gross=price×qty
 TRADES: list[tuple[str, str, str, int, str, str, str]] = [
     ("2024-08-05", "BUY", 2000, "100", "40", "0", "b1"),
     ("2024-08-12", "BUY", 1000, "105", "25", "0", "b2"),
@@ -956,6 +960,7 @@ def main() -> int:
                 "finance_golden": {k: str(v) for k, v in finance_golden.items()},
                 "output_files": sorted(p.name for p in out_dir.glob("*") if p.is_file()),
                 "idempotent_rerun": idempotent,
+                # 僅記錄預期目標值供人工對照；最終判定以 checks／finance_verify 為準
                 "expectations": {
                     "allocated_qty": 4000,
                     "standard_fifo_qty": 3600,

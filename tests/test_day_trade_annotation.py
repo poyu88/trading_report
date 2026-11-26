@@ -1,4 +1,7 @@
-"""Independent Day-Trade Annotation（Layer 3）RED／回歸。"""
+"""Independent Day-Trade Annotation（Layer 3）RED／回歸。
+
+SOURCE: SYNTHETIC_UNIT — 合成邊界案例；不得單獨作為真實稅務引擎完整驗收。
+"""
 
 from __future__ import annotations
 

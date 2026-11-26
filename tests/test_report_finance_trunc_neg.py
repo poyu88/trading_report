@@ -1,4 +1,7 @@
-"""GOLD-TRUNC-NEG：受測 report_finance 正負數皆朝零截斷。"""
+"""GOLD-TRUNC-NEG：受測 report_finance 正負數皆朝零截斷。
+
+SOURCE: SYNTHETIC_UNIT — 純函式；無交易資料。
+"""
 
 from __future__ import annotations
 

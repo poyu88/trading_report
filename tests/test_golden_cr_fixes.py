@@ -1,4 +1,7 @@
-"""GOLD-CR-01／06／07／08／09 最小修正（匿名純函式；非真實帳戶驗收）。"""
+"""GOLD-CR-01／06／07／08／09 最小修正（匿名純函式；非真實帳戶驗收）。
+
+SOURCE: SYNTHETIC_UNIT — 非真實帳戶驗收。
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,7 @@
-"""CR-05：match_type migration upgrade／backfill／downgrade／re-upgrade。"""
+"""CR-05：match_type migration upgrade／backfill／downgrade／re-upgrade。
+
+SOURCE: SYNTHETIC_CONTRACT — 隔離探針 DB；非正式 DB Migration。
+"""
 
 from __future__ import annotations
 

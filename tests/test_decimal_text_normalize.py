@@ -1,4 +1,7 @@
-"""匿名合成：Decimal 文字正規化（GOLD／CSV↔DB 交叉核對用）。"""
+"""匿名合成：Decimal 文字正規化（GOLD／CSV↔DB 交叉核對用）。
+
+SOURCE: SYNTHETIC_UNIT — 純函式。
+"""
 
 from __future__ import annotations
 

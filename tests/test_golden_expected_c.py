@@ -1,4 +1,8 @@
-"""Phase 2：獨立 C 層財務標準答案（合成資料；不得用受測 FIFO／Projector）。"""
+"""Phase 2：獨立 C 層財務標準答案（合成資料；不得用受測 FIFO／Projector）。
+
+SOURCE: SYNTHETIC_UNIT／SYNTHETIC_CONTRACT
+- 驗證獨立 C 演算法；真實答案 JSON 本機 gitignored（REAL_DERIVED／PENDING 另列）。
+"""
 
 from __future__ import annotations
 

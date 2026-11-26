@@ -1,12 +1,16 @@
 """CR-06：原始九筆 2236 欄位 → Parser／Import → FIFO → Report → Audit。
 
-匿名群益 HTML fixture；保留原始日期／價／量／價金／費／稅／淨收付。
-不得以價×量覆蓋券商原始成交金額。正式 DB 不讀寫。
+SOURCE: REAL_DERIVED
+- Owner 提供之原始檔欄位（日期／價／量／價金／費／稅／淨收付）匿名嵌入；
+  名稱「合成2236」僅匿名標籤，**不是** price×qty 合成軌跡。
+- 不得以價×量覆蓋券商原始成交金額；正式 DB 不讀寫。
+- 非零利息真實樣本：PENDING_DATA（本 fixture 利息皆 0）。
 
-Canonical 列序來源：Owner 提供之原始檔陳述序（非 RCA／合成軌跡）。
+Canonical 列序來源：Owner 原始檔陳述序（非 RCA／合成軌跡）。
 - ``2024-08-28``：SELL(tax=145 半稅) → SELL(tax=290 全稅) → BUY
 - ``2024-09-02``：SELL(579@111.5, gross=64558≠111.5×579) → SELL(21@112)
 其他同日排列僅作 permutation；不得將非原始序宣稱為 Owner 原始序。
+不得將本檔宣稱為完整真實帳戶 REAL_SOURCE 財務驗收。
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from backend.services.import_service import apply_import
 from backend.services.report_finance import allocate_trade_fragment_amounts
 from backend.services.report_service import generate_detail_report
 
-# Owner 提供之原始九筆欄位（匿名名稱；非真實帳戶識別）
+# SOURCE: REAL_DERIVED — Owner 原始欄位匿名嵌入；非 Agent 任意捏造；非 REAL_SOURCE 檔案匯入
 # 兩筆 2024-08-28 同價同量但交易稅不同（145 vs 290）→ 不得錯誤去重
 ORIGINAL_ROWS: list[dict[str, str | int]] = [
     {
@@ -641,7 +645,7 @@ def _assert_per_trade_fees_from_trace(ctx: dict) -> None:
 
 
 def test_cr06_canonical_owner_row_order() -> None:
-    """CR-06A：ORIGINAL_ROWS 必須為 Owner 原始列序（非合成軌跡）。"""
+    """CR-06A：ORIGINAL_ROWS 必須為 Owner 原始列序（非合成軌跡）。SOURCE: REAL_DERIVED。"""
     d0828 = [r for r in ORIGINAL_ROWS if r["date"] == "2024/08/28"]
     assert [r["side"] for r in d0828] == ["SELL", "SELL", "BUY"]
     assert [str(r["tax"]) for r in d0828] == ["145", "290", "0"]
@@ -649,8 +653,20 @@ def test_cr06_canonical_owner_row_order() -> None:
     assert [int(r["qty"]) for r in d0902] == [579, 21]
 
 
+@pytest.mark.skip(
+    reason=(
+        "PENDING_DATA: CR-06C 缺少非零利息真實樣本；"
+        "本 REAL_DERIVED fixture 利息皆 0。資料齊全後：以真實非零利息列"
+        "重跑 Trace／Excel／獨立 C 第一片段落點驗收並移除此 skip。"
+    )
+)
+def test_cr06c_nonzero_interest_first_fragment_pending_data() -> None:
+    """占位：非零利息第一片段落點（目前無可靠資料，不得填 0 冒充 PASS）。"""
+    raise AssertionError("unreachable: should remain skipped until PENDING_DATA resolved")
+
+
 def test_cr06_original_nine_row_parser_import_fifo_report(db_session, tmp_path: Path) -> None:
-    """Parser→Import→FIFO→Report；Pass1=3600／Pass2=400／suspected=1000。"""
+    """Parser→Import→FIFO→Report；Pass1=3600／Pass2=400／suspected=1000。SOURCE: REAL_DERIVED。"""
     ctx = _run_pipeline(db_session, tmp_path, ORIGINAL_ROWS, label="orig2236")
     trades = ctx["trades"]
 

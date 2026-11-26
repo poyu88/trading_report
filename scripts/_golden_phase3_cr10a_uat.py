@@ -1,8 +1,10 @@
 """Phase 3／CR-10A：GOLD-001-2236 隔離 UAT（真實來源 → 正式管線 → 對 C）。
 
+SOURCE: REAL_SOURCE（本機 gitignored）→ REAL_DERIVED（HTML bridge）
 - 讀本機 ``data/golden/expected_c/GOLD-001-2236.json``（不得為配合 D 而改寫）
 - 來源 SHA 鎖定；隔離 DB／output；不寫正式 DB
-- 證據寫入 ``data/golden/runs_d/`` 與 ``data/uat/golden_cr10a_2236/``
+- 證據寫入 ``data/golden/runs_d/`` 與 ``data/uat/golden_cr10a_2236/``（不上傳 Git）
+- 缺檔時不得宣稱 PASS。
 """
 
 from __future__ import annotations

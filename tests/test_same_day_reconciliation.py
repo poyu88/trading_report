@@ -1,4 +1,7 @@
-"""Two-Pass FIFO：同日補沖銷（Pass 2）RED／回歸。"""
+"""Two-Pass FIFO：同日補沖銷（Pass 2）RED／回歸。
+
+SOURCE: SYNTHETIC_UNIT／SYNTHETIC_CONTRACT — 合成股數軌跡；非真實價金驗收。
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,9 @@
-"""CR-10：UAT ``build_uat_checks``／Excel 財務驗證不可假性通過。"""
+"""CR-10：UAT ``build_uat_checks``／Excel 財務驗證不可假性通過。
+
+SOURCE: SYNTHETIC_CONTRACT + FAULT_INJECTION
+- 使用合成 TRADES／人工 Excel 反例（竄改、單列灌總額）；驗證 fail-closed。
+- 不得宣稱為真實帳戶財務 PASS。
+"""
 
 from __future__ import annotations
 

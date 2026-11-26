@@ -2,7 +2,7 @@
 
 > **文件性質**：原始 Code Review 銷帳（Class C）。**不得**將 GOLD-CR／GOLDEN Phase 0～5 結案直接等同本表原始 CR 結案。  
 > **基準**：PR #12 歷次 Reviewer 留言、SPEC、`TDD_STATUS.md`、本機測試／UAT；Commit tip 見推送後 SHA。  
-> **Merge Readiness**：CR-06C 第一片段費用落點收尾後執行實查；**不得**自行 Merge；待 Owner 最終授權。  
+> **Merge Readiness**：**暫停 Merge**（Owner：須完成測試資料來源／誠信稽核）；見 `PR12_TEST_DATA_SOURCE_AUDIT.md`。  
 > **禁止**：Merge、正式 Migration、寫入正式 DB、偽造交易／期初／假報表。
 
 ## 0. 狀態語意

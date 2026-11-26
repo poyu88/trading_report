@@ -1,7 +1,8 @@
 """Phase 3：GOLD-004 全年度實際 D 回歸（可驗證範圍；不強制完整 PASS）。
 
+SOURCE: REAL_SOURCE（本機 gitignored CSV／C）→ REAL_DERIVED（HTML bridge）
 四年度原始 CSV → HTML bridge → 正式 Import／FIFO／Report → 對獨立 C。
-HTML bridge 僅驗轉換後匯入與後續流程；不得宣稱原始 CSV Parser 已獨立驗收。
+HTML bridge 僅驗轉換後匯入與後續流程；不得宣稱原始 CSV Parser 已獨立驗收（PENDING_DATA）。
 """
 
 from __future__ import annotations
