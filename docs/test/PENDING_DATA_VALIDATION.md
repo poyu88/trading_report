@@ -30,19 +30,20 @@
 
 ---
 
-## 工程治理待驗證（VP-TR）— Stage D 登錄；Runtime 另案
+## 工程治理待驗證（VP-TR）— Stage D 登錄；Stage E／F 已執行 Runtime（結案追加）
 
-> 本節為 Stage D 文件採用時登錄。**本輪不執行** Runtime 驗收（Stage F）。
-> 母版自身 VP-002-D／VP-003 仍 PENDING，不得冒稱本產品已驗證相關能力。
+> Stage D 初登錄時 Runtime 未跑。下表為 **Stage E.6 結案追加**後之現況（保留歷史 FAIL／E.3；不因 Merge 清空其他 PENDING）。
+> 母版自身 VP-002-D／VP-003 仍 PENDING，不得冒稱本產品已驗證相關母版能力。
+> 私人證據以 Evidence ID 引用（`EV-TR-GOV-E4F-*`）；絕對路徑僅在私人 BACKUP_INDEX。
 
 | ID | Requirement | Acceptance Criteria | Status | Reason | Evidence | Next Action |
 |---|---|---|---|---|---|---|
-| VP-TR-001 | 獨立驗收環境（依風險選 Clean Clone／Worktree／更高隔離）可用且路徑正確 | Workflow §2.10 檢查表可實跑；正式 DB／正式 output 未被誤用；**不得**在持有正式交易資料的工作目錄執行正式 Regression | **PENDING** | 缺授權之 Runtime 獨立環境實作與安全確認 | `docs/DEVELOPMENT_WORKFLOW.md` §2.9.1／§2.10；none（本輪未跑） | Owner 授權後依 §2.9.1 順序建立獨立環境並重驗 |
-| VP-TR-002 | 測試隔離安全確認 | 日常／公開 CI 僅合成／公開 fixture／tmp；經授權私人驗收符合 Gate／隔離路徑；無未授權正式 DB 讀寫 | **PENDING** | 缺本輪授權之完整隔離稽核 Runtime | 既有 TDD／Workflow／Integrity 測資分層；none（本輪未跑） | Stage F 稽核外部路徑、env、venv、DB、私人測資邊界後追加證據 |
-| VP-TR-003 | Lockfile 一致性驗收 | 於**獨立驗收環境** `uv sync --locked --dev` 成功；與 `uv.lock` 一致；記錄 Command／Exit Code | **PENDING** | 本輪禁止改 Lockfile／執行完整 Runtime；未取得乾淨環境證據 | `uv.lock` 存在；本輪未執行 sync 驗收 | 依 §2.9.1：獨立環境就緒後執行並記錄 exit code |
-| VP-TR-004 | Pytest 工具執行與需求驗收（分層；非 Overall） | 見下方「VP-TR-004 證據範圍」；各層獨立記錄；**禁止**以 exit 0／CI 綠燈／測試數量替代需求驗收 | **PENDING** | 本輪不執行 Runtime Pytest；Stage E 認定原 Acceptance 過窄（歷史 FAIL 見下節） | Stage E Independent CR（FAIL／TR-CR-01／F-01）；本輪文件已修正條件，Runtime 未跑 | 依 §2.9.1 於獨立環境執行；追加原生計數與分層狀態；失敗記 FAIL |
-| VP-TR-005 | Migration 副本驗收 | 於**核准副本／測試庫**完成 Migration；正式 DB 未遭未授權變更 | **PENDING** | 缺 Migration 副本環境與 Owner 升級授權；**另案授權**（不隨一般 Regression 自動執行） | Workflow §2.10；none | 取得副本＋另案授權後重驗；禁止對正式 DB 未授權 migrate |
-| VP-TR-006 | 正式資料庫升級授權狀態 | 有書面授權紀錄或明確暫不升級依據 | **PENDING** | 尚未取得正式 DB 升級授權；不得自行升級；**不得**因本輪未跑 Runtime 而標 N/A | none | Owner 書面授權或決定暫不升級並登記依據 |
+| VP-TR-001 | 獨立驗收環境（依風險選 Clean Clone／Worktree／更高隔離）可用且路徑正確 | Workflow §2.10 檢查表可實跑；正式 DB／正式 output 未被誤用；**不得**在持有正式交易資料的工作目錄執行正式 Regression | **PASS** | Clean Clone 於 Owner Temp Root 專案子目錄完成；HEAD＝Acceptance Commit；clone 無正式 DB／無共用 `.venv` | EV-TR-GOV-E4F-REPORT；Acceptance `4019528a…`；PR [#14](https://github.com/poyu88/trading_report/pull/14) | 維持；後續正式 Regression 仍依 §2.10 選隔離 |
+| VP-TR-002 | 測試隔離安全確認 | 日常／公開 CI 僅合成／公開 fixture／tmp；經授權私人驗收符合 Gate／隔離路徑；無未授權正式 DB 讀寫 | **PASS** | **範圍限定**：本輪 CI 等效合成／公開 Regression 之隔離稽核。硬編碼外部路徑未見；預設 DB 為 clone-relative 且不存在；正式庫未授權讀寫內容。**Notes**：勿設 `TRADING_DB_PATH` 哨兵覆寫 Alembic Config（見歷史 FAIL 證據） | EV-TR-GOV-E4F-REPORT；EV-TR-GOV-E4F-SENTINEL-FAIL | Migration 副本驗收須重做環境檢查（含 `TRADING_DB_PATH`／`alembic/env.py` 優先序） |
+| VP-TR-003 | Lockfile 一致性驗收 | 於**獨立驗收環境** `uv sync --locked --dev` 成功；與 `uv.lock` 一致；記錄 Command／Exit Code | **PASS** | 隔離環境 Exit **0**；Python 3.11.18；lock 未改；獨立 `.venv` | EV-TR-GOV-E4F-UV | 依賴變更時重驗 |
+| VP-TR-004 | Pytest 工具執行與需求驗收（分層；非 Overall） | 見下方「VP-TR-004 證據範圍」；各層獨立記錄；**禁止**以 exit 0／CI 綠燈／測試數量替代需求驗收 | **PENDING**（分層見下） | **A** 本機／PR CI／master CI 工具執行均有 Exit 0 證據（**PASS**）。**B** 已執行案例 299 passed；4 skipped（**非 FAIL**）。**C** 缺私人 fixture 之 REAL_DERIVED／CR-06 需求維持 PENDING。**D** 真實 UAT 未授權。**不得**標本 ID 整體 PASS | 本機 EV-TR-GOV-E4F-PYTEST（299／4）；PR CI [`46042047293`](https://github.com/poyu88/trading_report/actions/runs/46042047293)（299 passed, 4 skipped）；master CI [`46042689924`](https://github.com/poyu88/trading_report/actions/runs/46042689924)（299 passed, 4 skipped）；skip 原因見本機 `-ra`：`PRIVATE_FIXTURE_UNAVAILABLE` | 私人測資 Gate 齊全後重驗 C；另案 UAT 重驗 D |
+| VP-TR-005 | Migration 副本驗收 | 於**核准副本／測試庫**完成 Migration；正式 DB 未遭未授權變更 | **PENDING** | 缺 Migration 副本環境與 Owner 升級授權；**另案授權**；本輪**未**執行 migrate | Workflow §2.10；none（runtime migrate） | 取得副本＋另案授權；驗收前檢查 `TRADING_DB_PATH` 與 Alembic URL 優先序；禁止對正式 DB 未授權 migrate |
+| VP-TR-006 | 正式資料庫升級授權狀態 | 有書面授權紀錄或明確暫不升級依據 | **PENDING** | 尚未取得正式 DB 升級授權；不得自行升級；mtime 一致 ≠ 內容完整性 | none | Owner 書面授權或決定暫不升級並登記依據 |
 | VP-TR-007 | 未採用工具後續評估（Mypy／Coverage／Ruff Format CI／Hooks） | 各工具採納或維持 NOT_ADOPTED 的書面決策；評估中不得標 N/A | **PENDING** | 本輪依授權維持 NOT_ADOPTED；評估未完成 | `STANDARDS_VERSION.md` | 另案評估；完成前維持 PENDING／NOT_ADOPTED |
 
 ### VP-TR-004 證據範圍（工具執行 ≠ 需求驗收）
@@ -108,6 +109,22 @@
 | TR-CR-05 | PENDING | **PASS** | Backup Policy：工程 Backup／Temp ≠ `data/backups` ≠ `data/uat` ≠ `output/uat_*` |
 
 Owner 已接受 E.3 結論；授權進入 Stage E.4 Commit 與 Stage F.1–F.3 隔離 Regression（不含 Push／PR／Merge／Tag；不含 Migration／正式 DB）。
+
+### Stage E.4＋F.1–F.3／E.5／E.6 結案追加（2026-11-28；紀錄性；非 Independent CR）
+
+| 欄位 | 內容 |
+|---|---|
+| Acceptance Commit | `4019528a84ff93d432550266b22c947291664c61` |
+| Merge Commit | `8ee850bcc84afe62ccb6ae191b60605f2da784fd`（PR [#14](https://github.com/poyu88/trading_report/pull/14) MERGED） |
+| 本機隔離 | Clean Clone；`uv sync --locked --dev` Exit 0；`ruff check .` Exit 0；`pytest -ra` → **299 passed／4 skipped／0 failed／0 xfailed／0 xpassed**（Exit 0） |
+| 歷史哨兵 FAIL | 誤設 `TRADING_DB_PATH` 時 Alembic env 覆寫 Config URL → 1 FAIL；**保留**（EV-TR-GOV-E4F-SENTINEL-FAIL）；正式重跑未設該變數後通過。**不**自行定義為產品 Bug；**未**改 `alembic/env.py` |
+| PR CI | run [`46042047293`](https://github.com/poyu88/trading_report/actions/runs/46042047293)：**Job SUCCESS**（ruff／pytest）；命令見 workflow `uv run --locked ruff check .`／`uv run --locked pytest -q`；摘要 `299 passed, 4 skipped`；Head＝Acceptance。**未**另擷取遠端逐步 process Exit Code 數字（不以虛構 Exit Code 取代 Job SUCCESS） |
+| master CI | run [`46042689924`](https://github.com/poyu88/trading_report/actions/runs/46042689924)：**Job SUCCESS**；同上命令；摘要 `299 passed, 4 skipped`；Head＝Merge |
+| 本機程序 Exit Code | 隔離跑有直接記錄：sync／ruff／pytest 均 **Exit 0**（EV-TR-GOV-E4F-*） |
+| 永久歸檔 | Evidence ID `EV-TR-GOV-E4F-*`；Stage E.6 建立 SHA256_MANIFEST；Stage E.7 來源↔目的 **再核對 ALL_MATCH**（不重複備份）；Temp／Clone **未刪** |
+| 結案分支（Stage E.6 紀錄當時） | `docs/governance-1.1-closeout` 當時 **未 Commit／待授權**（**歷史狀態**；後續以實際結案 Commit／PR 為準） |
+
+VP-TR 更新摘要見上表；**不得**因 Merge／CI SUCCESS 將 VP-TR-004 C／D 或 VP-TR-005～007 改為 PASS。
 
 ---
 
