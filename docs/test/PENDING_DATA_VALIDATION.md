@@ -1,6 +1,117 @@
-# 待資料驗證登記（PENDING_DATA）
+# 待驗證登記（PENDING_DATA_VALIDATION）
 
-> 狀態語意：`PENDING_DATA` ≠ `PASS`。資料齊全後依本檔重啟驗證邏輯；**不得**為滿足 CR 而偽造交易。
+本檔是 **trading_report** **持久化待驗證事項**的唯一正式登記處（產品沿用擴充）。
+工程驗收四態定義見 [`../AGENT_INTEGRITY.md`](../AGENT_INTEGRITY.md)；流程與隔離見 [`../DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md)。
+制度對齊母版 `VERIFICATION_PENDING` 範式，但**不**另建重複文件。
+
+## 用途與規則
+
+- 缺少驗證規則、預期結果、可信資料、環境或權限時，工程驗收層一律列 **`PENDING`**，並在此登記。
+- 規則明確、已執行驗證且取得不符合證據時，必須列 **`FAIL`**（不得以 PENDING 掩蓋）。
+- 優先完成已具備驗證條件的工作；**不**因個別 PENDING 停止其他可完成項。
+- **禁止**虛構規則、資料、預期結果或 PASS 以清除 PENDING。
+- **禁止**改寫歷史 FAIL 或工具原生執行證據；僅追加更新。
+- 歷史用語 `PENDING_DATA` **保留**作為 Evidence／史實；工程層對應為 `PENDING`（見 Integrity §2.1）。
+- `PENDING_DATA` ≠ `PASS`。資料／環境／授權齊全後依本檔重啟驗證；**不得**為滿足 CR 而偽造交易。
+
+## 工程治理欄位（VP-TR 與新增項建議欄位）
+
+| 欄位 | 說明 |
+|---|---|
+| ID | 穩定識別（建議 `VP-TR-NNN` 或沿用既有 CR ID） |
+| Requirement | 待驗證需求摘要 |
+| Acceptance Criteria | 可檢查的通過條件（若尚不明，寫明「待補」並留在 PENDING） |
+| Status | 工程四態；列管項預設 `PENDING`（完成後可改 `PASS`／`FAIL`／`N/A`） |
+| Reason | 為何尚未完成可信驗證，或 FAIL 依據 |
+| Evidence | 現有證據路徑／指令／輸出限度（無則寫 `none`） |
+| Next Action | 後續增補、重驗條件、所需授權或環境 |
+
+歷史 `PENDING_DATA` 區塊維持原欄位結構（不強制改寫）；新增工程項優先使用上表。
+
+---
+
+## 工程治理待驗證（VP-TR）— Stage D 登錄；Runtime 另案
+
+> 本節為 Stage D 文件採用時登錄。**本輪不執行** Runtime 驗收（Stage F）。
+> 母版自身 VP-002-D／VP-003 仍 PENDING，不得冒稱本產品已驗證相關能力。
+
+| ID | Requirement | Acceptance Criteria | Status | Reason | Evidence | Next Action |
+|---|---|---|---|---|---|---|
+| VP-TR-001 | 獨立驗收環境（依風險選 Clean Clone／Worktree／更高隔離）可用且路徑正確 | Workflow §2.10 檢查表可實跑；正式 DB／正式 output 未被誤用；**不得**在持有正式交易資料的工作目錄執行正式 Regression | **PENDING** | 缺授權之 Runtime 獨立環境實作與安全確認 | `docs/DEVELOPMENT_WORKFLOW.md` §2.9.1／§2.10；none（本輪未跑） | Owner 授權後依 §2.9.1 順序建立獨立環境並重驗 |
+| VP-TR-002 | 測試隔離安全確認 | 日常／公開 CI 僅合成／公開 fixture／tmp；經授權私人驗收符合 Gate／隔離路徑；無未授權正式 DB 讀寫 | **PENDING** | 缺本輪授權之完整隔離稽核 Runtime | 既有 TDD／Workflow／Integrity 測資分層；none（本輪未跑） | Stage F 稽核外部路徑、env、venv、DB、私人測資邊界後追加證據 |
+| VP-TR-003 | Lockfile 一致性驗收 | 於**獨立驗收環境** `uv sync --locked --dev` 成功；與 `uv.lock` 一致；記錄 Command／Exit Code | **PENDING** | 本輪禁止改 Lockfile／執行完整 Runtime；未取得乾淨環境證據 | `uv.lock` 存在；本輪未執行 sync 驗收 | 依 §2.9.1：獨立環境就緒後執行並記錄 exit code |
+| VP-TR-004 | Pytest 工具執行與需求驗收（分層；非 Overall） | 見下方「VP-TR-004 證據範圍」；各層獨立記錄；**禁止**以 exit 0／CI 綠燈／測試數量替代需求驗收 | **PENDING** | 本輪不執行 Runtime Pytest；Stage E 認定原 Acceptance 過窄（歷史 FAIL 見下節） | Stage E Independent CR（FAIL／TR-CR-01／F-01）；本輪文件已修正條件，Runtime 未跑 | 依 §2.9.1 於獨立環境執行；追加原生計數與分層狀態；失敗記 FAIL |
+| VP-TR-005 | Migration 副本驗收 | 於**核准副本／測試庫**完成 Migration；正式 DB 未遭未授權變更 | **PENDING** | 缺 Migration 副本環境與 Owner 升級授權；**另案授權**（不隨一般 Regression 自動執行） | Workflow §2.10；none | 取得副本＋另案授權後重驗；禁止對正式 DB 未授權 migrate |
+| VP-TR-006 | 正式資料庫升級授權狀態 | 有書面授權紀錄或明確暫不升級依據 | **PENDING** | 尚未取得正式 DB 升級授權；不得自行升級；**不得**因本輪未跑 Runtime 而標 N/A | none | Owner 書面授權或決定暫不升級並登記依據 |
+| VP-TR-007 | 未採用工具後續評估（Mypy／Coverage／Ruff Format CI／Hooks） | 各工具採納或維持 NOT_ADOPTED 的書面決策；評估中不得標 N/A | **PENDING** | 本輪依授權維持 NOT_ADOPTED；評估未完成 | `STANDARDS_VERSION.md` | 另案評估；完成前維持 PENDING／NOT_ADOPTED |
+
+### VP-TR-004 證據範圍（工具執行 ≠ 需求驗收）
+
+必須**分層**記錄；**不得**新建 Overall PASS 聚合器。
+
+| 層 | 意義 | 可標 PASS 的條件 | 不得推論 |
+|---|---|---|---|
+| A. 工具執行 | `pytest` 程序有真實執行證據 | 記錄 Command、**Exit Code**、輸出摘要 | 不代表所有案例通過；不代表需求／真實業務驗收 |
+| B. 個別測試案例 | 單一 test node 結果 | 該案已執行且符合其斷言／契約 | 不代表同需求之其他案例或真實資料驗收 |
+| C. 需求驗收 | 對應 PRD／SPEC／Pending 需求項 | 該需求之必要案例皆已依獨立預期結果驗證且通過 | 不因「pytest 綠燈」自動成立 |
+| D. 真實資料業務驗收 | Golden／REAL_DERIVED／人工 UAT 等 | 經授權私人測資或 UAT，且符合 Gate／隔離／獨立預期 | 合成通過 ≠ D 完成 |
+
+強制規則：
+
+1. 證據須含適用之原生結果：**Passed／Failed／Skipped／XFailed／XPassed**（或同等 pytest 摘要）**以及 Exit Code**；對 **Skipped**／**XFailed** 須記錄**可審查的原因**（如 skip mark／訊息／缺私人測資）。
+2. Exit Code `0` **不代表**「所有測試案例及需求均已通過」（例如存在 skip／xfail、或未覆蓋之需求）。
+3. 因缺少私人測資而 **Skipped**（或同等未執行）的測試 → 其**對應需求驗收**維持 **`PENDING`**（不得標 PASS／N/A）。
+4. 已執行且符合明確驗收條件 → 該案例／需求可標 **`PASS`**。
+5. 已取得不符合要求的證據 → 標 **`FAIL`**（不得降級為 PENDING）。
+6. **禁止**以工具成功、CI 綠燈或測試**數量**替代個別需求驗收。
+
+---
+
+## Stage E Independent CR 歷史結論（保留；不得覆寫）
+
+| 欄位 | 內容 |
+|---|---|
+| 審查 | Stage E Independent CR（唯讀；對話紀錄） |
+| 分支 | `docs/adopt-governance-1.1` @ `0c0a65d2…`（未 Commit WC） |
+| 結論 | **FAIL**（Owner 已接受） |
+| Findings | TR-CR-01（Pytest 驗收誠信；同源 F-01）、TR-CR-02（私人測資邊界）、TR-CR-03（Merge／Regression 順序）、TR-CR-04（README FIFO 與 SPEC 不一致）、TR-CR-05（備份分類） |
+| 狀態 | 歷史 **FAIL 保留**；不得抹除或降級為 PASS |
+
+### Stage E.2 Remediation 追加（2026-11-28；非 Independent CR）
+
+| Finding | 文件修正自檢 | 說明 |
+|---|---|---|
+| TR-CR-01／F-01 | 已修正 VP-TR-004 分層＋Workflow §4；含 Skip／XFail **原因**要求；**Runtime 仍 PENDING** | 自檢 ≠ 複審；不得因文件修正宣稱 VP-TR-004 PASS |
+| TR-CR-02 | 已統一測資三層於 AGENTS／Integrity／Workflow／README／Rules | 未改 Private Fixture Gate／測試程式 |
+| TR-CR-03 | 已載明 Owner 方案 A 與 §2.9.1 八步順序；**不降低**必要 Regression 門檻 | 本輪仍無 Commit／Runtime 授權 |
+| TR-CR-04 | 已依 SPEC 修正 README CASH Two-Pass | 未改演算法；不重開 PR #12／#13 |
+| TR-CR-05 | 已區分工程 Backup Root／Temp／`data/backups`／`data/uat`／`output/uat_*` | 未搬移／刪除私人備份實體 |
+
+### Stage E.3 Independent CR（局部複審；2026-11-28）
+
+| 欄位 | 內容 |
+|---|---|
+| 審查 | Stage E.3 Independent CR（唯讀局部複審；對話紀錄） |
+| 分支 | `docs/adopt-governance-1.1` @ `0c0a65d2…`（WC 未 Commit；＝`master`） |
+| 結論 | **PASS WITH NOTES** |
+| Findings 閉環 | TR-CR-01～05、F-01 之**文件語意**均 **PASS**（詳見下表） |
+| Notes | Runtime／VP-TR-001～007 仍 **PENDING**（設計如此；文件修正 ≠ Runtime PASS）；`tdd-rule.mdc` CRLF 警告非阻擋 |
+| 狀態 | 追加於歷史 FAIL／E.2 之上；**未**抹除或降級 Stage E **FAIL** |
+
+| Finding | Stage E | E.3 | 關鍵證據（摘要） |
+|---|---|---|---|
+| TR-CR-01 | FAIL | **PASS** | Pending VP-TR-004 A–D 分層；Exit 0≠全過；skip→需求 PENDING；須記 Passed／Failed／Skipped／XFailed／XPassed＋原因 |
+| F-01 | FAIL | **PASS** | Workflow §4；Integrity；與 TR-CR-01 同源已關閉 |
+| TR-CR-02 | FAIL | **PASS** | Workflow §2.2.1；Integrity；AGENTS；README；Rules；Gate／tests **未改** |
+| TR-CR-03 | PENDING | **PASS** | Workflow §2.9.1：方案 A、不降門檻、不採文件-only 豁免、八步順序 |
+| TR-CR-04 | FAIL | **PASS** | README ↔ SPEC Two-Pass／Pass1／Pass2／`SAME_DAY_RECONCILED`；演算法未改 |
+| TR-CR-05 | PENDING | **PASS** | Backup Policy：工程 Backup／Temp ≠ `data/backups` ≠ `data/uat` ≠ `output/uat_*` |
+
+Owner 已接受 E.3 結論；授權進入 Stage E.4 Commit 與 Stage F.1–F.3 隔離 Regression（不含 Push／PR／Merge／Tag；不含 Migration／正式 DB）。
+
+---
+
+## 歷史資料／Golden 待驗證（PENDING_DATA；保留不覆寫）
 
 ## GOLD-CR-02：原始資料獨立 Reviewer 驗證
 
