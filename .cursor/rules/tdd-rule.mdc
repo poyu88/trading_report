@@ -16,11 +16,11 @@ docs/test/TDD.md
 3. RED 必須是實際業務行為尚未滿足造成的失敗。
 4. GREEN 只能做讓測試通過的最小實作。
 5. REFACTOR 不得改變既有業務行為。
-6. REGRESSION 執行完整 uv run pytest -q。
+6. REGRESSION 執行完整 uv run pytest -q；記錄 Exit Code 與 Passed／Failed／Skipped／XFailed／XPassed（適用時）。Exit 0 ≠ 所有需求已通過。
 7. 保留真實測試輸出與 Git Commit。
 8. 更新 docs/test/TDD_STATUS.md。
 9. 不得虛構 RED 歷史或削弱既有斷言。
-10. 不得使用真實交易資料進行自動化測試。
+10. 測資分層見 docs/DEVELOPMENT_WORKFLOW.md §2.2.1：日常／公開 CI 用合成或公開安全 fixture；經授權私人／Golden 隔離驗收須符合 Private Fixture Gate；禁止未授權使用正式 DB／正式報表／原始對帳單。缺私人測資而 skip → 對應需求 PENDING。
 
 若 TDD.md 不存在或內容不一致，
 先報告問題，不得自行假定符合規範。

@@ -103,7 +103,11 @@ uv run python -m backend.cli match fifo --account "main" --db data/uat/esun/tmp.
 - 日期列繼承、成交列下一列為股票代號（來源可能為負數，正規化為正整數字串）。
 - `side`＝BUY／SELL；`trade_type`＝CASH（現股）／DAY_TRADE（現沖）。四種交易類型皆可入庫。
 - 現沖僅在同日、同帳戶、同股票的 DAY_TRADE pool 內 FIFO（同日無序含先賣後買）；**不**消耗普通現股持倉。
-- CASH 同日採開盤前庫存優先沖減（先賣後入庫當日買）；僅明確 `DAY_TRADE` 才做當日買賣互沖。
+- **CASH（Two-Pass；以 [`docs/spec/SPEC.md`](docs/spec/SPEC.md) 為準）**：
+  - **Pass 1**：開盤前庫存優先沖減當日全部 CASH SELL，再將當日 CASH BUY 入庫；Pass 1 **不**用當日 BUY 解套當日 SELL（`match_type=STANDARD_FIFO`）。
+  - **Pass 2**：僅以該日尚未消耗的相容 CASH BUY lot，補沖仍有未配數量的 CASH SELL（`match_type=SAME_DAY_RECONCILED`）。
+  - **禁止跨日**自動補沖；禁止造負庫存；**不得**將 CASH 自動重新分類為 `DAY_TRADE`。
+  - 僅明確標記之 `DAY_TRADE` 走現沖 pool；與 CASH lot **互不消耗**。
 - `YYYY/MM/DD 小計` 與頁尾說明排除；preview 會帶 `source_reconciliation`。
 - **來源核對**：只把四種已支援類型（現股／現沖）的筆數與價金／手續費／交易稅合計對照頁尾；融資等未支援列會成例外且**不計入**核對。參考檔僅有四種時應 `matched=true`；頁尾含未支援時預期 `matched=false`。
 
@@ -112,7 +116,8 @@ uv run python -m backend.cli match fifo --account "main" --db data/uat/esun/tmp.
 - 群益這份檔有「賣出早於本批買進」的部位，**正式報表會被擋**；目前請用 `--allow-partial` 產 DRAFT，或之後補核准的期初庫存再產正式版。
 - 同一檔、同一帳戶重跑 `import apply` 不會重複入帳。
 - `--account "main"` 只是帳戶標籤，之後查詢／配對／報表都要用同一個標籤。
-- 真實對帳單與正式 `data/trading.db` 預設不納入 Git；自動化測試只用合成測資。
+- 真實對帳單與正式 `data/trading.db` 預設不納入 Git。
+- 測資分層：日常／公開 CI 用合成或公開安全 fixture；經授權之 Golden／REAL_DERIVED 私人驗收須符合 Private Fixture Gate 與隔離路徑；正式 DB／正式報表非一般自動化測試可寫入目標（見 [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md) §2.2.1）。
 
 ## 原則
 
@@ -125,17 +130,25 @@ uv run python -m backend.cli match fifo --account "main" --db data/uat/esun/tmp.
 功能開發與 Bug 修復請遵循 [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md)
 （PRD／SPEC → TDD → Commit → Push → PR → GitHub CI → Review → UAT → Merge）。
 
+Agent 入口與禁令摘要：[`AGENTS.md`](AGENTS.md)。
+工程治理版本：[`STANDARDS_VERSION.md`](STANDARDS_VERSION.md)（採用母版 `v1.1.0`／`1.1.0-template`）。
+
 - 測試方法：[`docs/test/TDD.md`](docs/test/TDD.md)
 - 需求／規格：[`docs/prd/PRD.md`](docs/prd/PRD.md)、[`docs/spec/SPEC.md`](docs/spec/SPEC.md)
 - 程式風格：[`docs/CODING_STANDARDS.md`](docs/CODING_STANDARDS.md)
+- 驗收誠信／四態：[`docs/AGENT_INTEGRITY.md`](docs/AGENT_INTEGRITY.md)
+- 待驗證登記：[`docs/test/PENDING_DATA_VALIDATION.md`](docs/test/PENDING_DATA_VALIDATION.md)
 - 本機 pytest 通過 ≠ GitHub CI Success ≠ 人工 UAT 通過。
+- 工程驗收四態：`PASS`｜`FAIL`｜`PENDING`｜`N/A`；`NOT_ADOPTED` ≠ `N/A`。
 
 ## 證據與歷史文件索引
 
 | 文件 | 用途 |
 |---|---|
 | [`docs/test/TDD_STATUS.md`](docs/test/TDD_STATUS.md) | 實際測試／Commit／REGRESSION 證據 |
+| [`docs/test/PENDING_DATA_VALIDATION.md`](docs/test/PENDING_DATA_VALIDATION.md) | 待驗證事項（資料＋工程治理 PENDING） |
 | [`docs/test/PR7_FIFO_UAT.md`](docs/test/PR7_FIFO_UAT.md) | PR #7 副本 UAT 摘要（歷史證據） |
 | [`docs/test/RCA_esun_fifo_finance.md`](docs/test/RCA_esun_fifo_finance.md) | 玉山財務 RCA（歷史快照；契約以現行 SPEC 為準） |
 | [`docs/test/RCA_capital_fifo_finance.md`](docs/test/RCA_capital_fifo_finance.md) | 群益財務 RCA（歷史快照） |
 | [`docs/audit/CODING_STANDARDS_ALIGNMENT.md`](docs/audit/CODING_STANDARDS_ALIGNMENT.md) | Coding Standards 對齊稽核紀錄 |
+| [`docs/BACKUP_AND_ARTIFACT_POLICY.md`](docs/BACKUP_AND_ARTIFACT_POLICY.md) | 備份與產物分類政策 |

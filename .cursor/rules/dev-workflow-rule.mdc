@@ -10,22 +10,26 @@ docs/DEVELOPMENT_WORKFLOW.md
 
 ## Agent 必須遵守
 
-1. 開發前閱讀 PRD／SPEC／TDD／既有測試；規格採增量修改。
+1. 開發前閱讀 PRD／SPEC／TDD／Integrity／Pending／既有測試；規格採增量修改。
 2. 業務變更遵循 TDD（詳見 `docs/test/TDD.md` 與 `tdd-rule.mdc`）。
-3. 不得放寬財務斷言；不得用真實交易資料做自動化測試。
-4. 本機 pytest ≠ GitHub CI ≠ 人工 UAT；三者不可互相替代。
-4a. UAT 路徑與隔離（與 `docs/DEVELOPMENT_WORKFLOW.md` §2.8 一致，不得自行放寬）：
+3. 不得放寬財務斷言。測資三層（Workflow §2.2.1）：日常／公開 CI 用合成或公開安全 fixture；經授權私人／Golden 隔離驗收須符合 Private Fixture Gate 且不上傳公開 Git／CI；禁止未授權讀寫正式 DB／正式報表／原始對帳單。
+4. 本機工具執行 ≠ GitHub CI ≠ 人工 UAT；Pytest exit 0 ≠ 所有案例／需求通過。須記錄 Exit Code 與 Passed／Failed／Skipped／XFailed／XPassed（適用時）；缺私人測資而 skip → 對應需求 PENDING。
+4a. UAT 路徑與隔離（與 `docs/DEVELOPMENT_WORKFLOW.md` §2.8／§2.10 一致，不得自行放寬）：
    - Excel／稽核／例外／配對與守恆報表 → `output/uat_<主題>/`
    - SQLite 測試副本 → `data/uat/<主題>/` 或既有 `data/uat_<主題>.db`
    - **禁止**對正式 DB（如 `data/trading.db`）執行 UAT 寫入
    - 每次 UAT 須有人工可查之 FIFO 明細、剩餘庫存、損益、數量守恆與例外清單
    - 有 blocking 必須產出 **DRAFT**（`--allow-partial`），不得冒充正式報表
+   - 獨立驗收環境依**風險**選擇；正式 Regression 避免在含正式交易資料之工作目錄執行；日常 TDD 不強制 Clean Clone；Worktree／Clone ≠ OS 沙箱
+4b. 工程驗收四態僅 `PASS`｜`FAIL`｜`PENDING`｜`N/A`（見 `docs/AGENT_INTEGRITY.md`）。缺條件列 PENDING 並登記 `docs/test/PENDING_DATA_VALIDATION.md`；不得虛構 PASS。`NOT_ADOPTED` ≠ `N/A`。不得新建 Overall PASS 聚合器。
 5. 僅在使用者明確授權時才可本機 Commit；不得自行 Push、開 PR 或 Merge。
 6. 不得擅自使用個人 GitHub Token，或要求過大的 Repository 寫入權限。
 7. Cursor Agent 禁止執行 Force Push 或改寫遠端 Git 歷史，無例外。若確需改寫遠端歷史，僅由使用者親自評估及操作。
-8. Code Review 以獨立 Reviewer 角度輸出 PASS／PASS WITH NOTES／FAIL；未另授權不得改碼或 Merge。
+8. Code Review 以獨立 Reviewer 角度輸出 PASS／PASS WITH NOTES／FAIL；未另授權不得改碼或 Merge。實作自檢不得冒充 Independent CR。
 9. CI 以 `.github/workflows/pytest.yml` 為準；CI Failure 必須先調查。
 10. 不得因 PR CLEAN 或 CI 綠燈就自行 Merge。
+11. 規範版本與工具採用見 `STANDARDS_VERSION.md`／`AGENTS.md`；不得宣稱未採用工具已驗收。
+12. 產品 `data/backups` ≠ 工程永久 Backup Root（見 `docs/BACKUP_AND_ARTIFACT_POLICY.md`）。
 
 詳細階段、UAT 清單與檢查表見 `docs/DEVELOPMENT_WORKFLOW.md`。
 若該檔不存在或與本規則衝突，先報告問題，不得自行假定。
