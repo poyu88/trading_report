@@ -15,6 +15,9 @@
 | Adoption date | `2026-11-28` |
 | Adoption branch（本輪） | `docs/adopt-governance-1.1` |
 | Product baseline（採用前 HEAD） | `0c0a65d2adc0362ccccf54cf7050750b702d3607`（`master`＝`origin/master`） |
+| Acceptance Commit（已合入） | `4019528a84ff93d432550266b22c947291664c61` |
+| Merge Commit／PR | `8ee850bcc84afe62ccb6ae191b60605f2da784fd`／[PR #14](https://github.com/poyu88/trading_report/pull/14) |
+| Closeout branch | `docs/governance-1.1-closeout`（Stage E.6 紀錄當時：未 Commit／待授權；**歷史狀態**，見結案 PR） |
 | Python baseline | **3.11** |
 
 ## 已採用規範（本輪實際移植）
@@ -68,18 +71,21 @@
 4. 產品財務／FIFO／Golden／UAT 裁決器優於母版通用 UAT 範本；母版僅提供工程治理層語意。
 5. 母版自身仍有 **VP-002-D**（Manifest 外部相容）與 **VP-003**（Hooks Cursor runtime）為 PENDING；**不得**冒稱本產品已完整驗證相關能力。
 
-## 後續 PENDING（本輪不執行 Runtime）
+## 後續 PENDING（摘要；非第二份清單）
 
-見 [`docs/test/PENDING_DATA_VALIDATION.md`](docs/test/PENDING_DATA_VALIDATION.md)「工程治理待驗證（VP-TR）」：
+**逐項四態與證據以** [`docs/test/PENDING_DATA_VALIDATION.md`](docs/test/PENDING_DATA_VALIDATION.md) **「工程治理待驗證（VP-TR）」為唯一權威來源**；本節僅摘要，避免重複維護。
 
-- 獨立驗收環境實作確認
-- 測試隔離安全確認
-- Lockfile 一致性驗收
-- 完整 Pytest（授權 Runtime 後）
-- Migration 副本驗收
-- 正式資料庫升級授權
+| 摘要 | 狀態（詳見 Pending） |
+|---|---|
+| VP-TR-001 獨立驗收環境 | **PASS**（已有隔離 Clean Clone 證據） |
+| VP-TR-002 測試隔離安全 | **PASS**（範圍限定本輪 CI 等效 Regression） |
+| VP-TR-003 Lockfile 一致性 | **PASS** |
+| VP-TR-004 Pytest／需求驗收（分層） | **PENDING**（A 工具層本機／CI 已有通過證據；私人需求 C／真實 UAT D 仍 PENDING） |
+| VP-TR-005 Migration 副本 | **PENDING**（另案） |
+| VP-TR-006 正式 DB 升級授權 | **PENDING**（另案） |
+| VP-TR-007 未採用工具評估 | **PENDING**／工具狀態見上方 `NOT_ADOPTED` |
 
-上述屬 Stage F／另案 Runtime 任務；本輪僅文件採用與自檢。
+不得因本檔摘要與 Pending 表並存而維護第二套待驗證清單。
 
 ## 來源核對備註
 

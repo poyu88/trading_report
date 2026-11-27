@@ -448,6 +448,21 @@
 | 測試 | 僅註解／文件；抽樣 `test_uat_fifo_same_day_verdict`；未重跑無關大型 UAT |
 | 判定 | **暫停 Merge**；提交 Owner 待決事項 |
 
+### 1.35 母版治理 v1.1.0 採用結案（本任務；僅文件／證據歸檔）
+
+| 項目 | 結果 |
+|---|---|
+| 分支 | 採用：`docs/adopt-governance-1.1` → PR [#14](https://github.com/poyu88/trading_report/pull/14) **MERGED**；結案文件：`docs/governance-1.1-closeout`（本輪**未**授權 Commit） |
+| Acceptance／Merge | `4019528a84ff93d432550266b22c947291664c61`／`8ee850bcc84afe62ccb6ae191b60605f2da784fd` |
+| 變更範圍（已合入 master） | 9 份治理文件（AGENTS／STANDARDS／Integrity／Backup／Workflow／Pending／README／Rules）；**未**改業務碼／CI／Lockfile／品質門檻／PRD／SPEC |
+| Independent CR | Stage E **FAIL**（歷史保留）→ E.2 自檢 → E.3 **PASS WITH NOTES** |
+| 本機隔離 REGRESSION | Clean Clone；`uv sync --locked --dev` Exit 0；`ruff check .` Exit 0；`pytest -ra` → **299 passed／4 skipped**（Exit 0）；skip＝`PRIVATE_FIXTURE_UNAVAILABLE` |
+| 歷史哨兵 FAIL | `TRADING_DB_PATH` 覆寫 Alembic URL → 1 FAIL（**保留**）；正式重跑未設 env 後通過；**未**改 `alembic/env.py` |
+| PR CI | [`46042047293`](https://github.com/poyu88/trading_report/actions/runs/46042047293) SUCCESS；`299 passed, 4 skipped` |
+| master CI | [`46042689924`](https://github.com/poyu88/trading_report/actions/runs/46042689924) SUCCESS；`299 passed, 4 skipped` |
+| VP-TR | 001～003 **PASS**；004 分層（A／工具 PASS；C／D **PENDING**）；005～007 **PENDING** |
+| 判定 | **文件／治理採用結案紀錄**；Exit 0 ≠ 全部需求／真實 UAT 通過；私人證據僅 Evidence ID |
+
 ---
 
 ## 2. Git 歷史稽核：測試是否先於實作？
@@ -660,6 +675,14 @@ TDD 摘要（與 `docs/test/TDD.md` 一致：**RED → GREEN → REFACTOR → RE
 `TDD_STATUS.md` 只記錄實際執行結果，不得把計畫中的測試寫成已通過。
 
 既有 34 項繼續作為回歸門檻；它們的存在**不構成**歷史 TDD 完成證明。回歸基準 Commit：`cf4e68e`。玉山功能以 §6.2 為準。
+
+> **現行權威補充（2026-11-28；追加註記，不覆寫上方歷史流程）**
+>
+> 自母版治理 `v1.1.0` 採用後：現行交付流程、風險導向驗收隔離、私人測資授權邊界，以及工程驗收四態（PASS／FAIL／PENDING／N/A）判定，均以新版 [`docs/DEVELOPMENT_WORKFLOW.md`](../DEVELOPMENT_WORKFLOW.md)、[`docs/AGENT_INTEGRITY.md`](../AGENT_INTEGRITY.md)、[`docs/test/PENDING_DATA_VALIDATION.md`](PENDING_DATA_VALIDATION.md) 為準。
+>
+> 本 §7／§8 之「僅准合成測資」「`pytest -q` 全部通過」等為**歷史稽核起點敘述**；現行另允許經 Owner 授權且符合 Private Fixture Gate 之私人／Golden 隔離驗收，且 Exit 0 ≠ 全部需求通過（見 Pending VP-TR-004）。
+>
+> **不得**據此註記覆寫、刪除或「清理」本檔既有歷史證據（含歷史本機路徑字樣）。
 
 ---
 
